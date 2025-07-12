@@ -586,6 +586,17 @@ class IndianNumberConverter:
                 return f"{sign}${abs_num:,.0f}"
 
 # --- 8. AI-Powered Financial Mapper ---
+
+# Move model loading to a separate cached function
+@st.cache_resource
+def load_sentence_transformer_model():
+    """Load and cache the sentence transformer model"""
+    try:
+        return SentenceTransformer('all-MiniLM-L6-v2')
+    except Exception as e:
+        logger.error(f"Failed to initialize AI model: {e}")
+        return None
+
 class IntelligentFinancialMapper:
     """AI-powered metric mapping using sentence transformers"""
     
@@ -595,15 +606,14 @@ class IntelligentFinancialMapper:
         self.standard_embeddings = None
         self._initialize_model()
     
-    @st.cache_resource
     def _initialize_model(self):
         """Initialize the sentence transformer model"""
-        try:
-            self.model = SentenceTransformer('all-MiniLM-L6-v2')
-            self._compute_standard_embeddings()
-        except Exception as e:
-            logger.error(f"Failed to initialize AI model: {e}")
+        # Use the cached function to load the model
+        self.model = load_sentence_transformer_model()
+        if self.model is None:
             st.error("AI model initialization failed. Using fallback fuzzy matching.")
+        else:
+            self._compute_standard_embeddings()
     
     def _compute_standard_embeddings(self):
         """Pre-compute embeddings for all standard financial metrics"""
@@ -1803,7 +1813,7 @@ class EnhancedFinancialAnalyticsPlatform:
                 # Convert to ParsedFinancialData format
                 parsed_data = ParsedFinancialData(
                     company_name=data.get('company_name', 'Unknown'),
-                    statements={'merged': data['statement']},
+                    statements={'parsed': data['statement']},
                     year_columns=data.get('year_columns', []),
                     source_type='file',
                     data_quality=data.get('data_quality', {})

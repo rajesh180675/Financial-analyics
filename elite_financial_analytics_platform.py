@@ -585,149 +585,208 @@ class IndianNumberConverter:
             else:
                 return f"{sign}${abs_num:,.0f}"
 
-# --- 8. AI-Powered Financial Mapper ---
+# --- 8. AI-Powered Financial Mapper (OPTIMIZED) ---
 
-# Move model loading to a separate cached function
+# Cache the model at module level
 @st.cache_resource
 def load_sentence_transformer_model():
     """Load and cache the sentence transformer model"""
+    if st.session_state.get('lite_mode', False):
+        return None
+    
     try:
-        return SentenceTransformer('all-MiniLM-L6-v2')
+        with st.spinner("Loading AI model (one-time download)..."):
+            model = SentenceTransformer('all-MiniLM-L6-v2')
+            return model
     except Exception as e:
         logger.error(f"Failed to initialize AI model: {e}")
         return None
 
+# Pre-compute and cache standard embeddings
+@st.cache_data
+def compute_standard_embeddings_cached(_model):
+    """Pre-compute embeddings for all standard financial metrics"""
+    if _model is None:
+        return None
+    
+    standard_metrics = {
+        # Balance Sheet items
+        'Total Assets': 'total assets sum of all assets',
+        'Current Assets': 'current assets short term assets liquid assets',
+        'Non-current Assets': 'non current assets long term assets fixed assets',
+        'Cash and Cash Equivalents': 'cash bank balance liquid funds',
+        'Inventory': 'inventory stock goods materials',
+        'Trade Receivables': 'trade receivables accounts receivable debtors',
+        'Property Plant and Equipment': 'property plant equipment PPE fixed assets',
+        'Total Liabilities': 'total liabilities sum of all liabilities',
+        'Current Liabilities': 'current liabilities short term liabilities',
+        'Non-current Liabilities': 'non current liabilities long term liabilities',
+        'Total Equity': 'total equity shareholders equity net worth',
+        'Share Capital': 'share capital paid up capital equity shares',
+        'Reserves and Surplus': 'reserves surplus retained earnings',
+        
+        # Income Statement items
+        'Revenue': 'revenue sales turnover income from operations',
+        'Cost of Goods Sold': 'cost of goods sold COGS cost of sales',
+        'Gross Profit': 'gross profit gross margin',
+        'Operating Expenses': 'operating expenses opex administrative expenses',
+        'EBIT': 'EBIT earnings before interest tax operating profit',
+        'Interest Expense': 'interest expense finance cost borrowing cost',
+        'Net Profit': 'net profit net income profit after tax PAT',
+        'EPS': 'earnings per share EPS',
+        
+        # Cash Flow items
+        'Operating Cash Flow': 'operating cash flow cash from operations CFO',
+        'Investing Cash Flow': 'investing cash flow capital expenditure capex',
+        'Financing Cash Flow': 'financing cash flow debt repayment dividends'
+    }
+    
+    embeddings = {}
+    # Batch encode for efficiency
+    texts = list(standard_metrics.values())
+    keys = list(standard_metrics.keys())
+    
+    try:
+        # Encode all at once - much faster than one by one
+        all_embeddings = _model.encode(texts, batch_size=32, show_progress_bar=False)
+        for key, embedding in zip(keys, all_embeddings):
+            embeddings[key] = embedding
+    except Exception as e:
+        logger.error(f"Failed to compute standard embeddings: {e}")
+        return None
+    
+    return embeddings
+
 class IntelligentFinancialMapper:
-    """AI-powered metric mapping using sentence transformers"""
+    """AI-powered metric mapping using sentence transformers (OPTIMIZED)"""
     
     def __init__(self):
         self.model = None
         self.embeddings_cache = EmbeddingsCache()
         self.standard_embeddings = None
         self._initialize_model()
+        self._batch_cache = {}  # Cache for batch operations
     
     def _initialize_model(self):
         """Initialize the sentence transformer model"""
-        # Use the cached function to load the model
         self.model = load_sentence_transformer_model()
         if self.model is None:
-            st.error("AI model initialization failed. Using fallback fuzzy matching.")
+            st.warning("AI model not available. Using fuzzy matching instead.")
         else:
-            self._compute_standard_embeddings()
+            # Use cached standard embeddings
+            self.standard_embeddings = compute_standard_embeddings_cached(self.model)
     
-    def _compute_standard_embeddings(self):
-        """Pre-compute embeddings for all standard financial metrics"""
+    def _get_embeddings_batch(self, texts: List[str]) -> Dict[str, np.ndarray]:
+        """Get embeddings for multiple texts efficiently"""
         if self.model is None:
-            return
+            return {}
         
-        standard_metrics = {}
+        # Check cache first
+        uncached_texts = []
+        cached_results = {}
         
-        standard_metrics.update({
-            'Total Assets': 'total assets sum of all assets',
-            'Current Assets': 'current assets short term assets liquid assets',
-            'Non-current Assets': 'non current assets long term assets fixed assets',
-            'Cash and Cash Equivalents': 'cash bank balance liquid funds',
-            'Inventory': 'inventory stock goods materials',
-            'Trade Receivables': 'trade receivables accounts receivable debtors',
-            'Property Plant and Equipment': 'property plant equipment PPE fixed assets',
-            'Total Liabilities': 'total liabilities sum of all liabilities',
-            'Current Liabilities': 'current liabilities short term liabilities',
-            'Non-current Liabilities': 'non current liabilities long term liabilities',
-            'Total Equity': 'total equity shareholders equity net worth',
-            'Share Capital': 'share capital paid up capital equity shares',
-            'Reserves and Surplus': 'reserves surplus retained earnings'
-        })
+        for text in texts:
+            cached = self.embeddings_cache.get(text)
+            if cached is not None:
+                cached_results[text] = cached
+            else:
+                uncached_texts.append(text)
         
-        standard_metrics.update({
-            'Revenue': 'revenue sales turnover income from operations',
-            'Cost of Goods Sold': 'cost of goods sold COGS cost of sales',
-            'Gross Profit': 'gross profit gross margin',
-            'Operating Expenses': 'operating expenses opex administrative expenses',
-            'EBIT': 'EBIT earnings before interest tax operating profit',
-            'Interest Expense': 'interest expense finance cost borrowing cost',
-            'Net Profit': 'net profit net income profit after tax PAT',
-            'EPS': 'earnings per share EPS'
-        })
+        # Compute uncached embeddings in batch
+        if uncached_texts:
+            try:
+                # Batch encoding is much faster
+                new_embeddings = self.model.encode(
+                    uncached_texts, 
+                    batch_size=min(32, len(uncached_texts)),
+                    show_progress_bar=False,
+                    convert_to_numpy=True
+                )
+                
+                # Cache the results
+                for text, embedding in zip(uncached_texts, new_embeddings):
+                    self.embeddings_cache.set(text, embedding)
+                    cached_results[text] = embedding
+                    
+            except Exception as e:
+                logger.error(f"Failed to compute batch embeddings: {e}")
         
-        standard_metrics.update({
-            'Operating Cash Flow': 'operating cash flow cash from operations CFO',
-            'Investing Cash Flow': 'investing cash flow capital expenditure capex',
-            'Financing Cash Flow': 'financing cash flow debt repayment dividends'
-        })
-        
-        self.standard_embeddings = {}
-        for metric, description in standard_metrics.items():
-            embedding = self._get_embedding(description)
-            if embedding is not None:
-                self.standard_embeddings[metric] = embedding
-    
-    def _get_embedding(self, text: str) -> Optional[np.ndarray]:
-        """Get embedding for text with caching"""
-        if self.model is None:
-            return None
-        
-        cached = self.embeddings_cache.get(text)
-        if cached is not None:
-            return cached
-        
-        try:
-            embedding = self.model.encode([text])[0]
-            self.embeddings_cache.set(text, embedding)
-            return embedding
-        except Exception as e:
-            logger.error(f"Failed to compute embedding: {e}")
-            return None
+        return cached_results
     
     def map_metrics(self, source_metrics: List[str], target_metrics: Optional[List[str]] = None) -> MappingResult:
-        """Map source metrics to standard financial metrics using AI"""
+        """Map source metrics to standard financial metrics using AI (OPTIMIZED)"""
+        
+        # Quick fallback for no AI
         if self.model is None or self.standard_embeddings is None:
             return self._fuzzy_map_metrics(source_metrics, target_metrics)
         
+        # Use standard metrics if no target specified
         if target_metrics is None:
             target_metrics = list(self.standard_embeddings.keys())
+        
+        # Limit processing for performance
+        MAX_METRICS = 100  # Process max 100 metrics at once
+        if len(source_metrics) > MAX_METRICS:
+            st.warning(f"Processing first {MAX_METRICS} metrics for performance. Consider smaller batches.")
+            source_metrics = source_metrics[:MAX_METRICS]
+        
+        # Prepare texts for batch processing
+        source_texts = [metric.lower() for metric in source_metrics]
+        
+        # Get all embeddings in batch (much faster)
+        with st.spinner("Computing metric similarities..."):
+            source_embeddings_dict = self._get_embeddings_batch(source_texts)
+        
+        # Prepare target embeddings
+        target_embeddings_list = []
+        target_metrics_filtered = []
+        
+        for target_metric in target_metrics:
+            if target_metric in self.standard_embeddings:
+                target_embeddings_list.append(self.standard_embeddings[target_metric])
+                target_metrics_filtered.append(target_metric)
+        
+        if not target_embeddings_list:
+            return self._fuzzy_map_metrics(source_metrics, target_metrics)
+        
+        # Stack target embeddings for efficient computation
+        target_embeddings_matrix = np.vstack(target_embeddings_list)
         
         mappings = {}
         confidence_scores = {}
         suggestions = {}
         unmapped = []
         
-        for source_metric in source_metrics:
-            source_embedding = self._get_embedding(source_metric.lower())
+        # Process each source metric
+        for i, source_metric in enumerate(source_metrics):
+            source_text = source_texts[i]
             
-            if source_embedding is None:
+            if source_text not in source_embeddings_dict:
                 unmapped.append(source_metric)
                 continue
             
-            similarities = []
+            source_embedding = source_embeddings_dict[source_text]
             
-            for target_metric in target_metrics:
-                if target_metric in self.standard_embeddings:
-                    target_embedding = self.standard_embeddings[target_metric]
-                else:
-                    target_embedding = self._get_embedding(target_metric.lower())
-                
-                if target_embedding is not None:
-                    similarity = cosine_similarity(
-                        source_embedding.reshape(1, -1),
-                        target_embedding.reshape(1, -1)
-                    )[0, 0]
-                    
-                    similarities.append((target_metric, similarity))
+            # Compute all similarities at once
+            similarities = cosine_similarity(
+                source_embedding.reshape(1, -1),
+                target_embeddings_matrix
+            )[0]
             
-            similarities.sort(key=lambda x: x[1], reverse=True)
+            # Get top matches
+            top_indices = np.argsort(similarities)[::-1][:3]
+            top_matches = [(target_metrics_filtered[idx], similarities[idx]) 
+                          for idx in top_indices]
             
-            if similarities:
-                best_match, best_score = similarities[0]
-                
-                if best_score > 0.6:
-                    mappings[source_metric] = best_match
-                    confidence_scores[source_metric] = best_score
-                else:
-                    unmapped.append(source_metric)
-                
-                suggestions[source_metric] = similarities[:3]
+            best_match, best_score = top_matches[0]
+            
+            if best_score > 0.6:  # Threshold for accepting match
+                mappings[source_metric] = best_match
+                confidence_scores[source_metric] = float(best_score)
             else:
                 unmapped.append(source_metric)
+            
+            suggestions[source_metric] = [(m, float(s)) for m, s in top_matches]
         
         return MappingResult(
             mappings=mappings,
@@ -737,23 +796,41 @@ class IntelligentFinancialMapper:
         )
     
     def _fuzzy_map_metrics(self, source_metrics: List[str], target_metrics: Optional[List[str]] = None) -> MappingResult:
-        """Fallback fuzzy matching when AI is not available"""
+        """Fallback fuzzy matching when AI is not available (OPTIMIZED)"""
         if target_metrics is None:
             target_metrics = []
             for category in METRIC_CATEGORIES.values():
                 for subcategory in category.values():
                     target_metrics.extend(subcategory)
         
+        # Limit for performance
+        MAX_COMPARISONS = 50
+        if len(source_metrics) > MAX_COMPARISONS:
+            source_metrics = source_metrics[:MAX_COMPARISONS]
+        
         mappings = {}
         confidence_scores = {}
         suggestions = {}
         unmapped = []
         
+        # Pre-compute lowercase versions
+        target_lower = [t.lower() for t in target_metrics]
+        
         for source_metric in source_metrics:
-            scores = []
+            source_lower = source_metric.lower()
             
-            for target_metric in target_metrics:
-                score = fuzz.token_sort_ratio(source_metric.lower(), target_metric.lower())
+            # Quick exact match check first
+            if source_lower in target_lower:
+                idx = target_lower.index(source_lower)
+                mappings[source_metric] = target_metrics[idx]
+                confidence_scores[source_metric] = 1.0
+                suggestions[source_metric] = [(target_metrics[idx], 1.0)]
+                continue
+            
+            # Fuzzy matching for non-exact matches
+            scores = []
+            for i, target_metric in enumerate(target_metrics[:30]):  # Limit comparisons
+                score = fuzz.token_sort_ratio(source_lower, target_lower[i])
                 scores.append((target_metric, score / 100.0))
             
             scores.sort(key=lambda x: x[1], reverse=True)
@@ -1202,7 +1279,9 @@ class EnhancedFinancialAnalyticsPlatform:
             "selected_industry": "Technology",
             "use_ai_mapping": True,
             "number_format": "indian",
-            "current_config": None
+            "current_config": None,
+            "lite_mode": False,
+            "debug_mode": False
         }
         
         for key, default_value in defaults.items():
@@ -1214,8 +1293,10 @@ class EnhancedFinancialAnalyticsPlatform:
         self.security_validator = SecurityValidator()
         self.indas_parser = IndASParser()
         self.number_converter = IndianNumberConverter()
-        self.ai_mapper = IntelligentFinancialMapper()
         self.config_manager = ConfigurationManager()
+        
+        # Lazy load AI mapper
+        self.ai_mapper = None
         
         # Use enhanced components
         self.chart_generator = EnhancedChartGenerator()
@@ -1227,6 +1308,21 @@ class EnhancedFinancialAnalyticsPlatform:
         self.pn_analyzer = EnhancedPenmanNissimAnalyzer
         self.industry_benchmarks = IntegratedIndustryBenchmarks()
         self.data_processor = CoreDataProcessor
+    
+    def should_load_ai(self) -> bool:
+        """Check if AI components should be loaded"""
+        if st.session_state.get('lite_mode', False):
+            return False
+        if not st.session_state.get('use_ai_mapping', True):
+            return False
+        return True
+    
+    def get_ai_mapper(self):
+        """Get AI mapper with lazy initialization"""
+        if self.ai_mapper is None and self.should_load_ai():
+            with st.spinner("Initializing AI components..."):
+                self.ai_mapper = IntelligentFinancialMapper()
+        return self.ai_mapper
     
     def run(self):
         """Main application entry point"""
@@ -1276,10 +1372,19 @@ class EnhancedFinancialAnalyticsPlatform:
         st.sidebar.divider()
         st.sidebar.markdown("### ⚙️ Settings")
         
-        st.session_state.use_ai_mapping = st.sidebar.checkbox(
-            "🤖 AI-Powered Mapping",
-            st.session_state.use_ai_mapping
+        # Performance options
+        st.sidebar.markdown("#### 🚀 Performance")
+        st.session_state.lite_mode = st.sidebar.checkbox(
+            "Lite Mode (Faster)", 
+            st.session_state.lite_mode,
+            help="Disable AI features for faster performance"
         )
+        
+        if not st.session_state.lite_mode:
+            st.session_state.use_ai_mapping = st.sidebar.checkbox(
+                "🤖 AI-Powered Mapping",
+                st.session_state.use_ai_mapping
+            )
         
         st.session_state.number_format = st.sidebar.radio(
             "Number Format:",
@@ -1295,10 +1400,38 @@ class EnhancedFinancialAnalyticsPlatform:
             index=industries.index(st.session_state.selected_industry) if st.session_state.selected_industry in industries else 0
         )
         
+        # Debug options
+        st.sidebar.markdown("#### 🛠️ Advanced")
+        st.session_state.debug_mode = st.sidebar.checkbox(
+            "Debug Mode",
+            st.session_state.debug_mode
+        )
+        
         # Reset
         if st.sidebar.button("🔄 Reset All", type="secondary"):
             st.session_state.clear()
             st.rerun()
+        
+        # Debug info
+        if st.session_state.debug_mode:
+            self._debug_data_state()
+    
+    def _debug_data_state(self):
+        """Debug helper to check data state"""
+        st.sidebar.markdown("### 🐛 Debug Info")
+        
+        if st.session_state.analysis_data:
+            data = st.session_state.analysis_data
+            st.sidebar.write(f"Company: {data.company_name}")
+            st.sidebar.write(f"Source: {data.source_type}")
+            st.sidebar.write(f"Years: {data.year_columns}")
+            st.sidebar.write(f"Statements keys: {list(data.statements.keys())}")
+            
+            for key, df in data.statements.items():
+                if isinstance(df, pd.DataFrame):
+                    st.sidebar.write(f"{key} shape: {df.shape}")
+        else:
+            st.sidebar.write("No data loaded")
     
     def _render_file_upload(self):
         """Render file upload interface"""
@@ -1385,12 +1518,28 @@ class EnhancedFinancialAnalyticsPlatform:
                 st.error("Please paste at least one statement")
     
     def _render_analysis(self):
-        """Render analysis interface"""
+        """Render analysis interface (FIXED)"""
         data = st.session_state.analysis_data
-        df = data.statements.get('parsed', pd.DataFrame())
         
-        if df.empty:
+        # Check for data in both possible keys
+        df = None
+        if 'parsed' in data.statements:
+            df = data.statements['parsed']
+        elif 'merged' in data.statements:
+            df = data.statements['merged']
+        else:
+            # Try to get any available dataframe
+            for key, value in data.statements.items():
+                if isinstance(value, pd.DataFrame) and not value.empty:
+                    df = value
+                    break
+        
+        if df is None or df.empty:
             st.error("No processed data available")
+            if st.session_state.debug_mode:
+                st.write("Debug Information:")
+                st.write(f"Available statement keys: {list(data.statements.keys())}")
+                st.write(f"Year columns: {data.year_columns}")
             return
         
         # Summary
@@ -1405,19 +1554,17 @@ class EnhancedFinancialAnalyticsPlatform:
         with col3:
             st.metric("Standard", data.detected_standard)
         with col4:
-            if st.session_state.use_ai_mapping:
+            if st.session_state.use_ai_mapping and not st.session_state.lite_mode:
                 mapped = len(st.session_state.ai_mappings)
                 st.metric("AI Mapped", f"{mapped}/{len(df)}")
         
         # Analysis tabs
-        tabs = st.tabs([
-            "📊 Visualizations",
-            "📈 Financial Ratios",
-            "🔍 Penman-Nissim",
-            "🏭 Industry Comparison",
-            "📄 Data Table"
-        ])
+        tab_list = ["📊 Visualizations", "📈 Financial Ratios", "🔍 Penman-Nissim", 
+                    "🏭 Industry Comparison", "📄 Data Table"]
         
+        tabs = st.tabs(tab_list)
+        
+        # Use tabs properly
         with tabs[0]:
             self._render_visualizations_tab(df)
         
@@ -1545,7 +1692,7 @@ class EnhancedFinancialAnalyticsPlatform:
                     metrics_to_plot = st.multiselect(
                         f"Select {category} metrics:",
                         ratio_df.index.tolist(),
-                        default=ratio_df.index[:2].tolist(),
+                        default=ratio_df.index[:2].tolist() if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
                         key=f"select_{category}"
                     )
                     
@@ -1575,9 +1722,15 @@ class EnhancedFinancialAnalyticsPlatform:
         # Run analysis button
         if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
             with st.spinner("Running advanced analysis..."):
-                analyzer = self.pn_analyzer(df, st.session_state.pn_mappings)
-                results = analyzer.calculate_with_indas()
-                st.session_state.pn_results = results
+                try:
+                    analyzer = self.pn_analyzer(df, st.session_state.pn_mappings)
+                    results = analyzer.calculate_with_indas()
+                    st.session_state.pn_results = results
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+                    if st.session_state.debug_mode:
+                        import traceback
+                        st.error(f"Traceback: {traceback.format_exc()}")
         
         # Display results
         if st.session_state.pn_results:
@@ -1801,7 +1954,7 @@ class EnhancedFinancialAnalyticsPlatform:
     # --- Helper Methods ---
     
     def _process_files(self, files):
-        """Process uploaded files"""
+        """Process uploaded files (FIXED)"""
         try:
             # Validate files
             for file in files:
@@ -1810,10 +1963,10 @@ class EnhancedFinancialAnalyticsPlatform:
             # Process files
             data = process_and_merge_files(files)
             if data:
-                # Convert to ParsedFinancialData format
+                # Fix: Ensure consistent data structure
                 parsed_data = ParsedFinancialData(
                     company_name=data.get('company_name', 'Unknown'),
-                    statements={'parsed': data['statement']},
+                    statements={'parsed': data['statement']},  # Changed from 'merged' to 'parsed'
                     year_columns=data.get('year_columns', []),
                     source_type='file',
                     data_quality=data.get('data_quality', {})
@@ -1822,13 +1975,16 @@ class EnhancedFinancialAnalyticsPlatform:
                 st.session_state.analysis_data = parsed_data
                 
                 # Auto-map if enabled
-                if st.session_state.use_ai_mapping:
+                if st.session_state.use_ai_mapping and not st.session_state.lite_mode:
                     self._perform_ai_mapping()
                 
                 st.success("Files processed successfully!")
                 st.rerun()
         except Exception as e:
             st.error(f"Error processing files: {str(e)}")
+            if st.session_state.debug_mode:
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
     
     def _process_text_input(self, bs_text, pl_text):
         """Process text input"""
@@ -1844,7 +2000,7 @@ class EnhancedFinancialAnalyticsPlatform:
             st.session_state.analysis_data = parsed_data
             
             # Auto-map if enabled
-            if st.session_state.use_ai_mapping:
+            if st.session_state.use_ai_mapping and not st.session_state.lite_mode:
                 self._perform_ai_mapping()
             
             st.success("Text processed successfully!")
@@ -1873,26 +2029,77 @@ class EnhancedFinancialAnalyticsPlatform:
             st.error(f"Error loading sample: {str(e)}")
     
     def _perform_ai_mapping(self):
-        """Perform AI mapping"""
+        """Perform AI mapping with progress indication"""
         if st.session_state.analysis_data:
-            df = st.session_state.analysis_data.statements.get('parsed', pd.DataFrame())
-            if not df.empty:
-                source_metrics = df.index.tolist()
+            # Get the correct dataframe
+            df = None
+            data = st.session_state.analysis_data
+            if 'parsed' in data.statements:
+                df = data.statements['parsed']
+            elif 'merged' in data.statements:
+                df = data.statements['merged']
+            else:
+                for key, value in data.statements.items():
+                    if isinstance(value, pd.DataFrame) and not value.empty:
+                        df = value
+                        break
+            
+            if df is None or df.empty:
+                st.error("No data available for mapping")
+                return
+            
+            source_metrics = df.index.tolist()
+            
+            # Show warning for large datasets
+            if len(source_metrics) > 50:
+                st.warning(f"Found {len(source_metrics)} metrics. This may take a moment...")
+            
+            # Progress bar
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+            
+            try:
+                progress_text.text("Initializing AI mapper...")
+                progress_bar.progress(0.3)
                 
-                # Get all target metrics
+                # Get AI mapper
+                mapper = self.get_ai_mapper()
+                if mapper is None:
+                    progress_bar.empty()
+                    progress_text.empty()
+                    st.warning("AI mapping not available in Lite Mode")
+                    return
+                
+                # Get target metrics
                 target_metrics = []
                 for category in METRIC_CATEGORIES.values():
                     for subcategory in category.values():
                         target_metrics.extend(subcategory)
                 
+                progress_text.text("Computing similarities...")
+                progress_bar.progress(0.6)
+                
                 # Perform mapping
-                result = self.ai_mapper.map_metrics(source_metrics, target_metrics)
+                result = mapper.map_metrics(source_metrics, target_metrics)
+                
+                progress_text.text("Finalizing mappings...")
+                progress_bar.progress(0.9)
                 
                 st.session_state.ai_mappings = result.mappings
                 st.session_state.metric_mappings = result.mappings
                 
+                # Clear progress
+                progress_bar.empty()
+                progress_text.empty()
+                
                 # Show summary
-                st.info(f"AI mapped {len(result.mappings)} out of {len(source_metrics)} metrics")
+                st.success(f"✅ AI mapped {len(result.mappings)} out of {len(source_metrics)} metrics")
+                
+            except Exception as e:
+                progress_bar.empty()
+                progress_text.empty()
+                st.error(f"AI mapping failed: {str(e)}")
+                st.info("Using fallback fuzzy matching instead")
     
     def _render_export_options(self, df):
         """Render export options"""

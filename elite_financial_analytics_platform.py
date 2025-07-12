@@ -907,10 +907,10 @@ class ConfigurationManager:
         
         return configs
 
-# --- 10. Enhanced Wrapper Classes ---
+# --- 10. Enhanced Wrapper Classes (FIXED) ---
 
 class EnhancedChartGenerator(CoreChartGenerator):
-    """Enhanced chart generator with Indian formatting"""
+    """Enhanced chart generator with Indian formatting (FIXED)"""
     
     def __init__(self):
         super().__init__()
@@ -922,33 +922,108 @@ class EnhancedChartGenerator(CoreChartGenerator):
     
     def create_chart_with_indian_format(self, df, metrics, title, chart_type="line", 
                                       use_indian_format=True, **kwargs):
-        """Create charts with Indian number formatting"""
-        if chart_type == "line":
-            fig = self.create_line_chart(df, metrics, title, **kwargs)
-        else:
-            fig = self.create_bar_chart(df, metrics, title, **kwargs)
+        """Create charts with Indian number formatting (FIXED)"""
+        try:
+            # Create the figure based on chart type
+            if chart_type == "line":
+                # Check if parent has the method
+                if hasattr(super(), 'create_line_chart'):
+                    fig = super().create_line_chart(df, metrics, title, **kwargs)
+                else:
+                    # Fallback to direct plotly creation
+                    fig = self._create_line_chart_fallback(df, metrics, title)
+            else:
+                # Check if parent has the method
+                if hasattr(super(), 'create_bar_chart'):
+                    fig = super().create_bar_chart(df, metrics, title, **kwargs)
+                else:
+                    # Fallback to direct plotly creation
+                    fig = self._create_bar_chart_fallback(df, metrics, title)
+            
+            if use_indian_format and self.indian_converter and fig:
+                self._apply_indian_formatting(fig)
+            
+            return fig
+        except Exception as e:
+            logger.error(f"Error creating chart: {e}")
+            # Return a basic chart as fallback
+            return self._create_basic_chart(df, metrics, title, chart_type)
+    
+    def _create_line_chart_fallback(self, df, metrics, title):
+        """Create line chart using plotly directly"""
+        fig = go.Figure()
         
-        if use_indian_format and self.indian_converter and fig:
-            self._apply_indian_formatting(fig)
+        for metric in metrics:
+            if metric in df.index:
+                fig.add_trace(go.Scatter(
+                    x=df.columns,
+                    y=df.loc[metric],
+                    mode='lines+markers',
+                    name=metric,
+                    line=dict(width=2),
+                    marker=dict(size=8)
+                ))
+        
+        fig.update_layout(
+            title=title,
+            xaxis_title="Year",
+            yaxis_title="Value",
+            hovermode='x unified',
+            template='plotly_white',
+            height=500
+        )
         
         return fig
+    
+    def _create_bar_chart_fallback(self, df, metrics, title):
+        """Create bar chart using plotly directly"""
+        fig = go.Figure()
+        
+        for metric in metrics:
+            if metric in df.index:
+                fig.add_trace(go.Bar(
+                    x=df.columns,
+                    y=df.loc[metric],
+                    name=metric
+                ))
+        
+        fig.update_layout(
+            title=title,
+            xaxis_title="Year",
+            yaxis_title="Value",
+            barmode='group',
+            template='plotly_white',
+            height=500
+        )
+        
+        return fig
+    
+    def _create_basic_chart(self, df, metrics, title, chart_type):
+        """Create a basic chart as ultimate fallback"""
+        if chart_type == "line":
+            return self._create_line_chart_fallback(df, metrics, title)
+        else:
+            return self._create_bar_chart_fallback(df, metrics, title)
     
     def _apply_indian_formatting(self, fig):
         """Apply Indian number formatting to plotly figure"""
         if not self.indian_converter:
             return
         
-        for trace in fig.data:
-            if hasattr(trace, 'y') and trace.y is not None:
-                hover_text = []
-                for val in trace.y:
-                    if pd.notna(val):
-                        formatted = self.indian_converter.format_to_indian(val)
-                        hover_text.append(formatted)
-                    else:
-                        hover_text.append("N/A")
-                trace.hovertext = hover_text
-                trace.hoverinfo = 'x+text+name'
+        try:
+            for trace in fig.data:
+                if hasattr(trace, 'y') and trace.y is not None:
+                    hover_text = []
+                    for val in trace.y:
+                        if pd.notna(val):
+                            formatted = self.indian_converter.format_to_indian(val)
+                            hover_text.append(formatted)
+                        else:
+                            hover_text.append("N/A")
+                    trace.hovertext = hover_text
+                    trace.hoverinfo = 'x+text+name'
+        except Exception as e:
+            logger.warning(f"Could not apply Indian formatting: {e}")
 
 class EnhancedFinancialRatioCalculator(CoreRatioCalculator):
     """Enhanced ratio calculator with IND-AS specific ratios"""
@@ -1280,7 +1355,7 @@ class EnhancedFinancialAnalyticsPlatform:
             "use_ai_mapping": True,
             "number_format": "indian",
             "current_config": None,
-            "lite_mode": False,
+            "lite_mode": True,  # Default to True for better performance
             "debug_mode": False
         }
         
@@ -1434,7 +1509,7 @@ class EnhancedFinancialAnalyticsPlatform:
             st.sidebar.write("No data loaded")
     
     def _render_file_upload(self):
-        """Render file upload interface"""
+        """Render file upload interface (IMPROVED)"""
         files = st.sidebar.file_uploader(
             "Upload files",
             type=ALLOWED_FILE_TYPES,
@@ -1443,8 +1518,18 @@ class EnhancedFinancialAnalyticsPlatform:
         )
         
         if files:
-            if st.sidebar.button("📊 Process Files", type="primary"):
+            st.sidebar.success(f"✅ {len(files)} file(s) uploaded")
+            
+            # Show file details
+            for file in files:
+                st.sidebar.text(f"📄 {file.name} ({file.size/1024:.1f}KB)")
+            
+            # Process button - make it prominent
+            st.sidebar.markdown("---")
+            if st.sidebar.button("📊 Process Files", type="primary", use_container_width=True):
                 self._process_files(files)
+        else:
+            st.sidebar.info("Please upload financial statement files")
     
     def _render_main_content(self):
         """Render main content area"""
@@ -1581,7 +1666,7 @@ class EnhancedFinancialAnalyticsPlatform:
             self._render_data_table_tab(df)
     
     def _render_visualizations_tab(self, df):
-        """Render visualizations using enhanced chart generator"""
+        """Render visualizations using enhanced chart generator (FIXED)"""
         st.header("📊 Financial Visualizations")
         
         # Controls
@@ -1609,40 +1694,46 @@ class EnhancedFinancialAnalyticsPlatform:
         
         # Create visualization
         if selected:
-            outliers = None
-            if show_outliers:
-                outliers = CoreDataProcessor.detect_outliers(df)
-            
-            fig = self.chart_generator.create_chart_with_indian_format(
-                df, selected, 
-                title="Financial Metrics Analysis",
-                chart_type=chart_type,
-                use_indian_format=(st.session_state.number_format == "indian"),
-                theme="plotly_white",
-                show_grid=True,
-                scale_type="Linear",
-                yaxis_title="Value",
-                outliers=outliers
-            )
-            
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Statistics
-            if st.checkbox("Show statistics"):
-                stats_data = []
-                for metric in selected:
-                    if metric in df.index:
-                        series = df.loc[metric]
-                        stats_data.append({
-                            'Metric': metric,
-                            'Mean': series.mean(),
-                            'Std Dev': series.std(),
-                            'Min': series.min(),
-                            'Max': series.max(),
-                            'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if series.iloc[0] != 0 else 0
-                        })
+            try:
+                outliers = None
+                if show_outliers:
+                    outliers = CoreDataProcessor.detect_outliers(df)
                 
+                # Remove outliers parameter if causing issues
+                fig = self.chart_generator.create_chart_with_indian_format(
+                    df, selected, 
+                    title="Financial Metrics Analysis",
+                    chart_type=chart_type,
+                    use_indian_format=(st.session_state.number_format == "indian")
+                )
+                
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not create chart. Please try different metrics.")
+                    
+            except Exception as e:
+                st.error(f"Error creating visualization: {str(e)}")
+                # Show data table as fallback
+                st.subheader("Data Table (Fallback)")
+                st.dataframe(df.loc[selected].T if selected else df.T)
+        
+        # Statistics
+        if selected and st.checkbox("Show statistics"):
+            stats_data = []
+            for metric in selected:
+                if metric in df.index:
+                    series = df.loc[metric]
+                    stats_data.append({
+                        'Metric': metric,
+                        'Mean': series.mean(),
+                        'Std Dev': series.std(),
+                        'Min': series.min(),
+                        'Max': series.max(),
+                        'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if series.iloc[0] != 0 else 0
+                    })
+            
+            if stats_data:
                 stats_df = pd.DataFrame(stats_data)
                 st.dataframe(stats_df.style.format({
                     'Mean': '{:,.2f}',

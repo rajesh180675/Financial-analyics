@@ -2358,7 +2358,7 @@ class EnhancedFinancialAnalyticsPlatform:
         return 0
     
     def _find_financial_items(self, metrics, item_type):
-        """Find financial items in metrics"""
+        """Find financial items in metrics (FIXED to handle non-string values)"""
         financial_keywords = {
             'assets': ['cash', 'bank', 'investment', 'securities', 'deposits'],
             'liabilities': ['debt', 'loan', 'borrowing', 'debenture', 'bonds']
@@ -2368,7 +2368,9 @@ class EnhancedFinancialAnalyticsPlatform:
         matches = []
         
         for metric in metrics:
-            metric_lower = metric.lower()
+            # Convert metric to string to safely use .lower()
+            metric_str = str(metric) if metric else ""
+            metric_lower = metric_str.lower()
             if any(keyword in metric_lower for keyword in keywords):
                 matches.append(metric)
         

@@ -1755,114 +1755,114 @@ class EnhancedFinancialAnalyticsPlatform:
         with tabs[4]:
             self._render_data_table_tab(df)
     
-def _render_visualizations_tab(self, df):
-    """Render visualizations using enhanced chart generator (FIXED)"""
-    st.header("📊 Financial Visualizations")
-    
-    # Controls
-    col1, col2, col3 = st.columns([3, 1, 1])
-    
-    with col1:
-        # Filter to show only numeric data
-        numeric_metrics = []
-        for metric in df.index:
-            try:
-                # Check if the row has at least one numeric value
-                if any(pd.api.types.is_numeric_dtype(type(v)) for v in df.loc[metric].values):
-                    numeric_metrics.append(metric)
-            except:
-                pass
+    def _render_visualizations_tab(self, df):
+        """Render visualizations using enhanced chart generator (FIXED)"""
+        st.header("📊 Financial Visualizations")
         
-        if not numeric_metrics:
-            st.error("No numeric metrics found in data")
-            return
+        # Controls
+        col1, col2, col3 = st.columns([3, 1, 1])
         
-        default = numeric_metrics[:min(3, len(numeric_metrics))]
-        selected = st.multiselect(
-            "Select metrics:",
-            numeric_metrics,
-            default=default,
-            key="viz_metrics"
-        )
-    
-    with col2:
-        chart_type = st.selectbox(
-            "Chart type:",
-            ["line", "bar"],
-            key="chart_type_selector"
-        )
-    
-    with col3:
-        show_grid = st.checkbox("Show grid", value=True)
-    
-    # Create visualization
-    if selected:
-        try:
-            # Create the chart
-            fig = self.chart_generator.create_chart_with_indian_format(
-                df, 
-                selected, 
-                title="Financial Metrics Analysis",
-                chart_type=chart_type,
-                use_indian_format=(st.session_state.number_format == "indian")
-            )
+        with col1:
+            # Filter to show only numeric data
+            numeric_metrics = []
+            for metric in df.index:
+                try:
+                    # Check if the row has at least one numeric value
+                    if any(pd.api.types.is_numeric_dtype(type(v)) for v in df.loc[metric].values):
+                        numeric_metrics.append(metric)
+                except:
+                    pass
             
-            if fig:
-                # Add grid if requested
-                if show_grid:
-                    fig.update_xaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
-                    fig.update_yaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
+            if not numeric_metrics:
+                st.error("No numeric metrics found in data")
+                return
+            
+            default = numeric_metrics[:min(3, len(numeric_metrics))]
+            selected = st.multiselect(
+                "Select metrics:",
+                numeric_metrics,
+                default=default,
+                key="viz_metrics"
+            )
+        
+        with col2:
+            chart_type = st.selectbox(
+                "Chart type:",
+                ["line", "bar"],
+                key="chart_type_selector"
+            )
+        
+        with col3:
+            show_grid = st.checkbox("Show grid", value=True)
+        
+        # Create visualization
+        if selected:
+            try:
+                # Create the chart
+                fig = self.chart_generator.create_chart_with_indian_format(
+                    df, 
+                    selected, 
+                    title="Financial Metrics Analysis",
+                    chart_type=chart_type,
+                    use_indian_format=(st.session_state.number_format == "indian")
+                )
                 
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Could not create chart. Please try different metrics.")
+                if fig:
+                    # Add grid if requested
+                    if show_grid:
+                        fig.update_xaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                        fig.update_yaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not create chart. Please try different metrics.")
+                    # Show data table as fallback
+                    st.subheader("Data Table (Fallback)")
+                    display_df = df.loc[selected] if selected else df
+                    st.dataframe(display_df.T)
+                    
+            except Exception as e:
+                st.error(f"Error creating visualization: {str(e)}")
+                if st.session_state.debug_mode:
+                    import traceback
+                    st.code(traceback.format_exc())
+                
                 # Show data table as fallback
                 st.subheader("Data Table (Fallback)")
                 display_df = df.loc[selected] if selected else df
                 st.dataframe(display_df.T)
+        
+        # Statistics section
+        if selected:
+            with st.expander("📊 Statistical Summary", expanded=False):
+                stats_data = []
+                for metric in selected:
+                    if metric in df.index:
+                        series = pd.to_numeric(df.loc[metric], errors='coerce')
+                        series = series.dropna()
+                        
+                        if len(series) > 0:
+                            stats_data.append({
+                                'Metric': metric,
+                                'Mean': series.mean(),
+                                'Std Dev': series.std(),
+                                'Min': series.min(),
+                                'Max': series.max(),
+                                'Count': len(series),
+                                'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) > 1 and series.iloc[0] != 0 else 0
+                            })
                 
-        except Exception as e:
-            st.error(f"Error creating visualization: {str(e)}")
-            if st.session_state.debug_mode:
-                import traceback
-                st.code(traceback.format_exc())
-            
-            # Show data table as fallback
-            st.subheader("Data Table (Fallback)")
-            display_df = df.loc[selected] if selected else df
-            st.dataframe(display_df.T)
-    
-    # Statistics section
-    if selected:
-        with st.expander("📊 Statistical Summary", expanded=False):
-            stats_data = []
-            for metric in selected:
-                if metric in df.index:
-                    series = pd.to_numeric(df.loc[metric], errors='coerce')
-                    series = series.dropna()
-                    
-                    if len(series) > 0:
-                        stats_data.append({
-                            'Metric': metric,
-                            'Mean': series.mean(),
-                            'Std Dev': series.std(),
-                            'Min': series.min(),
-                            'Max': series.max(),
-                            'Count': len(series),
-                            'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) > 1 and series.iloc[0] != 0 else 0
-                        })
-            
-            if stats_data:
-                stats_df = pd.DataFrame(stats_data)
-                st.dataframe(stats_df.style.format({
-                    'Mean': '{:,.2f}',
-                    'Std Dev': '{:,.2f}',
-                    'Min': '{:,.2f}',
-                    'Max': '{:,.2f}',
-                    'Count': '{:,.0f}',
-                    'Growth %': '{:.1f}%'
-                }))
-    
+                if stats_data:
+                    stats_df = pd.DataFrame(stats_data)
+                    st.dataframe(stats_df.style.format({
+                        'Mean': '{:,.2f}',
+                        'Std Dev': '{:,.2f}',
+                        'Min': '{:,.2f}',
+                        'Max': '{:,.2f}',
+                        'Count': '{:,.0f}',
+                        'Growth %': '{:.1f}%'
+                    }))
+        
     def _render_ratios_tab(self, df):
         """Render financial ratios using enhanced calculator"""
         st.header("📈 Financial Ratio Analysis")

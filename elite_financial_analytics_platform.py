@@ -924,86 +924,165 @@ class EnhancedChartGenerator(CoreChartGenerator):
                                       use_indian_format=True, **kwargs):
         """Create charts with Indian number formatting (FIXED)"""
         try:
-            # Create the figure based on chart type
-            if chart_type == "line":
-                # Check if parent has the method
-                if hasattr(super(), 'create_line_chart'):
-                    fig = super().create_line_chart(df, metrics, title, **kwargs)
-                else:
-                    # Fallback to direct plotly creation
-                    fig = self._create_line_chart_fallback(df, metrics, title)
-            else:
-                # Check if parent has the method
-                if hasattr(super(), 'create_bar_chart'):
-                    fig = super().create_bar_chart(df, metrics, title, **kwargs)
-                else:
-                    # Fallback to direct plotly creation
-                    fig = self._create_bar_chart_fallback(df, metrics, title)
+            # Filter valid metrics that exist in the dataframe
+            valid_metrics = [m for m in metrics if m in df.index]
+            if not valid_metrics:
+                st.warning("No valid metrics found in the data")
+                return None
             
-            if use_indian_format and self.indian_converter and fig:
+            # Create the figure based on chart type
+            fig = None
+            
+            # Try to use parent class methods if available
+            if chart_type == "line":
+                # Check for various possible method names in parent class
+                if hasattr(super(), 'create_line_chart'):
+                    fig = super().create_line_chart(df, valid_metrics, title, **kwargs)
+                elif hasattr(super(), 'create_trend_chart'):
+                    fig = super().create_trend_chart(df, valid_metrics, title, **kwargs)
+                elif hasattr(super(), 'generate_line_chart'):
+                    fig = super().generate_line_chart(df, valid_metrics, title, **kwargs)
+                else:
+                    # Use direct plotly creation as fallback
+                    fig = self._create_line_chart_direct(df, valid_metrics, title)
+                    
+            elif chart_type == "bar":
+                # Check for various possible method names in parent class
+                if hasattr(super(), 'create_bar_chart'):
+                    fig = super().create_bar_chart(df, valid_metrics, title, **kwargs)
+                elif hasattr(super(), 'create_comparison_chart'):
+                    fig = super().create_comparison_chart(df, valid_metrics, title, **kwargs)
+                elif hasattr(super(), 'generate_bar_chart'):
+                    fig = super().generate_bar_chart(df, valid_metrics, title, **kwargs)
+                else:
+                    # Use direct plotly creation as fallback
+                    fig = self._create_bar_chart_direct(df, valid_metrics, title)
+            else:
+                # For any other chart type, create a line chart
+                fig = self._create_line_chart_direct(df, valid_metrics, title)
+            
+            # Apply Indian formatting if requested and figure was created
+            if fig and use_indian_format and self.indian_converter:
                 self._apply_indian_formatting(fig)
             
             return fig
+            
         except Exception as e:
             logger.error(f"Error creating chart: {e}")
             # Return a basic chart as fallback
-            return self._create_basic_chart(df, metrics, title, chart_type)
+            return self._create_error_chart(str(e))
     
-    def _create_line_chart_fallback(self, df, metrics, title):
+    def _create_line_chart_direct(self, df, metrics, title):
         """Create line chart using plotly directly"""
-        fig = go.Figure()
-        
-        for metric in metrics:
-            if metric in df.index:
-                fig.add_trace(go.Scatter(
-                    x=df.columns,
-                    y=df.loc[metric],
-                    mode='lines+markers',
-                    name=metric,
-                    line=dict(width=2),
-                    marker=dict(size=8)
-                ))
-        
-        fig.update_layout(
-            title=title,
-            xaxis_title="Year",
-            yaxis_title="Value",
-            hovermode='x unified',
-            template='plotly_white',
-            height=500
-        )
-        
-        return fig
+        try:
+            fig = go.Figure()
+            
+            # Get numeric columns only
+            numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+            
+            if not numeric_cols:
+                return self._create_error_chart("No numeric columns found")
+            
+            for metric in metrics:
+                if metric in df.index:
+                    y_values = df.loc[metric, numeric_cols].values
+                    x_values = numeric_cols
+                    
+                    fig.add_trace(go.Scatter(
+                        x=x_values,
+                        y=y_values,
+                        mode='lines+markers',
+                        name=metric,
+                        line=dict(width=2),
+                        marker=dict(size=8),
+                        connectgaps=True
+                    ))
+            
+            fig.update_layout(
+                title=dict(text=title, font=dict(size=16)),
+                xaxis_title="Year",
+                yaxis_title="Value",
+                hovermode='x unified',
+                template='plotly_white',
+                height=500,
+                showlegend=True,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                )
+            )
+            
+            return fig
+        except Exception as e:
+            logger.error(f"Error in _create_line_chart_direct: {e}")
+            return self._create_error_chart(str(e))
     
-    def _create_bar_chart_fallback(self, df, metrics, title):
+    def _create_bar_chart_direct(self, df, metrics, title):
         """Create bar chart using plotly directly"""
-        fig = go.Figure()
-        
-        for metric in metrics:
-            if metric in df.index:
-                fig.add_trace(go.Bar(
-                    x=df.columns,
-                    y=df.loc[metric],
-                    name=metric
-                ))
-        
-        fig.update_layout(
-            title=title,
-            xaxis_title="Year",
-            yaxis_title="Value",
-            barmode='group',
-            template='plotly_white',
-            height=500
-        )
-        
-        return fig
+        try:
+            fig = go.Figure()
+            
+            # Get numeric columns only
+            numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+            
+            if not numeric_cols:
+                return self._create_error_chart("No numeric columns found")
+            
+            for metric in metrics:
+                if metric in df.index:
+                    y_values = df.loc[metric, numeric_cols].values
+                    x_values = numeric_cols
+                    
+                    fig.add_trace(go.Bar(
+                        x=x_values,
+                        y=y_values,
+                        name=metric,
+                        text=[f'{v:,.0f}' if pd.notna(v) else '' for v in y_values],
+                        textposition='auto'
+                    ))
+            
+            fig.update_layout(
+                title=dict(text=title, font=dict(size=16)),
+                xaxis_title="Year",
+                yaxis_title="Value",
+                barmode='group',
+                template='plotly_white',
+                height=500,
+                showlegend=True,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                )
+            )
+            
+            return fig
+        except Exception as e:
+            logger.error(f"Error in _create_bar_chart_direct: {e}")
+            return self._create_error_chart(str(e))
     
-    def _create_basic_chart(self, df, metrics, title, chart_type):
-        """Create a basic chart as ultimate fallback"""
-        if chart_type == "line":
-            return self._create_line_chart_fallback(df, metrics, title)
-        else:
-            return self._create_bar_chart_fallback(df, metrics, title)
+    def _create_error_chart(self, error_message):
+        """Create an error placeholder chart"""
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Chart could not be created: {error_message}",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font=dict(size=14, color="red")
+        )
+        fig.update_layout(
+            height=300,
+            template='plotly_white'
+        )
+        return fig
     
     def _apply_indian_formatting(self, fig):
         """Apply Indian number formatting to plotly figure"""
@@ -1011,17 +1090,28 @@ class EnhancedChartGenerator(CoreChartGenerator):
             return
         
         try:
+            # Update hover template for all traces
             for trace in fig.data:
                 if hasattr(trace, 'y') and trace.y is not None:
-                    hover_text = []
-                    for val in trace.y:
-                        if pd.notna(val):
-                            formatted = self.indian_converter.format_to_indian(val)
-                            hover_text.append(formatted)
+                    # Create custom hover text
+                    hover_texts = []
+                    for i, val in enumerate(trace.y):
+                        if pd.notna(val) and isinstance(val, (int, float)):
+                            formatted = self.indian_converter.format_to_indian(float(val))
+                            hover_texts.append(formatted)
                         else:
-                            hover_text.append("N/A")
-                    trace.hovertext = hover_text
-                    trace.hoverinfo = 'x+text+name'
+                            hover_texts.append("N/A")
+                    
+                    # Update trace with custom hover
+                    trace.customdata = hover_texts
+                    trace.hovertemplate = '%{x}<br>%{customdata}<br><b>%{fullData.name}</b><extra></extra>'
+            
+            # Update y-axis tick format
+            fig.update_yaxis(
+                tickformat=',.0f',
+                tickprefix='₹'
+            )
+            
         except Exception as e:
             logger.warning(f"Could not apply Indian formatting: {e}")
 
@@ -1665,73 +1755,102 @@ class EnhancedFinancialAnalyticsPlatform:
         with tabs[4]:
             self._render_data_table_tab(df)
     
-    def _render_visualizations_tab(self, df):
-        """Render visualizations using enhanced chart generator (FIXED)"""
-        st.header("📊 Financial Visualizations")
-        
-        # Controls
-        col1, col2, col3 = st.columns([3, 1, 1])
-        
-        with col1:
-            available = df.index.tolist()
-            default = available[:min(3, len(available))]
-            selected = st.multiselect(
-                "Select metrics:",
-                available,
-                default=default,
-                key="viz_metrics"
-            )
-        
-        with col2:
-            chart_type = st.selectbox(
-                "Chart type:",
-                ["line", "bar"],
-                key="chart_type_selector"
-            )
-        
-        with col3:
-            show_outliers = st.checkbox("Show outliers", value=True)
-        
-        # Create visualization
-        if selected:
+def _render_visualizations_tab(self, df):
+    """Render visualizations using enhanced chart generator (FIXED)"""
+    st.header("📊 Financial Visualizations")
+    
+    # Controls
+    col1, col2, col3 = st.columns([3, 1, 1])
+    
+    with col1:
+        # Filter to show only numeric data
+        numeric_metrics = []
+        for metric in df.index:
             try:
-                outliers = None
-                if show_outliers:
-                    outliers = CoreDataProcessor.detect_outliers(df)
+                # Check if the row has at least one numeric value
+                if any(pd.api.types.is_numeric_dtype(type(v)) for v in df.loc[metric].values):
+                    numeric_metrics.append(metric)
+            except:
+                pass
+        
+        if not numeric_metrics:
+            st.error("No numeric metrics found in data")
+            return
+        
+        default = numeric_metrics[:min(3, len(numeric_metrics))]
+        selected = st.multiselect(
+            "Select metrics:",
+            numeric_metrics,
+            default=default,
+            key="viz_metrics"
+        )
+    
+    with col2:
+        chart_type = st.selectbox(
+            "Chart type:",
+            ["line", "bar"],
+            key="chart_type_selector"
+        )
+    
+    with col3:
+        show_grid = st.checkbox("Show grid", value=True)
+    
+    # Create visualization
+    if selected:
+        try:
+            # Create the chart
+            fig = self.chart_generator.create_chart_with_indian_format(
+                df, 
+                selected, 
+                title="Financial Metrics Analysis",
+                chart_type=chart_type,
+                use_indian_format=(st.session_state.number_format == "indian")
+            )
+            
+            if fig:
+                # Add grid if requested
+                if show_grid:
+                    fig.update_xaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
+                    fig.update_yaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
                 
-                # Remove outliers parameter if causing issues
-                fig = self.chart_generator.create_chart_with_indian_format(
-                    df, selected, 
-                    title="Financial Metrics Analysis",
-                    chart_type=chart_type,
-                    use_indian_format=(st.session_state.number_format == "indian")
-                )
-                
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not create chart. Please try different metrics.")
-                    
-            except Exception as e:
-                st.error(f"Error creating visualization: {str(e)}")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Could not create chart. Please try different metrics.")
                 # Show data table as fallback
                 st.subheader("Data Table (Fallback)")
-                st.dataframe(df.loc[selected].T if selected else df.T)
-        
-        # Statistics
-        if selected and st.checkbox("Show statistics"):
+                display_df = df.loc[selected] if selected else df
+                st.dataframe(display_df.T)
+                
+        except Exception as e:
+            st.error(f"Error creating visualization: {str(e)}")
+            if st.session_state.debug_mode:
+                import traceback
+                st.code(traceback.format_exc())
+            
+            # Show data table as fallback
+            st.subheader("Data Table (Fallback)")
+            display_df = df.loc[selected] if selected else df
+            st.dataframe(display_df.T)
+    
+    # Statistics section
+    if selected:
+        with st.expander("📊 Statistical Summary", expanded=False):
             stats_data = []
             for metric in selected:
                 if metric in df.index:
-                    series = df.loc[metric]
-                    stats_data.append({
-                        'Metric': metric,
-                        'Mean': series.mean(),
-                        'Std Dev': series.std(),
-                        'Min': series.min(),
-                        'Max': series.max(),
-                        'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if series.iloc[0] != 0 else 0
-                    })
+                    series = pd.to_numeric(df.loc[metric], errors='coerce')
+                    series = series.dropna()
+                    
+                    if len(series) > 0:
+                        stats_data.append({
+                            'Metric': metric,
+                            'Mean': series.mean(),
+                            'Std Dev': series.std(),
+                            'Min': series.min(),
+                            'Max': series.max(),
+                            'Count': len(series),
+                            'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) > 1 and series.iloc[0] != 0 else 0
+                        })
             
             if stats_data:
                 stats_df = pd.DataFrame(stats_data)
@@ -1740,6 +1859,7 @@ class EnhancedFinancialAnalyticsPlatform:
                     'Std Dev': '{:,.2f}',
                     'Min': '{:,.2f}',
                     'Max': '{:,.2f}',
+                    'Count': '{:,.0f}',
                     'Growth %': '{:.1f}%'
                 }))
     

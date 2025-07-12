@@ -1862,7 +1862,7 @@ class EnhancedFinancialAnalyticsPlatform:
                         'Count': '{:,.0f}',
                         'Growth %': '{:.1f}%'
                     }))
-        
+    
     def _render_ratios_tab(self, df):
         """Render financial ratios using enhanced calculator"""
         st.header("📈 Financial Ratio Analysis")

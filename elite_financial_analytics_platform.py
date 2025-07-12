@@ -3523,72 +3523,221 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
-    def _process_uploaded_files(self, files: List[UploadedFile]):
-        """Process uploaded files"""
-        try:
-            # Process each file
-            all_data = []
+def _process_uploaded_files(self, files: List[UploadedFile]):
+    """Process uploaded files with enhanced error handling"""
+    try:
+        # Process each file
+        all_data = []
+        
+        for file in files:
+            self.logger.info(f"Processing file: {file.name}, size: {file.size} bytes")
             
-            for file in files:
-                with ErrorContext(f"Processing {file.name}", self.logger):
-                    # Read and parse file based on type
-                    if file.name.endswith('.csv'):
+            try:
+                # Read and parse file based on type
+                if file.name.endswith('.csv'):
+                    # Try different CSV reading approaches
+                    try:
+                        # First try with index_col=0
                         df = pd.read_csv(file, index_col=0)
-                    elif file.name.endswith(('.xls', '.xlsx')):
+                        self.logger.info(f"Read CSV with index_col=0, shape: {df.shape}")
+                    except Exception as e1:
+                        self.logger.warning(f"Failed with index_col=0: {e1}")
+                        file.seek(0)  # Reset file pointer
+                        try:
+                            # Try without index_col
+                            df = pd.read_csv(file)
+                            # Use first column as index if it looks like metric names
+                            if df.iloc[:, 0].dtype == 'object':
+                                df = df.set_index(df.columns[0])
+                            self.logger.info(f"Read CSV without index_col, shape: {df.shape}")
+                        except Exception as e2:
+                            self.logger.error(f"Failed to read CSV: {e2}")
+                            st.error(f"Error reading {file.name}: {str(e2)}")
+                            df = None
+                
+                elif file.name.endswith(('.xls', '.xlsx')):
+                    # Try different Excel reading approaches
+                    try:
+                        # First try with index_col=0
                         df = pd.read_excel(file, index_col=0)
-                    else:
-                        # HTML or other formats
-                        if CORE_COMPONENTS_AVAILABLE:
-                            content = file.read()
-                            result = parse_html_content(content, file.name)
-                            if result:
-                                df = result['statement']
+                        self.logger.info(f"Read Excel with index_col=0, shape: {df.shape}")
+                    except Exception as e1:
+                        self.logger.warning(f"Failed with index_col=0: {e1}")
+                        file.seek(0)  # Reset file pointer
+                        try:
+                            # Try without index_col
+                            df = pd.read_excel(file)
+                            # Use first column as index if it looks like metric names
+                            if not df.empty and df.iloc[:, 0].dtype == 'object':
+                                df = df.set_index(df.columns[0])
+                            self.logger.info(f"Read Excel without index_col, shape: {df.shape}")
+                        except Exception as e2:
+                            self.logger.error(f"Failed to read Excel: {e2}")
+                            st.error(f"Error reading {file.name}: {str(e2)}")
+                            df = None
+                
+                elif file.name.endswith(('.html', '.htm')):
+                    # HTML parsing
+                    try:
+                        content = file.read()
+                        
+                        # Try pandas HTML parsing first
+                        try:
+                            # Read all tables from HTML
+                            dfs = pd.read_html(io.StringIO(content.decode('utf-8')))
+                            if dfs:
+                                # Take the largest table
+                                df = max(dfs, key=lambda x: x.size)
+                                # Try to set appropriate index
+                                if df.iloc[:, 0].dtype == 'object':
+                                    df = df.set_index(df.columns[0])
+                                self.logger.info(f"Read HTML table, shape: {df.shape}")
                             else:
                                 df = None
-                        else:
-                            st.warning(f"Cannot parse {file.name} - core components not available")
-                            df = None
+                        except Exception as e:
+                            self.logger.warning(f"Pandas HTML parsing failed: {e}")
+                            
+                            # Try core components if available
+                            if CORE_COMPONENTS_AVAILABLE:
+                                result = parse_html_content(content, file.name)
+                                if result:
+                                    df = result['statement']
+                                else:
+                                    df = None
+                            else:
+                                st.warning(f"Cannot parse {file.name} - install pandas with html support: pip install 'pandas[html]' lxml html5lib")
+                                df = None
+                                
+                    except Exception as e:
+                        self.logger.error(f"Failed to read HTML: {e}")
+                        st.error(f"Error reading {file.name}: {str(e)}")
+                        df = None
+                
+                else:
+                    st.warning(f"Unsupported file type: {file.name}")
+                    df = None
+                
+                # Validate the dataframe
+                if df is not None:
+                    self.logger.info(f"Dataframe info for {file.name}:")
+                    self.logger.info(f"  Shape: {df.shape}")
+                    self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
+                    self.logger.info(f"  Index: {list(df.index)[:5]}...")
+                    
+                    # Basic validation
+                    if df.empty:
+                        st.warning(f"{file.name} is empty")
+                        df = None
+                    elif df.shape[0] < 2 or df.shape[1] < 2:
+                        st.warning(f"{file.name} has insufficient data (minimum 2x2 required)")
+                        df = None
+                    else:
+                        # Ensure numeric columns
+                        numeric_cols = df.select_dtypes(include=[np.number]).columns
+                        if len(numeric_cols) == 0:
+                            st.warning(f"{file.name} has no numeric columns")
+                            # Try to convert columns to numeric
+                            for col in df.columns:
+                                df[col] = pd.to_numeric(df[col], errors='coerce')
+                            
+                            # Check again
+                            numeric_cols = df.select_dtypes(include=[np.number]).columns
+                            if len(numeric_cols) == 0:
+                                df = None
                     
                     if df is not None:
                         all_data.append(df)
+                        st.success(f"✅ Successfully parsed {file.name}")
+                        
+            except Exception as e:
+                self.logger.error(f"Error processing {file.name}: {e}")
+                st.error(f"Error processing {file.name}: {str(e)}")
+                if self.config.get('app.debug', False):
+                    st.exception(e)
+        
+        if all_data:
+            st.info(f"Successfully parsed {len(all_data)} file(s)")
             
-            if all_data:
-                # Merge data if multiple files
-                if len(all_data) == 1:
-                    merged_data = all_data[0]
-                else:
-                    # Simple merge by columns
-                    merged_data = pd.concat(all_data, axis=1)
-                    merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
-                
-                # Process and validate
-                processed_data, validation = self.components['processor'].process(merged_data)
-                
-                if validation.is_valid:
-                    self.state.set('analysis_data', processed_data)
-                    self.state.set('company_name', files[0].name.split('.')[0])
-                    st.success("Files processed successfully!")
-                    
-                    # Auto-map if AI is enabled
-                    if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
-                        self._perform_ai_mapping(processed_data)
-                    
-                    st.rerun()
-                else:
-                    st.error("Validation failed:")
-                    for error in validation.errors:
-                        st.error(f"- {error}")
-                    for warning in validation.warnings:
-                        st.warning(f"- {warning}")
+            # Merge data if multiple files
+            if len(all_data) == 1:
+                merged_data = all_data[0]
             else:
-                st.error("No valid data found in uploaded files")
-                
-        except Exception as e:
-            self.logger.error(f"Error processing files: {e}")
-            st.error(f"Error processing files: {str(e)}")
+                # Try to merge intelligently
+                try:
+                    # If all dataframes have the same index, concat by columns
+                    if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
+                        merged_data = pd.concat(all_data, axis=1)
+                        merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
+                        st.info("Merged files by columns (same metrics)")
+                    else:
+                        # Otherwise, try to merge by index
+                        merged_data = all_data[0]
+                        for df in all_data[1:]:
+                            # Add missing metrics
+                            for idx in df.index:
+                                if idx not in merged_data.index:
+                                    merged_data.loc[idx] = df.loc[idx]
+                        st.info("Merged files by combining unique metrics")
+                except Exception as e:
+                    self.logger.error(f"Error merging data: {e}")
+                    st.warning("Could not merge files automatically, using first file only")
+                    merged_data = all_data[0]
             
-            if self.config.get('app.debug', False):
-                st.exception(e)
+            # Show data preview
+            with st.expander("📊 Data Preview", expanded=False):
+                st.dataframe(merged_data.head(10))
+                st.write(f"Shape: {merged_data.shape}")
+            
+            # Process and validate
+            processed_data, validation = self.components['processor'].process(merged_data)
+            
+            if validation.is_valid:
+                self.state.set('analysis_data', processed_data)
+                self.state.set('company_name', files[0].name.split('.')[0])
+                st.success("Files processed successfully!")
+                
+                # Auto-map if AI is enabled
+                if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
+                    self._perform_ai_mapping(processed_data)
+                
+                st.rerun()
+            else:
+                st.error("Validation failed:")
+                for error in validation.errors:
+                    st.error(f"- {error}")
+                for warning in validation.warnings:
+                    st.warning(f"- {warning}")
+                    
+                # Show data anyway for debugging
+                if self.config.get('app.debug', False):
+                    st.write("Debug: Processed data shape:", processed_data.shape)
+                    st.dataframe(processed_data.head())
+        else:
+            st.error("No valid data found in uploaded files")
+            st.info("""
+            **Troubleshooting tips:**
+            1. Ensure your CSV/Excel file has financial metrics in rows and years in columns
+            2. The first column should contain metric names (e.g., Revenue, Total Assets)
+            3. Other columns should contain years or periods
+            4. Example structure:
+            """)
+            
+            # Show example structure
+            example_df = pd.DataFrame({
+                'Metric': ['Revenue', 'Total Assets', 'Net Income'],
+                '2021': [100000, 500000, 20000],
+                '2022': [120000, 550000, 25000],
+                '2023': [140000, 600000, 30000]
+            }).set_index('Metric')
+            
+            st.dataframe(example_df)
+            
+    except Exception as e:
+        self.logger.error(f"Error processing files: {e}")
+        st.error(f"Error processing files: {str(e)}")
+        
+        if self.config.get('app.debug', False):
+            st.exception(e)
     
     def _load_sample_data(self, sample_name: str):
         """Load sample data"""

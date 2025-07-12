@@ -320,7 +320,7 @@ class EmbeddingsCache:
         if self.cache_file.exists():
             self.cache_file.unlink()
 
-# --- 6. IND-AS Parser ---
+# --- 6. IND-AS Parser (FIXED) ---
 class IndASParser:
     """Advanced parser for IND-AS format financial statements"""
     
@@ -352,7 +352,7 @@ class IndASParser:
         return patterns
     
     def parse_statements(self, text: str) -> ParsedFinancialData:
-        """Parse IND-AS format financial statements from text"""
+        """Parse IND-AS format financial statements from text (FIXED)"""
         lines = text.strip().split('\n')
         
         statement_type = self._detect_statement_type(text)
@@ -362,7 +362,8 @@ class IndASParser:
         if not years:
             years = [str(datetime.now().year)]
         
-        parsed_data = {}
+        # Store metrics with their values for each year
+        metrics_data = {}
         current_section = None
         parsing_notes = []
         
@@ -383,20 +384,42 @@ class IndASParser:
                 
                 metric_name = SecurityValidator.sanitize_metric_name(metric_name)
                 
+                # Store the metric and its values
+                if metric_name not in metrics_data:
+                    metrics_data[metric_name] = {}
+                
                 for year, value in values.items():
-                    if year not in parsed_data:
-                        parsed_data[year] = {}
-                    parsed_data[year][metric_name] = value
+                    metrics_data[metric_name][year] = value
                 
                 if metric_data.get('note'):
                     parsing_notes.append(metric_data['note'])
         
-        # Create DataFrame with proper error handling
-        if parsed_data:
-            df = pd.DataFrame(parsed_data)
+        # Create DataFrame with metrics as index and years as columns
+        if metrics_data:
+            # Prepare data for DataFrame
+            data_for_df = {}
+            all_years = set()
+            
+            for metric, year_values in metrics_data.items():
+                all_years.update(year_values.keys())
+            
+            # Sort years
+            sorted_years = sorted(list(all_years))
+            
+            # Build the data dictionary with years as columns
+            for year in sorted_years:
+                data_for_df[year] = {}
+                for metric, year_values in metrics_data.items():
+                    data_for_df[year][metric] = year_values.get(year, np.nan)
+            
+            # Create DataFrame with metrics as index
+            df = pd.DataFrame(data_for_df)
+            df.index.name = 'Metrics'
+            
         else:
             # Create empty DataFrame with at least one year column
             df = pd.DataFrame(columns=years[:1] if years else ['2023'])
+            df.index.name = 'Metrics'
         
         year_columns = sorted([str(col) for col in df.columns if str(col).isdigit()], key=int)
         
@@ -971,35 +994,12 @@ class EnhancedChartGenerator(CoreChartGenerator):
                 st.warning("No valid metrics found in the data")
                 return None
             
-            # Create the figure based on chart type
-            fig = None
-            
-            # Try to use parent class methods if available
+            # Always use direct plotly creation to ensure we get a proper figure
             if chart_type == "line":
-                # Check for various possible method names in parent class
-                if hasattr(super(), 'create_line_chart'):
-                    fig = super().create_line_chart(df, valid_metrics, title, **kwargs)
-                elif hasattr(super(), 'create_trend_chart'):
-                    fig = super().create_trend_chart(df, valid_metrics, title, **kwargs)
-                elif hasattr(super(), 'generate_line_chart'):
-                    fig = super().generate_line_chart(df, valid_metrics, title, **kwargs)
-                else:
-                    # Use direct plotly creation as fallback
-                    fig = self._create_line_chart_direct(df, valid_metrics, title)
-                    
+                fig = self._create_line_chart_direct(df, valid_metrics, title)
             elif chart_type == "bar":
-                # Check for various possible method names in parent class
-                if hasattr(super(), 'create_bar_chart'):
-                    fig = super().create_bar_chart(df, valid_metrics, title, **kwargs)
-                elif hasattr(super(), 'create_comparison_chart'):
-                    fig = super().create_comparison_chart(df, valid_metrics, title, **kwargs)
-                elif hasattr(super(), 'generate_bar_chart'):
-                    fig = super().generate_bar_chart(df, valid_metrics, title, **kwargs)
-                else:
-                    # Use direct plotly creation as fallback
-                    fig = self._create_bar_chart_direct(df, valid_metrics, title)
+                fig = self._create_bar_chart_direct(df, valid_metrics, title)
             else:
-                # For any other chart type, create a line chart
                 fig = self._create_line_chart_direct(df, valid_metrics, title)
             
             # Apply Indian formatting if requested and figure was created
@@ -1704,6 +1704,7 @@ class EnhancedFinancialAnalyticsPlatform:
             for key, df in data.statements.items():
                 if isinstance(df, pd.DataFrame):
                     st.sidebar.write(f"{key} shape: {df.shape}")
+                    st.sidebar.write(f"Index sample: {list(df.index[:5])}")
         else:
             st.sidebar.write("No data loaded")
     
@@ -1918,8 +1919,8 @@ class EnhancedFinancialAnalyticsPlatform:
                 )
                 
                 if fig:
-                    # Add grid if requested
-                    if show_grid:
+                    # Add grid if requested - check if figure has update methods
+                    if show_grid and hasattr(fig, 'update_xaxis'):
                         fig.update_xaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
                         fig.update_yaxis(showgrid=True, gridwidth=1, gridcolor='LightGray')
                     
@@ -2048,6 +2049,16 @@ class EnhancedFinancialAnalyticsPlatform:
         # Check if mappings exist
         if not st.session_state.pn_mappings:
             st.info("Configure Penman-Nissim mappings to proceed")
+            
+            # Show IND-AS metrics info
+            st.markdown("""
+            <div class='indas-note'>
+            <strong>📋 Available IND-AS Metrics:</strong><br>
+            The dropdown below will show all financial metrics extracted from your IND-AS formatted statements, 
+            including Balance Sheet items (Assets, Liabilities, Equity) and Income Statement items 
+            (Revenue, Expenses, Profits).
+            </div>
+            """, unsafe_allow_html=True)
             
             # Auto-mapping interface
             with st.expander("⚙️ Configure P-N Mappings", expanded=True):
@@ -2258,65 +2269,75 @@ class EnhancedFinancialAnalyticsPlatform:
         self._render_export_options(df)
     
     def _render_pn_mapping_interface(self, df):
-        """Render Penman-Nissim mapping interface"""
+        """Render Penman-Nissim mapping interface (FIXED)"""
+        # Show current data structure for debugging
+        if st.session_state.debug_mode:
+            st.write("DataFrame Index:", list(df.index[:10]))  # Show first 10 items
+        
         # Convert index to list and ensure all items are strings
         index_list = [str(item) for item in df.index.tolist()]
         available = [''] + index_list
         
         # Essential mappings
         st.markdown("### Essential Mappings")
+        st.info("Select the appropriate IND-AS metrics from your financial statements for each required field")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.session_state.pn_mappings['Total Assets'] = st.selectbox(
                 "Total Assets", available,
-                index=self._find_index(available, 'Total Assets')
+                index=self._find_index(available, 'Total Assets', 'TOTAL ASSETS')
             )
             st.session_state.pn_mappings['Total Equity'] = st.selectbox(
                 "Total Equity", available,
-                index=self._find_index(available, 'Total Equity')
+                index=self._find_index(available, 'Total Equity', 'TOTAL EQUITY', 'Shareholders Equity')
             )
         
         with col2:
             st.session_state.pn_mappings['Total Liabilities'] = st.selectbox(
                 "Total Liabilities", available,
-                index=self._find_index(available, 'Total Liabilities')
+                index=self._find_index(available, 'Total Liabilities', 'TOTAL LIABILITIES')
             )
             st.session_state.pn_mappings['Revenue'] = st.selectbox(
                 "Revenue", available,
-                index=self._find_index(available, 'Revenue')
+                index=self._find_index(available, 'Revenue', 'Total Income', 'Net Sales', 'Revenue from Operations')
             )
         
         with col3:
             st.session_state.pn_mappings['Operating Income'] = st.selectbox(
                 "Operating Income/EBIT", available,
-                index=self._find_index(available, 'EBIT')
+                index=self._find_index(available, 'EBIT', 'Operating Profit', 'Profit Before Tax')
             )
             st.session_state.pn_mappings['Net Income'] = st.selectbox(
                 "Net Income", available,
-                index=self._find_index(available, 'Net Profit')
+                index=self._find_index(available, 'Net Profit', 'Profit for the Period', 'Net Income')
             )
         
         # Financial items
         st.markdown("### Financial Items")
+        st.info("Select multiple items that represent financial assets and liabilities")
+        
+        # Find financial items from the index
+        financial_assets_defaults = self._find_financial_items(df.index, 'assets')
+        financial_liabilities_defaults = self._find_financial_items(df.index, 'liabilities')
         
         st.session_state.pn_mappings['Financial Assets'] = st.multiselect(
             "Financial Assets (Cash, Investments, etc.)",
             index_list,
-            default=self._find_financial_items(df.index, 'assets')
+            default=financial_assets_defaults[:5] if financial_assets_defaults else []  # Limit defaults
         )
         
         st.session_state.pn_mappings['Financial Liabilities'] = st.multiselect(
             "Financial Liabilities (Debt, Loans, etc.)",
             index_list,
-            default=self._find_financial_items(df.index, 'liabilities')
+            default=financial_liabilities_defaults[:5] if financial_liabilities_defaults else []  # Limit defaults
         )
         
         st.session_state.pn_mappings['Net Financial Expense'] = st.selectbox(
             "Net Financial Expense/Interest",
             available,
-            index=self._find_index(available, 'Interest', 'Finance Cost')
+            index=self._find_index(available, 'Interest', 'Finance Cost', 'Finance Costs', 'Interest Expense')
         )
     
     # --- Helper Methods ---
@@ -2539,8 +2560,8 @@ class EnhancedFinancialAnalyticsPlatform:
     def _find_financial_items(self, metrics, item_type):
         """Find financial items in metrics (FIXED to handle all types)"""
         financial_keywords = {
-            'assets': ['cash', 'bank', 'investment', 'securities', 'deposits'],
-            'liabilities': ['debt', 'loan', 'borrowing', 'debenture', 'bonds']
+            'assets': ['cash', 'bank', 'investment', 'securities', 'deposits', 'financial assets'],
+            'liabilities': ['debt', 'loan', 'borrowing', 'debenture', 'bonds', 'financial liabilities']
         }
         
         keywords = financial_keywords.get(item_type, [])

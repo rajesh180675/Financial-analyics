@@ -44,7 +44,13 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 # Text Processing and Security
 import bleach
 from fuzzywuzzy import fuzz
-from sentence_transformers import SentenceTransformer
+
+# Conditional import for sentence transformers to avoid failures
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMER_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMER_AVAILABLE = False
 
 # --- IMPORT FROM CORE FINANCIAL ANALYTICS ---
 try:
@@ -81,16 +87,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Application Constants
 APP_VERSION = "2.0.0"
-MAX_FILE_SIZE_MB = CORE_MAX_FILE_SIZE
-ALLOWED_FILE_TYPES = CORE_ALLOWED_TYPES
+MAX_FILE_SIZE_MB = CORE_MAX_FILE_SIZE if CORE_COMPONENTS_AVAILABLE else 10
+ALLOWED_FILE_TYPES = CORE_ALLOWED_TYPES if CORE_COMPONENTS_AVAILABLE else ['csv', 'html', 'htm', 'xls', 'xlsx']
 CACHE_DIR = Path(".cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
-# Use core constants
-YEAR_REGEX = CORE_YEAR_REGEX
+# Use core constants with fallbacks
+YEAR_REGEX = CORE_YEAR_REGEX if CORE_COMPONENTS_AVAILABLE else re.compile(r'(20\d{2}|19\d{2}|FY\s?20\d{2}|FY\s?19\d{2})')
 
 # Merge required metrics with IND-AS specific ones
-REQUIRED_METRICS = CORE_REQUIRED_METRICS.copy()
+REQUIRED_METRICS = CORE_REQUIRED_METRICS.copy() if CORE_COMPONENTS_AVAILABLE else {}
 REQUIRED_METRICS.update({
     'IND-AS': ['CSR Expense', 'Related Party Transactions', 'Deferred Tax Assets', 'Deferred Tax Liabilities'],
     'Indian_Specific': ['Dividend Distribution Tax', 'Securities Transaction Tax', 'GST Payable']
@@ -232,6 +238,8 @@ class SecurityValidator:
     @staticmethod
     def sanitize_metric_name(name: str) -> str:
         """Sanitize metric names to prevent injection"""
+        if not isinstance(name, str):
+            name = str(name)
         sanitized = re.sub(r'[;<>\"\'`]', '', name)
         return sanitized[:100]
     
@@ -350,6 +358,10 @@ class IndASParser:
         statement_type = self._detect_statement_type(text)
         years = self._extract_years(text)
         
+        # Default to current year if no years found
+        if not years:
+            years = [str(datetime.now().year)]
+        
         parsed_data = {}
         current_section = None
         parsing_notes = []
@@ -379,8 +391,14 @@ class IndASParser:
                 if metric_data.get('note'):
                     parsing_notes.append(metric_data['note'])
         
-        df = pd.DataFrame(parsed_data)
-        year_columns = sorted([col for col in df.columns if str(col).isdigit()], key=int)
+        # Create DataFrame with proper error handling
+        if parsed_data:
+            df = pd.DataFrame(parsed_data)
+        else:
+            # Create empty DataFrame with at least one year column
+            df = pd.DataFrame(columns=years[:1] if years else ['2023'])
+        
+        year_columns = sorted([str(col) for col in df.columns if str(col).isdigit()], key=int)
         
         result = ParsedFinancialData(
             company_name=self._extract_company_name(text),
@@ -408,9 +426,11 @@ class IndASParser:
         """Extract years from statement text"""
         years = set()
         
+        # Standard year patterns
         year_matches = re.findall(r'\b(20[1-2]\d|19[89]\d)\b', text)
         years.update(year_matches)
         
+        # Date-specific patterns
         date_patterns = [
             r'March\s+31,?\s+(20[1-2]\d)',
             r'December\s+31,?\s+(20[1-2]\d)',
@@ -567,6 +587,11 @@ class IndianNumberConverter:
         if pd.isna(number):
             return "-"
         
+        try:
+            number = float(number)
+        except:
+            return str(number)
+        
         abs_num = abs(number)
         sign = '-' if number < 0 else ''
         
@@ -591,6 +616,9 @@ class IndianNumberConverter:
 @st.cache_resource
 def load_sentence_transformer_model():
     """Load and cache the sentence transformer model"""
+    if not SENTENCE_TRANSFORMER_AVAILABLE:
+        return None
+    
     if st.session_state.get('lite_mode', False):
         return None
     
@@ -669,9 +697,13 @@ class IntelligentFinancialMapper:
     
     def _initialize_model(self):
         """Initialize the sentence transformer model"""
+        if not SENTENCE_TRANSFORMER_AVAILABLE:
+            logger.warning("Sentence transformers not available. Using fuzzy matching.")
+            return
+        
         self.model = load_sentence_transformer_model()
         if self.model is None:
-            st.warning("AI model not available. Using fuzzy matching instead.")
+            logger.warning("AI model not available. Using fuzzy matching instead.")
         else:
             # Use cached standard embeddings
             self.standard_embeddings = compute_standard_embeddings_cached(self.model)
@@ -730,8 +762,11 @@ class IntelligentFinancialMapper:
             st.warning(f"Processing first {MAX_METRICS} metrics for performance. Consider smaller batches.")
             source_metrics = source_metrics[:MAX_METRICS]
         
-        # Prepare texts for batch processing
-        source_texts = [metric.lower() for metric in source_metrics]
+        # Prepare texts for batch processing - handle non-string values
+        source_texts = []
+        for metric in source_metrics:
+            metric_str = str(metric) if metric is not None else ""
+            source_texts.append(metric_str.lower())
         
         # Get all embeddings in batch (much faster)
         with st.spinner("Computing metric similarities..."):
@@ -781,12 +816,12 @@ class IntelligentFinancialMapper:
             best_match, best_score = top_matches[0]
             
             if best_score > 0.6:  # Threshold for accepting match
-                mappings[source_metric] = best_match
-                confidence_scores[source_metric] = float(best_score)
+                mappings[str(source_metric)] = best_match
+                confidence_scores[str(source_metric)] = float(best_score)
             else:
                 unmapped.append(source_metric)
             
-            suggestions[source_metric] = [(m, float(s)) for m, s in top_matches]
+            suggestions[str(source_metric)] = [(m, float(s)) for m, s in top_matches]
         
         return MappingResult(
             mappings=mappings,
@@ -817,14 +852,16 @@ class IntelligentFinancialMapper:
         target_lower = [t.lower() for t in target_metrics]
         
         for source_metric in source_metrics:
-            source_lower = source_metric.lower()
+            # Handle non-string metrics
+            source_metric_str = str(source_metric) if source_metric is not None else ""
+            source_lower = source_metric_str.lower()
             
             # Quick exact match check first
             if source_lower in target_lower:
                 idx = target_lower.index(source_lower)
-                mappings[source_metric] = target_metrics[idx]
-                confidence_scores[source_metric] = 1.0
-                suggestions[source_metric] = [(target_metrics[idx], 1.0)]
+                mappings[source_metric_str] = target_metrics[idx]
+                confidence_scores[source_metric_str] = 1.0
+                suggestions[source_metric_str] = [(target_metrics[idx], 1.0)]
                 continue
             
             # Fuzzy matching for non-exact matches
@@ -836,12 +873,12 @@ class IntelligentFinancialMapper:
             scores.sort(key=lambda x: x[1], reverse=True)
             
             if scores and scores[0][1] > 0.7:
-                mappings[source_metric] = scores[0][0]
-                confidence_scores[source_metric] = scores[0][1]
+                mappings[source_metric_str] = scores[0][0]
+                confidence_scores[source_metric_str] = scores[0][1]
             else:
                 unmapped.append(source_metric)
             
-            suggestions[source_metric] = scores[:3]
+            suggestions[source_metric_str] = scores[:3]
         
         return MappingResult(
             mappings=mappings,
@@ -925,7 +962,11 @@ class EnhancedChartGenerator(CoreChartGenerator):
         """Create charts with Indian number formatting (FIXED)"""
         try:
             # Filter valid metrics that exist in the dataframe
-            valid_metrics = [m for m in metrics if m in df.index]
+            valid_metrics = []
+            for m in metrics:
+                if m in df.index:
+                    valid_metrics.append(m)
+            
             if not valid_metrics:
                 st.warning("No valid metrics found in the data")
                 return None
@@ -978,7 +1019,10 @@ class EnhancedChartGenerator(CoreChartGenerator):
             fig = go.Figure()
             
             # Get numeric columns only
-            numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+            numeric_cols = []
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    numeric_cols.append(col)
             
             if not numeric_cols:
                 return self._create_error_chart("No numeric columns found")
@@ -992,7 +1036,7 @@ class EnhancedChartGenerator(CoreChartGenerator):
                         x=x_values,
                         y=y_values,
                         mode='lines+markers',
-                        name=metric,
+                        name=str(metric),
                         line=dict(width=2),
                         marker=dict(size=8),
                         connectgaps=True
@@ -1026,7 +1070,10 @@ class EnhancedChartGenerator(CoreChartGenerator):
             fig = go.Figure()
             
             # Get numeric columns only
-            numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+            numeric_cols = []
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    numeric_cols.append(col)
             
             if not numeric_cols:
                 return self._create_error_chart("No numeric columns found")
@@ -1039,7 +1086,7 @@ class EnhancedChartGenerator(CoreChartGenerator):
                     fig.add_trace(go.Bar(
                         x=x_values,
                         y=y_values,
-                        name=metric,
+                        name=str(metric),
                         text=[f'{v:,.0f}' if pd.notna(v) else '' for v in y_values],
                         textposition='auto'
                     ))
@@ -1122,10 +1169,34 @@ class EnhancedFinancialRatioCalculator(CoreRatioCalculator):
         super().__init__()
         self.indian_converter = None
     
+    def safe_divide(self, numerator, denominator, percentage=False):
+        """Safe division with better error handling"""
+        try:
+            if isinstance(denominator, pd.Series):
+                result = numerator / denominator.replace(0, np.nan)
+            else:
+                result = numerator / denominator if denominator != 0 else np.nan
+            
+            if percentage:
+                result = result * 100
+            
+            return result
+        except Exception as e:
+            logger.error(f"Division error: {e}")
+            return pd.Series([np.nan] * len(numerator)) if isinstance(numerator, pd.Series) else np.nan
+    
     def calculate_indas_specific_ratios(self, df):
         """Calculate IND-AS specific ratios"""
-        ratios = self.calculate_all_ratios(df)
+        ratios = {}
         
+        # First calculate standard ratios
+        try:
+            ratios = self.calculate_all_ratios(df)
+        except Exception as e:
+            logger.error(f"Error calculating standard ratios: {e}")
+            ratios = {}
+        
+        # Add IND-AS specific ratios
         indas_ratios = pd.DataFrame(index=df.columns)
         
         if 'CSR Expense' in df.index and 'Net Profit' in df.index:
@@ -1168,10 +1239,20 @@ class EnhancedPenmanNissimAnalyzer(CorePenmanNissim):
     def calculate_with_indas(self):
         """Calculate Penman-Nissim with IND-AS adjustments"""
         self.apply_indas_adjustments()
-        results = self.calculate_all()
         
-        if 'indas_metrics' not in results:
-            results['indas_metrics'] = pd.DataFrame(self.indas_adjustments)
+        # Call parent calculate_all with error handling
+        try:
+            results = self.calculate_all()
+        except Exception as e:
+            logger.error(f"Error in Penman-Nissim calculation: {e}")
+            results = {"error": str(e)}
+        
+        # Add IND-AS metrics if available
+        if self.indas_adjustments and 'error' not in results:
+            try:
+                results['indas_metrics'] = pd.DataFrame(self.indas_adjustments)
+            except Exception as e:
+                logger.error(f"Error creating IND-AS metrics DataFrame: {e}")
         
         return results
 
@@ -1209,7 +1290,11 @@ class IntegratedIndustryBenchmarks(CoreIndustryBenchmarks):
     
     def __init__(self):
         super().__init__()
-        self.BENCHMARKS.update(self.INDIAN_BENCHMARKS)
+        # Safely update benchmarks
+        if hasattr(self, 'BENCHMARKS'):
+            self.BENCHMARKS.update(self.INDIAN_BENCHMARKS)
+        else:
+            self.BENCHMARKS = self.INDIAN_BENCHMARKS
     
     def get_indian_peer_comparison(self, company_metrics, industry):
         """Get comparison with Indian peers"""
@@ -1220,16 +1305,19 @@ class IntegratedIndustryBenchmarks(CoreIndustryBenchmarks):
         benchmarks = self.INDIAN_BENCHMARKS[industry]
         
         for metric, value in company_metrics.items():
-            if metric in benchmarks and not np.isnan(value):
-                benchmark_data = benchmarks[metric]
-                if isinstance(benchmark_data, dict) and 'mean' in benchmark_data:
-                    percentile = self.get_percentile_rank(value, benchmark_data)
-                    comparison[metric] = {
-                        'value': value,
-                        'industry_mean': benchmark_data['mean'],
-                        'percentile': percentile,
-                        'quartiles': benchmark_data.get('quartiles', [])
-                    }
+            try:
+                if metric in benchmarks and not np.isnan(value):
+                    benchmark_data = benchmarks[metric]
+                    if isinstance(benchmark_data, dict) and 'mean' in benchmark_data:
+                        percentile = self.get_percentile_rank(value, benchmark_data)
+                        comparison[metric] = {
+                            'value': value,
+                            'industry_mean': benchmark_data['mean'],
+                            'percentile': percentile,
+                            'quartiles': benchmark_data.get('quartiles', [])
+                        }
+            except Exception as e:
+                logger.error(f"Error comparing metric {metric}: {e}")
         
         return comparison
 
@@ -1278,22 +1366,30 @@ def parse_single_file(uploaded_file: UploadedFile) -> Optional[Dict[str, Any]]:
         
         df = parsed_data["statement"]
         
+        # Handle empty dataframe
+        if df.empty:
+            st.warning(f"No data found in '{uploaded_file.name}'.")
+            return None
+        
         year_cols_map = {}
         for col in df.columns:
-            match = YEAR_REGEX.search(str(col))
+            col_str = str(col)
+            match = YEAR_REGEX.search(col_str)
             if match:
-                year = match.group(0).replace('FY', '')
+                year = match.group(0).replace('FY', '').strip()
                 year_cols_map[col] = year
             else:
                 try:
-                    year = int(col)
+                    year = int(col_str)
                     if 1980 <= year <= 2050:
                         year_cols_map[col] = str(year)
                 except:
                     pass
         
-        df = df.rename(columns=year_cols_map)
-        valid_years = sorted([y for y in df.columns if str(y).isdigit()], key=int)
+        if year_cols_map:
+            df = df.rename(columns=year_cols_map)
+        
+        valid_years = sorted([str(y) for y in df.columns if str(y).isdigit()], key=int)
         
         if not valid_years:
             st.warning(f"No valid year columns found in '{uploaded_file.name}'.")
@@ -1476,6 +1572,8 @@ class EnhancedFinancialAnalyticsPlatform:
     
     def should_load_ai(self) -> bool:
         """Check if AI components should be loaded"""
+        if not SENTENCE_TRANSFORMER_AVAILABLE:
+            return False
         if st.session_state.get('lite_mode', False):
             return False
         if not st.session_state.get('use_ai_mapping', True):
@@ -1486,14 +1584,25 @@ class EnhancedFinancialAnalyticsPlatform:
         """Get AI mapper with lazy initialization"""
         if self.ai_mapper is None and self.should_load_ai():
             with st.spinner("Initializing AI components..."):
-                self.ai_mapper = IntelligentFinancialMapper()
+                try:
+                    self.ai_mapper = IntelligentFinancialMapper()
+                except Exception as e:
+                    logger.error(f"Failed to initialize AI mapper: {e}")
+                    st.warning("AI mapping not available. Using fuzzy matching.")
         return self.ai_mapper
     
     def run(self):
         """Main application entry point"""
-        self._render_header()
-        self._render_sidebar()
-        self._render_main_content()
+        try:
+            self._render_header()
+            self._render_sidebar()
+            self._render_main_content()
+        except Exception as e:
+            logger.error(f"Application error: {e}")
+            st.error(f"An error occurred: {str(e)}")
+            if st.session_state.debug_mode:
+                import traceback
+                st.code(traceback.format_exc())
     
     def _render_header(self):
         """Render application header"""
@@ -1545,7 +1654,7 @@ class EnhancedFinancialAnalyticsPlatform:
             help="Disable AI features for faster performance"
         )
         
-        if not st.session_state.lite_mode:
+        if not st.session_state.lite_mode and SENTENCE_TRANSFORMER_AVAILABLE:
             st.session_state.use_ai_mapping = st.sidebar.checkbox(
                 "🤖 AI-Powered Mapping",
                 st.session_state.use_ai_mapping
@@ -1768,10 +1877,11 @@ class EnhancedFinancialAnalyticsPlatform:
             for metric in df.index:
                 try:
                     # Check if the row has at least one numeric value
-                    if any(pd.api.types.is_numeric_dtype(type(v)) for v in df.loc[metric].values):
+                    row_data = df.loc[metric]
+                    if any(pd.api.types.is_numeric_dtype(type(v)) for v in row_data.values):
                         numeric_metrics.append(metric)
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Error checking metric {metric}: {e}")
             
             if not numeric_metrics:
                 st.error("No numeric metrics found in data")
@@ -1838,19 +1948,22 @@ class EnhancedFinancialAnalyticsPlatform:
                 stats_data = []
                 for metric in selected:
                     if metric in df.index:
-                        series = pd.to_numeric(df.loc[metric], errors='coerce')
-                        series = series.dropna()
-                        
-                        if len(series) > 0:
-                            stats_data.append({
-                                'Metric': metric,
-                                'Mean': series.mean(),
-                                'Std Dev': series.std(),
-                                'Min': series.min(),
-                                'Max': series.max(),
-                                'Count': len(series),
-                                'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) > 1 and series.iloc[0] != 0 else 0
-                            })
+                        try:
+                            series = pd.to_numeric(df.loc[metric], errors='coerce')
+                            series = series.dropna()
+                            
+                            if len(series) > 0:
+                                stats_data.append({
+                                    'Metric': metric,
+                                    'Mean': series.mean(),
+                                    'Std Dev': series.std(),
+                                    'Min': series.min(),
+                                    'Max': series.max(),
+                                    'Count': len(series),
+                                    'Growth %': ((series.iloc[-1] / series.iloc[0] - 1) * 100) if len(series) > 1 and series.iloc[0] != 0 else 0
+                                })
+                        except Exception as e:
+                            logger.error(f"Error calculating stats for {metric}: {e}")
                 
                 if stats_data:
                     stats_df = pd.DataFrame(stats_data)
@@ -1879,7 +1992,11 @@ class EnhancedFinancialAnalyticsPlatform:
         
         # Calculate ratios
         with st.spinner("Calculating ratios..."):
-            ratios = self.ratio_calculator.calculate_indas_specific_ratios(mapped_df)
+            try:
+                ratios = self.ratio_calculator.calculate_indas_specific_ratios(mapped_df)
+            except Exception as e:
+                st.error(f"Error calculating ratios: {str(e)}")
+                return
         
         if not ratios:
             st.error("Unable to calculate ratios")
@@ -1887,16 +2004,20 @@ class EnhancedFinancialAnalyticsPlatform:
         
         # Display ratios by category
         for category, ratio_df in ratios.items():
-            if not ratio_df.empty:
+            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
                 st.subheader(f"{category} Ratios")
                 
                 # Format based on number preference
-                if st.session_state.number_format == "indian":
-                    formatted_df = ratio_df.style.format("{:,.2f}", na_rep="-")
-                else:
-                    formatted_df = ratio_df.style.format("{:,.2f}", na_rep="-")
-                
-                st.dataframe(formatted_df, use_container_width=True)
+                try:
+                    if st.session_state.number_format == "indian":
+                        formatted_df = ratio_df.style.format("{:,.2f}", na_rep="-")
+                    else:
+                        formatted_df = ratio_df.style.format("{:,.2f}", na_rep="-")
+                    
+                    st.dataframe(formatted_df, use_container_width=True)
+                except Exception as e:
+                    logger.error(f"Error formatting ratios: {e}")
+                    st.dataframe(ratio_df, use_container_width=True)
                 
                 # Visualization
                 if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
@@ -1908,13 +2029,17 @@ class EnhancedFinancialAnalyticsPlatform:
                     )
                     
                     if metrics_to_plot:
-                        fig = self.chart_generator.create_chart_with_indian_format(
-                            ratio_df, metrics_to_plot,
-                            title=f"{category} Ratios Trend",
-                            chart_type="line",
-                            use_indian_format=False
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
+                        try:
+                            fig = self.chart_generator.create_chart_with_indian_format(
+                                ratio_df, metrics_to_plot,
+                                title=f"{category} Ratios Trend",
+                                chart_type="line",
+                                use_indian_format=False
+                            )
+                            if fig:
+                                st.plotly_chart(fig, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error creating ratio visualization: {str(e)}")
     
     def _render_penman_nissim_tab(self, df):
         """Render Penman-Nissim analysis"""
@@ -1953,42 +2078,62 @@ class EnhancedFinancialAnalyticsPlatform:
             
             # Key metrics summary
             st.subheader("Key Results")
-            if 'ratios' in results and not results['ratios'].empty:
+            if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
                 ratios = results['ratios']
                 if len(ratios.columns) > 0:
                     latest_year = ratios.columns[-1]
                     
                     col1, col2, col3, col4 = st.columns(4)
                     
+                    metrics_map = {
+                        'RNOA': 'Return on Net Operating Assets (RNOA) %',
+                        'OPM': 'Operating Profit Margin (OPM) %',
+                        'NOAT': 'Net Operating Asset Turnover (NOAT)',
+                        'FLEV': 'Financial Leverage (FLEV)'
+                    }
+                    
                     with col1:
-                        rnoa = ratios.loc['Return on Net Operating Assets (RNOA) %', latest_year] if 'Return on Net Operating Assets (RNOA) %' in ratios.index else 0
+                        metric_name = metrics_map['RNOA']
+                        rnoa = ratios.loc[metric_name, latest_year] if metric_name in ratios.index else 0
                         st.metric("RNOA", f"{rnoa:.2f}%")
                     
                     with col2:
-                        opm = ratios.loc['Operating Profit Margin (OPM) %', latest_year] if 'Operating Profit Margin (OPM) %' in ratios.index else 0
+                        metric_name = metrics_map['OPM']
+                        opm = ratios.loc[metric_name, latest_year] if metric_name in ratios.index else 0
                         st.metric("OPM", f"{opm:.2f}%")
                     
                     with col3:
-                        noat = ratios.loc['Net Operating Asset Turnover (NOAT)', latest_year] if 'Net Operating Asset Turnover (NOAT)' in ratios.index else 0
+                        metric_name = metrics_map['NOAT']
+                        noat = ratios.loc[metric_name, latest_year] if metric_name in ratios.index else 0
                         st.metric("NOAT", f"{noat:.2f}x")
                     
                     with col4:
-                        flev = ratios.loc['Financial Leverage (FLEV)', latest_year] if 'Financial Leverage (FLEV)' in ratios.index else 0
+                        metric_name = metrics_map['FLEV']
+                        flev = ratios.loc[metric_name, latest_year] if metric_name in ratios.index else 0
                         st.metric("FLEV", f"{flev:.2f}x")
             
             # Detailed results
             with st.expander("📊 Detailed Results", expanded=False):
-                if 'reformulated_bs' in results and not results['reformulated_bs'].empty:
+                if 'reformulated_bs' in results and isinstance(results['reformulated_bs'], pd.DataFrame) and not results['reformulated_bs'].empty:
                     st.subheader("Reformulated Balance Sheet")
-                    st.dataframe(results['reformulated_bs'].style.format("{:,.2f}"))
+                    try:
+                        st.dataframe(results['reformulated_bs'].style.format("{:,.2f}"))
+                    except:
+                        st.dataframe(results['reformulated_bs'])
                 
-                if 'reformulated_is' in results and not results['reformulated_is'].empty:
+                if 'reformulated_is' in results and isinstance(results['reformulated_is'], pd.DataFrame) and not results['reformulated_is'].empty:
                     st.subheader("Reformulated Income Statement")
-                    st.dataframe(results['reformulated_is'].style.format("{:,.2f}"))
+                    try:
+                        st.dataframe(results['reformulated_is'].style.format("{:,.2f}"))
+                    except:
+                        st.dataframe(results['reformulated_is'])
                 
-                if 'ratios' in results and not results['ratios'].empty:
+                if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
                     st.subheader("All Ratios")
-                    st.dataframe(results['ratios'].style.format("{:,.2f}"))
+                    try:
+                        st.dataframe(results['ratios'].style.format("{:,.2f}"))
+                    except:
+                        st.dataframe(results['ratios'])
     
     def _render_industry_tab(self, df):
         """Render industry comparison"""
@@ -1999,7 +2144,7 @@ class EnhancedFinancialAnalyticsPlatform:
             return
         
         results = st.session_state.pn_results
-        if 'ratios' in results and not results['ratios'].empty:
+        if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
             ratios = results['ratios']
             if len(ratios.columns) > 0:
                 latest_year = ratios.columns[-1]
@@ -2016,57 +2161,63 @@ class EnhancedFinancialAnalyticsPlatform:
                 
                 for pn_name, bench_name in ratio_mapping.items():
                     if pn_name in ratios.index:
-                        value = ratios.loc[pn_name, latest_year]
-                        if not pd.isna(value):
-                            latest_metrics[bench_name] = float(value)
+                        try:
+                            value = ratios.loc[pn_name, latest_year]
+                            if not pd.isna(value):
+                                latest_metrics[bench_name] = float(value)
+                        except Exception as e:
+                            logger.error(f"Error extracting metric {pn_name}: {e}")
                 
                 if latest_metrics:
-                    comparison = self.industry_benchmarks.calculate_composite_score(
-                        latest_metrics, 
-                        st.session_state.selected_industry
-                    )
-                    
-                    if "error" not in comparison:
-                        score = comparison['composite_score']
-                        interpretation = comparison['interpretation']
+                    try:
+                        comparison = self.industry_benchmarks.calculate_composite_score(
+                            latest_metrics, 
+                            st.session_state.selected_industry
+                        )
                         
-                        # Display score
-                        col1, col2, col3 = st.columns([1, 2, 1])
-                        with col2:
-                            if score >= 80:
-                                color = "green"
-                            elif score >= 60:
-                                color = "blue"
-                            elif score >= 40:
-                                color = "orange"
-                            else:
-                                color = "red"
+                        if comparison and "error" not in comparison:
+                            score = comparison['composite_score']
+                            interpretation = comparison['interpretation']
                             
-                            st.markdown(
-                                f"<div style='text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;'>"
-                                f"<h3 style='color: {color};'>Industry Score: {score:.1f}/100</h3>"
-                                f"<p style='font-size: 18px;'>{interpretation} vs {st.session_state.selected_industry}</p>"
-                                f"</div>",
-                                unsafe_allow_html=True
-                            )
-                        
-                        # Detailed comparison
-                        if 'metric_scores' in comparison:
-                            st.subheader("Metric-wise Comparison")
+                            # Display score
+                            col1, col2, col3 = st.columns([1, 2, 1])
+                            with col2:
+                                if score >= 80:
+                                    color = "green"
+                                elif score >= 60:
+                                    color = "blue"
+                                elif score >= 40:
+                                    color = "orange"
+                                else:
+                                    color = "red"
+                                
+                                st.markdown(
+                                    f"<div style='text-align: center; padding: 20px; background-color: #f0f0f0; border-radius: 10px;'>"
+                                    f"<h3 style='color: {color};'>Industry Score: {score:.1f}/100</h3>"
+                                    f"<p style='font-size: 18px;'>{interpretation} vs {st.session_state.selected_industry}</p>"
+                                    f"</div>",
+                                    unsafe_allow_html=True
+                                )
                             
-                            comp_data = []
-                            for metric, percentile in comparison['metric_scores'].items():
-                                if metric in latest_metrics:
-                                    comp_data.append({
-                                        'Metric': metric,
-                                        'Company Value': f"{latest_metrics[metric]:.2f}",
-                                        'Percentile': f"{percentile:.0f}%",
-                                        'Performance': self._get_performance_label(percentile)
-                                    })
-                            
-                            if comp_data:
-                                comp_df = pd.DataFrame(comp_data)
-                                st.dataframe(comp_df, use_container_width=True)
+                            # Detailed comparison
+                            if 'metric_scores' in comparison:
+                                st.subheader("Metric-wise Comparison")
+                                
+                                comp_data = []
+                                for metric, percentile in comparison['metric_scores'].items():
+                                    if metric in latest_metrics:
+                                        comp_data.append({
+                                            'Metric': metric,
+                                            'Company Value': f"{latest_metrics[metric]:.2f}",
+                                            'Percentile': f"{percentile:.0f}%",
+                                            'Performance': self._get_performance_label(percentile)
+                                        })
+                                
+                                if comp_data:
+                                    comp_df = pd.DataFrame(comp_data)
+                                    st.dataframe(comp_df, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error calculating industry comparison: {str(e)}")
     
     def _render_data_table_tab(self, df):
         """Render data table"""
@@ -2080,31 +2231,37 @@ class EnhancedFinancialAnalyticsPlatform:
             highlight_negative = st.checkbox("Highlight negative values", True)
         
         # Format dataframe
-        if st.session_state.number_format == "indian":
-            formatted_df = df.copy()
-            for col in df.columns:
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    formatted_df[col] = df[col].apply(
-                        lambda x: self.number_converter.format_to_indian(x, use_lakhs=True)
+        try:
+            if st.session_state.number_format == "indian":
+                formatted_df = df.copy()
+                for col in df.columns:
+                    if pd.api.types.is_numeric_dtype(df[col]):
+                        formatted_df[col] = df[col].apply(
+                            lambda x: self.number_converter.format_to_indian(x, use_lakhs=True)
+                        )
+                st.dataframe(formatted_df, use_container_width=True)
+            else:
+                format_dict = {col: f"{{:,.{decimal_places}f}}" for col in df.columns}
+                styled_df = df.style.format(format_dict, na_rep="-")
+                
+                if highlight_negative:
+                    styled_df = styled_df.applymap(
+                        lambda x: 'color: red' if isinstance(x, (int, float)) and x < 0 else ''
                     )
-            st.dataframe(formatted_df, use_container_width=True)
-        else:
-            format_dict = {col: f"{{:,.{decimal_places}f}}" for col in df.columns}
-            styled_df = df.style.format(format_dict, na_rep="-")
-            
-            if highlight_negative:
-                styled_df = styled_df.applymap(
-                    lambda x: 'color: red' if isinstance(x, (int, float)) and x < 0 else ''
-                )
-            
-            st.dataframe(styled_df, use_container_width=True)
+                
+                st.dataframe(styled_df, use_container_width=True)
+        except Exception as e:
+            logger.error(f"Error formatting data table: {e}")
+            st.dataframe(df, use_container_width=True)
         
         # Export options
         self._render_export_options(df)
     
     def _render_pn_mapping_interface(self, df):
         """Render Penman-Nissim mapping interface"""
-        available = [''] + df.index.tolist()
+        # Convert index to list and ensure all items are strings
+        index_list = [str(item) for item in df.index.tolist()]
+        available = [''] + index_list
         
         # Essential mappings
         st.markdown("### Essential Mappings")
@@ -2146,13 +2303,13 @@ class EnhancedFinancialAnalyticsPlatform:
         
         st.session_state.pn_mappings['Financial Assets'] = st.multiselect(
             "Financial Assets (Cash, Investments, etc.)",
-            df.index.tolist(),
+            index_list,
             default=self._find_financial_items(df.index, 'assets')
         )
         
         st.session_state.pn_mappings['Financial Liabilities'] = st.multiselect(
             "Financial Liabilities (Debt, Loans, etc.)",
-            df.index.tolist(),
+            index_list,
             default=self._find_financial_items(df.index, 'liabilities')
         )
         
@@ -2205,7 +2362,10 @@ class EnhancedFinancialAnalyticsPlatform:
             
             # Clean data
             df = parsed_data.statements['parsed']
-            df_cleaned = self.data_processor.clean_numeric_data(df)
+            if not df.empty:
+                df_cleaned = self.data_processor.clean_numeric_data(df)
+            else:
+                df_cleaned = df
             
             parsed_data.statements['parsed'] = df_cleaned
             st.session_state.analysis_data = parsed_data
@@ -2219,6 +2379,9 @@ class EnhancedFinancialAnalyticsPlatform:
             
         except Exception as e:
             st.error(f"Error processing text: {str(e)}")
+            if st.session_state.debug_mode:
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
     
     def _load_sample_data(self):
         """Load sample data"""
@@ -2228,7 +2391,10 @@ class EnhancedFinancialAnalyticsPlatform:
             parsed_data.company_name = "Sample Indian Company Ltd."
             
             df = parsed_data.statements['parsed']
-            df_cleaned = self.data_processor.clean_numeric_data(df)
+            if not df.empty:
+                df_cleaned = self.data_processor.clean_numeric_data(df)
+            else:
+                df_cleaned = df
             
             parsed_data.statements['parsed'] = df_cleaned
             st.session_state.analysis_data = parsed_data
@@ -2238,6 +2404,9 @@ class EnhancedFinancialAnalyticsPlatform:
             
         except Exception as e:
             st.error(f"Error loading sample: {str(e)}")
+            if st.session_state.debug_mode:
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
     
     def _perform_ai_mapping(self):
         """Perform AI mapping with progress indication"""
@@ -2318,47 +2487,57 @@ class EnhancedFinancialAnalyticsPlatform:
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            csv = df.to_csv()
-            st.download_button(
-                "📄 CSV",
-                csv,
-                "financial_data.csv",
-                "text/csv"
-            )
+            try:
+                csv = df.to_csv()
+                st.download_button(
+                    "📄 CSV",
+                    csv,
+                    "financial_data.csv",
+                    "text/csv"
+                )
+            except Exception as e:
+                st.error(f"Error generating CSV: {str(e)}")
         
         with col2:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Financial Data')
-            
-            st.download_button(
-                "📊 Excel",
-                buffer.getvalue(),
-                "financial_data.xlsx",
-                "application/vnd.ms-excel"
-            )
+            try:
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, sheet_name='Financial Data')
+                
+                st.download_button(
+                    "📊 Excel",
+                    buffer.getvalue(),
+                    "financial_data.xlsx",
+                    "application/vnd.ms-excel"
+                )
+            except Exception as e:
+                st.error(f"Error generating Excel: {str(e)}")
         
         with col3:
-            json_str = df.to_json(orient='split', indent=2)
-            st.download_button(
-                "🔧 JSON",
-                json_str,
-                "financial_data.json",
-                "application/json"
-            )
+            try:
+                json_str = df.to_json(orient='split', indent=2)
+                st.download_button(
+                    "🔧 JSON",
+                    json_str,
+                    "financial_data.json",
+                    "application/json"
+                )
+            except Exception as e:
+                st.error(f"Error generating JSON: {str(e)}")
     
     def _find_index(self, options, *keywords):
-        """Find index of matching option (FIXED to handle non-string values)"""
+        """Find index of matching option (FIXED to handle all types)"""
         for keyword in keywords:
+            keyword_lower = str(keyword).lower()
             for i, option in enumerate(options):
                 # Convert option to string to safely use .lower()
-                option_str = str(option) if option else ""
-                if keyword.lower() in option_str.lower():
+                option_str = str(option) if option is not None else ""
+                if keyword_lower in option_str.lower():
                     return i
         return 0
     
     def _find_financial_items(self, metrics, item_type):
-        """Find financial items in metrics (FIXED to handle non-string values)"""
+        """Find financial items in metrics (FIXED to handle all types)"""
         financial_keywords = {
             'assets': ['cash', 'bank', 'investment', 'securities', 'deposits'],
             'liabilities': ['debt', 'loan', 'borrowing', 'debenture', 'bonds']
@@ -2369,32 +2548,44 @@ class EnhancedFinancialAnalyticsPlatform:
         
         for metric in metrics:
             # Convert metric to string to safely use .lower()
-            metric_str = str(metric) if metric else ""
+            metric_str = str(metric) if metric is not None else ""
             metric_lower = metric_str.lower()
             if any(keyword in metric_lower for keyword in keywords):
-                matches.append(metric)
+                matches.append(str(metric))  # Ensure we return strings
         
         return matches
     
     def _get_performance_label(self, percentile):
         """Get performance label based on percentile"""
-        if percentile >= 80:
-            return "Excellent"
-        elif percentile >= 60:
-            return "Good"
-        elif percentile >= 40:
-            return "Average"
-        elif percentile >= 20:
-            return "Below Average"
-        else:
-            return "Poor"
+        try:
+            percentile = float(percentile)
+            if percentile >= 80:
+                return "Excellent"
+            elif percentile >= 60:
+                return "Good"
+            elif percentile >= 40:
+                return "Average"
+            elif percentile >= 20:
+                return "Below Average"
+            else:
+                return "Poor"
+        except:
+            return "Unknown"
 
 # --- 14. Application Entry Point ---
 
 def main():
     """Main application entry point"""
-    app = EnhancedFinancialAnalyticsPlatform()
-    app.run()
+    try:
+        app = EnhancedFinancialAnalyticsPlatform()
+        app.run()
+    except Exception as e:
+        logger.error(f"Fatal application error: {e}")
+        st.error(f"A critical error occurred: {str(e)}")
+        st.error("Please refresh the page and try again.")
+        if st.session_state.get('debug_mode', False):
+            import traceback
+            st.code(traceback.format_exc())
 
 if __name__ == "__main__":
     main()

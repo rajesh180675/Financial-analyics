@@ -2099,18 +2099,20 @@ class ManualMappingInterface:
         return mappings
 
 # --- 18. UI Components Factory ---
+# Replace the UIComponentFactory class with this corrected version:
+
 class UIComponentFactory:
     """Factory for creating UI components with consistent styling"""
     
     @staticmethod
     def create_metric_card(title: str, value: Any, delta: Optional[float] = None, 
-                          help_text: Optional[str] = None) -> None:
+                          help: Optional[str] = None) -> None:
         """Create a metric card"""
         col = st.container()
         
         with col:
-            if help_text:
-                st.metric(title, value, delta, help=help_text)
+            if help:
+                st.metric(title, value, delta, help=help)
             else:
                 st.metric(title, value, delta)
     

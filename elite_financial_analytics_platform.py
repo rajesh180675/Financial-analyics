@@ -1,5 +1,8 @@
-# elite_financial_analytics_platform_v2.py
-# Enterprise-Grade Financial Analytics Platform with Advanced Architecture
+I'll provide a complete updated version with all the fixes integrated. Here's the enhanced code with the missing implementations and fixes:
+
+```python
+# elite_financial_analytics_platform_v3.py
+# Enterprise-Grade Financial Analytics Platform - Complete Fixed Version
 
 # --- 1. Core Imports and Setup ---
 import asyncio
@@ -50,8 +53,45 @@ from streamlit.runtime.uploaded_file_manager import UploadedFile
 import bleach
 from fuzzywuzzy import fuzz
 
+# Try to import sentence transformers
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMER_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMER_AVAILABLE = False
+
 # Configure logging with rotation
 from logging.handlers import RotatingFileHandler
+
+# Set up warnings
+warnings.filterwarnings('ignore')
+
+# --- Import Core Components (with fallback) ---
+try:
+    from financial_analytics_core import (
+        ChartGenerator as CoreChartGenerator,
+        FinancialRatioCalculator as CoreRatioCalculator,
+        PenmanNissimAnalyzer as CorePenmanNissim,
+        IndustryBenchmarks as CoreIndustryBenchmarks,
+        DataProcessor as CoreDataProcessor,
+        DataQualityMetrics,
+        parse_html_content,
+        parse_csv_content,
+        process_and_merge_dataframes,
+        REQUIRED_METRICS as CORE_REQUIRED_METRICS,
+        YEAR_REGEX as CORE_YEAR_REGEX,
+        MAX_FILE_SIZE_MB as CORE_MAX_FILE_SIZE,
+        ALLOWED_FILE_TYPES as CORE_ALLOWED_TYPES,
+        EPS
+    )
+    CORE_COMPONENTS_AVAILABLE = True
+except ImportError:
+    CORE_COMPONENTS_AVAILABLE = False
+    # Define fallbacks
+    CORE_REQUIRED_METRICS = {}
+    CORE_YEAR_REGEX = re.compile(r'(20\d{2}|19\d{2}|FY\s?20\d{2}|FY\s?19\d{2})')
+    CORE_MAX_FILE_SIZE = 10
+    CORE_ALLOWED_TYPES = ['csv', 'html', 'htm', 'xls', 'xlsx']
 
 # --- 2. Advanced Logging Configuration ---
 class LoggerFactory:
@@ -157,7 +197,7 @@ class Configuration:
     # Default configurations
     DEFAULTS = {
         'app': {
-            'version': '2.0.0',
+            'version': '3.0.0',
             'name': 'Elite Financial Analytics Platform',
             'debug': False,
             'display_mode': DisplayMode.LITE,
@@ -1496,18 +1536,17 @@ class AIMapper(Component):
             return
         
         try:
-            # Conditional import
-            from sentence_transformers import SentenceTransformer
-            
-            model_name = self.config.get('ai.model_name', 'all-MiniLM-L6-v2')
-            self.model = SentenceTransformer(model_name)
-            self._logger.info(f"Loaded AI model: {model_name}")
-            
-            # Pre-compute standard embeddings
-            self._precompute_standard_embeddings()
-            
-        except ImportError:
-            self._logger.warning("Sentence transformers not available, using fallback")
+            # Only try to load if available
+            if SENTENCE_TRANSFORMER_AVAILABLE:
+                model_name = self.config.get('ai.model_name', 'all-MiniLM-L6-v2')
+                self.model = SentenceTransformer(model_name)
+                self._logger.info(f"Loaded AI model: {model_name}")
+                
+                # Pre-compute standard embeddings
+                self._precompute_standard_embeddings()
+            else:
+                self._logger.warning("Sentence transformers not available, using fallback")
+                
         except Exception as e:
             self._logger.error(f"Failed to initialize AI model: {e}")
         
@@ -1748,7 +1787,321 @@ class FuzzyMapper(Component):
             'Investing Cash Flow', 'Financing Cash Flow'
         ]
 
-# --- 16. UI Components Factory ---
+# --- 16. Enhanced Penman-Nissim Analyzer (FIXED) ---
+class EnhancedPenmanNissimAnalyzer:
+    """Enhanced Penman-Nissim analyzer with flexible initialization"""
+    
+    def __init__(self, df: pd.DataFrame, mappings: Dict[str, str]):
+        self.df = df
+        self.mappings = mappings
+        self.logger = LoggerFactory.get_logger('PenmanNissim')
+        
+        # Initialize core analyzer with proper handling
+        self._initialize_core_analyzer()
+    
+    def _initialize_core_analyzer(self):
+        """Initialize core analyzer with proper error handling"""
+        if CORE_COMPONENTS_AVAILABLE:
+            try:
+                # Try different initialization patterns
+                try:
+                    # First try with both parameters
+                    self.core_analyzer = CorePenmanNissim(self.df, self.mappings)
+                    self.logger.info("Initialized CorePenmanNissim with df and mappings")
+                except TypeError:
+                    try:
+                        # Try with just df
+                        self.core_analyzer = CorePenmanNissim(self.df)
+                        if hasattr(self.core_analyzer, 'set_mappings'):
+                            self.core_analyzer.set_mappings(self.mappings)
+                        elif hasattr(self.core_analyzer, 'mappings'):
+                            self.core_analyzer.mappings = self.mappings
+                        self.logger.info("Initialized CorePenmanNissim with df only")
+                    except TypeError:
+                        # Try with no parameters
+                        self.core_analyzer = CorePenmanNissim()
+                        if hasattr(self.core_analyzer, 'df'):
+                            self.core_analyzer.df = self.df
+                        if hasattr(self.core_analyzer, 'mappings'):
+                            self.core_analyzer.mappings = self.mappings
+                        self.logger.info("Initialized CorePenmanNissim with no parameters")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize CorePenmanNissim: {e}")
+                self.core_analyzer = None
+        else:
+            self.core_analyzer = None
+    
+    def calculate_all(self):
+        """Calculate all Penman-Nissim metrics"""
+        if self.core_analyzer and hasattr(self.core_analyzer, 'calculate_all'):
+            try:
+                return self.core_analyzer.calculate_all()
+            except Exception as e:
+                self.logger.error(f"Error in core calculate_all: {e}")
+        
+        # Fallback implementation
+        return self._fallback_calculate_all()
+    
+    def _fallback_calculate_all(self):
+        """Fallback implementation of Penman-Nissim calculations"""
+        try:
+            # Apply mappings
+            mapped_df = self.df.rename(index=self.mappings)
+            
+            results = {
+                'reformulated_balance_sheet': self._reformulate_balance_sheet(mapped_df),
+                'reformulated_income_statement': self._reformulate_income_statement(mapped_df),
+                'ratios': self._calculate_ratios(mapped_df),
+                'free_cash_flow': self._calculate_free_cash_flow(mapped_df)
+            }
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error in fallback calculations: {e}")
+            return {'error': str(e)}
+    
+    def _reformulate_balance_sheet(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Reformulate balance sheet for Penman-Nissim analysis"""
+        reformulated = pd.DataFrame(index=df.columns)
+        
+        # Operating assets
+        operating_assets = ['Current Assets', 'Property Plant Equipment', 'Intangible Assets']
+        operating_assets_sum = pd.Series(0, index=df.columns)
+        for asset in operating_assets:
+            if asset in df.index:
+                operating_assets_sum += df.loc[asset].fillna(0)
+        
+        # Financial assets
+        financial_assets = ['Cash', 'Short-term Investments', 'Long-term Investments']
+        financial_assets_sum = pd.Series(0, index=df.columns)
+        for asset in financial_assets:
+            if asset in df.index:
+                financial_assets_sum += df.loc[asset].fillna(0)
+        
+        # Operating liabilities
+        operating_liabilities = ['Accounts Payable', 'Accrued Expenses', 'Deferred Revenue']
+        operating_liabilities_sum = pd.Series(0, index=df.columns)
+        for liab in operating_liabilities:
+            if liab in df.index:
+                operating_liabilities_sum += df.loc[liab].fillna(0)
+        
+        # Financial liabilities
+        financial_liabilities = ['Short-term Debt', 'Long-term Debt', 'Bonds Payable']
+        financial_liabilities_sum = pd.Series(0, index=df.columns)
+        for liab in financial_liabilities:
+            if liab in df.index:
+                financial_liabilities_sum += df.loc[liab].fillna(0)
+        
+        # Net operating assets
+        reformulated['Net Operating Assets'] = operating_assets_sum - operating_liabilities_sum
+        reformulated['Net Financial Assets'] = financial_assets_sum - financial_liabilities_sum
+        reformulated['Common Equity'] = reformulated['Net Operating Assets'] + reformulated['Net Financial Assets']
+        
+        return reformulated
+    
+    def _reformulate_income_statement(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Reformulate income statement for Penman-Nissim analysis"""
+        reformulated = pd.DataFrame(index=df.columns)
+        
+        if 'Revenue' in df.index and 'Operating Income' in df.index:
+            reformulated['Operating Income'] = df.loc['Operating Income']
+            
+            # Tax allocation
+            if 'Tax Expense' in df.index and 'Income Before Tax' in df.index:
+                income_before_tax = df.loc['Income Before Tax'].replace(0, np.nan)
+                tax_rate = df.loc['Tax Expense'] / income_before_tax
+                reformulated['Tax on Operating Income'] = reformulated['Operating Income'] * tax_rate
+                reformulated['Operating Income After Tax'] = (
+                    reformulated['Operating Income'] - reformulated['Tax on Operating Income']
+                )
+        
+        # Financial items
+        if 'Interest Expense' in df.index:
+            reformulated['Net Financial Expense'] = df.loc['Interest Expense']
+            if 'Interest Income' in df.index:
+                reformulated['Net Financial Expense'] -= df.loc['Interest Income']
+        
+        return reformulated
+    
+    def _calculate_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate Penman-Nissim ratios"""
+        ratios = pd.DataFrame(index=df.columns)
+        
+        # Get reformulated statements
+        ref_bs = self._reformulate_balance_sheet(df)
+        ref_is = self._reformulate_income_statement(df)
+        
+        # RNOA (Return on Net Operating Assets)
+        if 'Operating Income After Tax' in ref_is.columns and 'Net Operating Assets' in ref_bs.columns:
+            noa = ref_bs['Net Operating Assets'].replace(0, np.nan)
+            ratios['Return on Net Operating Assets (RNOA) %'] = (
+                ref_is['Operating Income After Tax'] / noa
+            ) * 100
+        
+        # FLEV (Financial Leverage)
+        if 'Net Financial Assets' in ref_bs.columns and 'Common Equity' in ref_bs.columns:
+            ce = ref_bs['Common Equity'].replace(0, np.nan)
+            ratios['Financial Leverage (FLEV)'] = -ref_bs['Net Financial Assets'] / ce
+        
+        # NBC (Net Borrowing Cost)
+        if 'Net Financial Expense' in ref_is.columns and 'Net Financial Assets' in ref_bs.columns:
+            nfa = ref_bs['Net Financial Assets'].replace(0, np.nan)
+            ratios['Net Borrowing Cost (NBC) %'] = (
+                -ref_is['Net Financial Expense'] / nfa
+            ) * 100
+        
+        # OPM (Operating Profit Margin)
+        if 'Operating Income After Tax' in ref_is.columns and 'Revenue' in df.index:
+            revenue = df.loc['Revenue'].replace(0, np.nan)
+            ratios['Operating Profit Margin (OPM) %'] = (
+                ref_is['Operating Income After Tax'] / revenue
+            ) * 100
+        
+        # NOAT (Net Operating Asset Turnover)
+        if 'Revenue' in df.index and 'Net Operating Assets' in ref_bs.columns:
+            noa = ref_bs['Net Operating Assets'].replace(0, np.nan)
+            ratios['Net Operating Asset Turnover (NOAT)'] = df.loc['Revenue'] / noa
+        
+        return ratios.T
+    
+    def _calculate_free_cash_flow(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate free cash flow"""
+        fcf = pd.DataFrame(index=df.columns)
+        
+        if 'Operating Cash Flow' in df.index:
+            fcf['Operating Cash Flow'] = df.loc['Operating Cash Flow']
+            
+            if 'Capital Expenditure' in df.index:
+                fcf['Free Cash Flow'] = fcf['Operating Cash Flow'] - df.loc['Capital Expenditure']
+            else:
+                fcf['Free Cash Flow'] = fcf['Operating Cash Flow']
+        
+        return fcf
+
+# --- 17. Manual Mapping Interface Component ---
+class ManualMappingInterface:
+    """Manual mapping interface for metric mapping"""
+    
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
+        self.source_metrics = [str(m) for m in df.index.tolist()]
+        self.target_metrics = self._get_standard_target_metrics()
+    
+    def _get_standard_target_metrics(self) -> List[str]:
+        """Get standard target metrics for mapping"""
+        return [
+            'Total Assets', 'Current Assets', 'Non-current Assets',
+            'Cash and Cash Equivalents', 'Inventory', 'Trade Receivables',
+            'Property Plant and Equipment', 'Total Liabilities',
+            'Current Liabilities', 'Non-current Liabilities',
+            'Total Equity', 'Share Capital', 'Retained Earnings',
+            'Revenue', 'Cost of Goods Sold', 'Gross Profit',
+            'Operating Expenses', 'Operating Income', 'Net Income',
+            'Earnings Per Share', 'Operating Cash Flow',
+            'Investing Cash Flow', 'Financing Cash Flow',
+            'Interest Expense', 'Tax Expense', 'EBIT', 'EBITDA'
+        ]
+    
+    def render(self) -> Dict[str, str]:
+        """Render the manual mapping interface and return mappings"""
+        st.subheader("📋 Manual Metric Mapping")
+        st.info("Map your financial statement items to standard metrics for analysis")
+        
+        # Essential mappings for ratios
+        essential_mappings = {
+            'Balance Sheet': {
+                'Total Assets': ['Total Assets', 'TOTAL ASSETS', 'Assets Total'],
+                'Current Assets': ['Current Assets', 'CURRENT ASSETS', 'Short-term Assets'],
+                'Current Liabilities': ['Current Liabilities', 'CURRENT LIABILITIES', 'Short-term Liabilities'],
+                'Total Liabilities': ['Total Liabilities', 'TOTAL LIABILITIES', 'Liabilities Total'],
+                'Total Equity': ['Total Equity', 'TOTAL EQUITY', 'Shareholders Equity', 'Net Worth'],
+                'Cash and Cash Equivalents': ['Cash', 'Cash and Cash Equivalents', 'Cash & Bank'],
+                'Inventory': ['Inventory', 'Inventories', 'Stock'],
+                'Trade Receivables': ['Trade Receivables', 'Accounts Receivable', 'Debtors'],
+            },
+            'Income Statement': {
+                'Revenue': ['Revenue', 'Total Income', 'Net Sales', 'Revenue from Operations', 'Sales'],
+                'Cost of Goods Sold': ['Cost of Goods Sold', 'COGS', 'Cost of Sales', 'Cost of Materials'],
+                'Operating Expenses': ['Operating Expenses', 'OPEX', 'Other Expenses'],
+                'Net Income': ['Net Income', 'Net Profit', 'Profit for the Period', 'PAT'],
+                'Interest Expense': ['Interest Expense', 'Finance Costs', 'Interest Costs'],
+                'Tax Expense': ['Tax Expense', 'Income Tax', 'Tax'],
+                'Operating Income': ['Operating Income', 'EBIT', 'Operating Profit'],
+            },
+            'Cash Flow': {
+                'Operating Cash Flow': ['Operating Cash Flow', 'Cash from Operations', 'CFO'],
+                'Investing Cash Flow': ['Investing Cash Flow', 'Cash from Investing', 'CFI'],
+                'Financing Cash Flow': ['Financing Cash Flow', 'Cash from Financing', 'CFF'],
+            }
+        }
+        
+        mappings = {}
+        
+        # Create tabs for different statement types
+        tabs = st.tabs(list(essential_mappings.keys()))
+        
+        for i, (statement_type, metrics) in enumerate(essential_mappings.items()):
+            with tabs[i]:
+                cols = st.columns(2)
+                
+                for j, (target, suggestions) in enumerate(metrics.items()):
+                    col = cols[j % 2]
+                    
+                    with col:
+                        # Find best match from source metrics
+                        default_idx = 0
+                        for k, source in enumerate(self.source_metrics):
+                            if any(sug.lower() in source.lower() for sug in suggestions):
+                                default_idx = k + 1
+                                break
+                        
+                        selected = st.selectbox(
+                            f"{target}:",
+                            ['(Not mapped)'] + self.source_metrics,
+                            index=default_idx,
+                            key=f"map_{statement_type}_{target}",
+                            help=f"Common names: {', '.join(suggestions[:3])}"
+                        )
+                        
+                        if selected != '(Not mapped)':
+                            mappings[selected] = target
+        
+        # Additional custom mappings
+        with st.expander("➕ Add Custom Mappings"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                custom_source = st.selectbox(
+                    "Source Metric:",
+                    [m for m in self.source_metrics if m not in mappings],
+                    key="custom_source"
+                )
+            
+            with col2:
+                custom_target = st.selectbox(
+                    "Target Metric:",
+                    self.target_metrics,
+                    key="custom_target"
+                )
+            
+            if st.button("Add Mapping", key="add_custom_mapping"):
+                if custom_source and custom_target:
+                    mappings[custom_source] = custom_target
+                    st.success(f"Added: {custom_source} → {custom_target}")
+        
+        # Show current mappings
+        if mappings:
+            with st.expander("📊 Current Mappings", expanded=True):
+                mapping_df = pd.DataFrame(
+                    [(k, v) for k, v in sorted(mappings.items(), key=lambda x: x[1])],
+                    columns=['Source Metric', 'Target Metric']
+                )
+                st.dataframe(mapping_df, use_container_width=True)
+        
+        return mappings
+
+# --- 18. UI Components Factory ---
 class UIComponentFactory:
     """Factory for creating UI components with consistent styling"""
     
@@ -1828,7 +2181,109 @@ class UIComponentFactory:
             unsafe_allow_html=True
         )
 
-# --- 17. Main Application Class ---
+# --- 19. Sample Data Generator ---
+class SampleDataGenerator:
+    """Generate sample financial data for demonstration"""
+    
+    @staticmethod
+    def generate_indian_tech_company() -> pd.DataFrame:
+        """Generate sample data for Indian tech company"""
+        years = ['2019', '2020', '2021', '2022', '2023']
+        
+        data = {
+            # Balance Sheet Items
+            'Total Assets': [45000, 52000, 61000, 72000, 85000],
+            'Current Assets': [28000, 32000, 38000, 45000, 53000],
+            'Non-current Assets': [17000, 20000, 23000, 27000, 32000],
+            'Cash and Cash Equivalents': [12000, 14000, 17000, 21000, 25000],
+            'Inventory': [2000, 2300, 2700, 3200, 3800],
+            'Trade Receivables': [8000, 9200, 10800, 12700, 15000],
+            'Property Plant and Equipment': [10000, 12000, 14000, 16500, 19500],
+            
+            'Total Liabilities': [18000, 20000, 22500, 25500, 29000],
+            'Current Liabilities': [10000, 11000, 12500, 14000, 16000],
+            'Non-current Liabilities': [8000, 9000, 10000, 11500, 13000],
+            'Short-term Borrowings': [3000, 3300, 3700, 4200, 4800],
+            'Long-term Debt': [6000, 6600, 7300, 8200, 9200],
+            'Trade Payables': [4000, 4400, 4900, 5500, 6200],
+            
+            'Total Equity': [27000, 32000, 38500, 46500, 56000],
+            'Share Capital': [10000, 10000, 10000, 10000, 10000],
+            'Reserves and Surplus': [17000, 22000, 28500, 36500, 46000],
+            
+            # Income Statement Items
+            'Revenue': [35000, 38000, 45000, 54000, 65000],
+            'Cost of Goods Sold': [21000, 22000, 25200, 29700, 35100],
+            'Gross Profit': [14000, 16000, 19800, 24300, 29900],
+            'Operating Expenses': [8000, 8800, 10300, 12150, 14300],
+            'Operating Income': [6000, 7200, 9500, 12150, 15600],
+            'EBIT': [6000, 7200, 9500, 12150, 15600],
+            'Interest Expense': [800, 880, 970, 1090, 1220],
+            'Income Before Tax': [5200, 6320, 8530, 11060, 14380],
+            'Tax Expense': [1560, 1896, 2559, 3318, 4314],
+            'Net Income': [3640, 4424, 5971, 7742, 10066],
+            
+            # Cash Flow Items
+            'Operating Cash Flow': [5500, 6600, 8800, 11000, 14000],
+            'Investing Cash Flow': [-3000, -3500, -4200, -5000, -6000],
+            'Financing Cash Flow': [-1500, -1800, -2200, -2700, -3300],
+            'Capital Expenditure': [2800, 3200, 3800, 4500, 5300],
+            'Free Cash Flow': [2700, 3400, 5000, 6500, 8700],
+        }
+        
+        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
+        return df
+    
+    @staticmethod
+    def generate_us_manufacturing() -> pd.DataFrame:
+        """Generate sample data for US manufacturing company"""
+        years = ['2019', '2020', '2021', '2022', '2023']
+        
+        data = {
+            # Balance Sheet Items (in millions USD)
+            'Total Assets': [120000, 115000, 125000, 135000, 145000],
+            'Current Assets': [45000, 43000, 48000, 52000, 56000],
+            'Non-current Assets': [75000, 72000, 77000, 83000, 89000],
+            'Cash and Cash Equivalents': [8000, 7500, 9000, 10500, 12000],
+            'Inventory': [18000, 17000, 19000, 21000, 23000],
+            'Trade Receivables': [15000, 14500, 16000, 17500, 19000],
+            'Property Plant and Equipment': [60000, 58000, 62000, 66000, 70000],
+            
+            'Total Liabilities': [72000, 69000, 74000, 79000, 84000],
+            'Current Liabilities': [30000, 28000, 31000, 33000, 35000],
+            'Non-current Liabilities': [42000, 41000, 43000, 46000, 49000],
+            'Short-term Borrowings': [10000, 9000, 10500, 11500, 12500],
+            'Long-term Debt': [35000, 34000, 35500, 38000, 40500],
+            'Trade Payables': [12000, 11500, 12500, 13500, 14500],
+            
+            'Total Equity': [48000, 46000, 51000, 56000, 61000],
+            'Share Capital': [20000, 20000, 20000, 20000, 20000],
+            'Retained Earnings': [28000, 26000, 31000, 36000, 41000],
+            
+            # Income Statement Items
+            'Revenue': [95000, 88000, 102000, 115000, 128000],
+            'Cost of Goods Sold': [68000, 64000, 72000, 80000, 88000],
+            'Gross Profit': [27000, 24000, 30000, 35000, 40000],
+            'Operating Expenses': [18000, 17000, 19000, 21000, 23000],
+            'Operating Income': [9000, 7000, 11000, 14000, 17000],
+            'EBIT': [9000, 7000, 11000, 14000, 17000],
+            'Interest Expense': [2800, 2700, 2850, 3050, 3250],
+            'Income Before Tax': [6200, 4300, 8150, 10950, 13750],
+            'Tax Expense': [1550, 1075, 2038, 2738, 3438],
+            'Net Income': [4650, 3225, 6112, 8212, 10312],
+            
+            # Cash Flow Items
+            'Operating Cash Flow': [11000, 9000, 13000, 16000, 19500],
+            'Investing Cash Flow': [-8000, -6000, -9000, -11000, -13000],
+            'Financing Cash Flow': [-2000, -2500, -3000, -3500, -4000],
+            'Capital Expenditure': [7500, 5500, 8500, 10500, 12500],
+            'Free Cash Flow': [3500, 3500, 4500, 5500, 7000],
+        }
+        
+        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
+        return df
+
+# --- 20. Main Application Class (Complete) ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture"""
     
@@ -1848,6 +2303,9 @@ class FinancialAnalyticsPlatform:
         
         # Initialize UI factory
         self.ui_factory = UIComponentFactory()
+        
+        # Initialize sample data generator
+        self.sample_generator = SampleDataGenerator()
     
     def _initialize_components(self) -> Dict[str, Component]:
         """Initialize all components with dependency injection"""
@@ -2307,7 +2765,764 @@ class FinancialAnalyticsPlatform:
             
             st.plotly_chart(fig, use_container_width=True)
     
-    # ... Continue with other tab implementations ...
+    def _render_ratios_tab(self, data: pd.DataFrame):
+        """Render financial ratios tab with manual mapping support"""
+        st.header("📈 Financial Ratio Analysis")
+        
+        # Check if mappings exist
+        if not self.state.get('metric_mappings'):
+            st.warning("Please map metrics first to calculate ratios")
+            
+            # Show mapping options based on mode
+            if self.config.get('app.display_mode') == Configuration.DisplayMode.MINIMAL or not self.config.get('ai.enabled', True):
+                # Show manual mapping interface
+                manual_mapper = ManualMappingInterface(data)
+                mappings = manual_mapper.render()
+                
+                if st.button("✅ Apply Mappings", type="primary", key="apply_manual_mappings"):
+                    self.state.set('metric_mappings', mappings)
+                    st.success(f"Applied {len(mappings)} mappings!")
+                    st.rerun()
+            else:
+                # Show both AI and manual options
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("🤖 Auto-map with AI", type="primary", key="ai_map_ratios"):
+                        self._perform_ai_mapping(data)
+                
+                with col2:
+                    if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
+                        st.session_state['show_manual_mapping'] = True
+                
+                # Show manual mapping if requested
+                if st.session_state.get('show_manual_mapping', False):
+                    with st.expander("Manual Mapping", expanded=True):
+                        manual_mapper = ManualMappingInterface(data)
+                        mappings = manual_mapper.render()
+                        
+                        if st.button("✅ Apply Manual Mappings", type="primary", key="apply_manual_mappings_2"):
+                            self.state.set('metric_mappings', mappings)
+                            st.success(f"Applied {len(mappings)} mappings!")
+                            st.session_state['show_manual_mapping'] = False
+                            st.rerun()
+            
+            return
+        
+        # Apply mappings and calculate ratios
+        mappings = self.state.get('metric_mappings')
+        mapped_df = data.rename(index=mappings)
+        
+        # Calculate ratios
+        with st.spinner("Calculating ratios..."):
+            analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
+            ratios = analysis.get('ratios', {})
+        
+        if not ratios:
+            st.error("Unable to calculate ratios. Please check your mappings.")
+            if st.button("🔄 Re-map Metrics"):
+                self.state.set('metric_mappings', None)
+                st.rerun()
+            return
+        
+        # Display ratios by category
+        for category, ratio_df in ratios.items():
+            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                st.subheader(f"{category} Ratios")
+                
+                # Format based on number preference
+                try:
+                    st.dataframe(
+                        ratio_df.style.format("{:,.2f}", na_rep="-"),
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error formatting ratios: {e}")
+                    st.dataframe(ratio_df, use_container_width=True)
+                
+                # Visualization
+                if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
+                    metrics_to_plot = st.multiselect(
+                        f"Select {category} metrics:",
+                        ratio_df.index.tolist(),
+                        default=ratio_df.index[:2].tolist() if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
+                        key=f"select_{category}"
+                    )
+                    
+                    if metrics_to_plot:
+                        fig = go.Figure()
+                        
+                        for metric in metrics_to_plot:
+                            fig.add_trace(go.Scatter(
+                                x=ratio_df.columns,
+                                y=ratio_df.loc[metric],
+                                mode='lines+markers',
+                                name=metric,
+                                line=dict(width=2),
+                                marker=dict(size=8)
+                            ))
+                        
+                        fig.update_layout(
+                            title=f"{category} Ratios Trend",
+                            xaxis_title="Year",
+                            yaxis_title="Value",
+                            hovermode='x unified',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_trends_tab(self, data: pd.DataFrame):
+        """Render trends and analysis tab"""
+        st.header("📉 Trend Analysis")
+        
+        # Get trend analysis
+        analysis = self.components['analyzer'].analyze_financial_statements(data)
+        trends = analysis.get('trends', {})
+        
+        if not trends or 'error' in trends:
+            st.error("Insufficient data for trend analysis. Need at least 2 years of data.")
+            return
+        
+        # Trend summary
+        st.subheader("Trend Summary")
+        
+        # Convert trends to DataFrame for display
+        trend_data = []
+        for metric, trend_info in trends.items():
+            if isinstance(trend_info, dict) and 'direction' in trend_info:
+                trend_data.append({
+                    'Metric': metric,
+                    'Direction': trend_info['direction'],
+                    'CAGR %': trend_info.get('cagr', None),
+                    'Volatility %': trend_info.get('volatility', None),
+                    'R²': trend_info.get('r_squared', None)
+                })
+        
+        if trend_data:
+            trend_df = pd.DataFrame(trend_data)
+            
+            # Format and display
+            st.dataframe(
+                trend_df.style.format({
+                    'CAGR %': '{:.1f}',
+                    'Volatility %': '{:.1f}',
+                    'R²': '{:.3f}'
+                }, na_rep='-').background_gradient(subset=['CAGR %'], cmap='RdYlGn'),
+                use_container_width=True
+            )
+        
+        # Visualization
+        st.subheader("Trend Visualization")
+        
+        # Select metrics to visualize
+        numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
+        selected_metrics = st.multiselect(
+            "Select metrics to visualize:",
+            numeric_metrics,
+            default=numeric_metrics[:3] if len(numeric_metrics) >= 3 else numeric_metrics
+        )
+        
+        if selected_metrics:
+            fig = go.Figure()
+            
+            for metric in selected_metrics:
+                # Add actual values
+                fig.add_trace(go.Scatter(
+                    x=data.columns,
+                    y=data.loc[metric],
+                    mode='lines+markers',
+                    name=metric,
+                    line=dict(width=2),
+                    marker=dict(size=8)
+                ))
+                
+                # Add trend line
+                if metric in trends:
+                    trend_info = trends[metric]
+                    if 'slope' in trend_info and 'intercept' in trend_info:
+                        x_numeric = np.arange(len(data.columns))
+                        y_trend = trend_info['slope'] * x_numeric + trend_info['intercept']
+                        
+                        fig.add_trace(go.Scatter(
+                            x=data.columns,
+                            y=y_trend,
+                            mode='lines',
+                            name=f"{metric} (Trend)",
+                            line=dict(width=2, dash='dash'),
+                            opacity=0.7
+                        ))
+            
+            fig.update_layout(
+                title="Metric Trends with Linear Regression",
+                xaxis_title="Year",
+                yaxis_title="Value",
+                hovermode='x unified',
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_penman_nissim_tab(self, data: pd.DataFrame):
+        """Render Penman-Nissim analysis tab"""
+        st.header("🎯 Penman-Nissim Analysis")
+        
+        # Check if mappings exist
+        if not self.state.get('pn_mappings'):
+            st.info("Configure Penman-Nissim mappings to proceed")
+            
+            # Mapping interface
+            with st.expander("⚙️ Configure P-N Mappings", expanded=True):
+                available_metrics = [''] + [str(m) for m in data.index.tolist()]
+                
+                # Essential mappings
+                col1, col2, col3 = st.columns(3)
+                
+                mappings = {}
+                
+                with col1:
+                    mappings['Total Assets'] = st.selectbox(
+                        "Total Assets", 
+                        available_metrics,
+                        key="pn_total_assets"
+                    )
+                    mappings['Total Liabilities'] = st.selectbox(
+                        "Total Liabilities",
+                        available_metrics,
+                        key="pn_total_liabilities"
+                    )
+                    mappings['Total Equity'] = st.selectbox(
+                        "Total Equity",
+                        available_metrics,
+                        key="pn_total_equity"
+                    )
+                
+                with col2:
+                    mappings['Revenue'] = st.selectbox(
+                        "Revenue",
+                        available_metrics,
+                        key="pn_revenue"
+                    )
+                    mappings['Operating Income'] = st.selectbox(
+                        "Operating Income/EBIT",
+                        available_metrics,
+                        key="pn_operating_income"
+                    )
+                    mappings['Net Income'] = st.selectbox(
+                        "Net Income",
+                        available_metrics,
+                        key="pn_net_income"
+                    )
+                
+                with col3:
+                    mappings['Operating Cash Flow'] = st.selectbox(
+                        "Operating Cash Flow",
+                        available_metrics,
+                        key="pn_ocf"
+                    )
+                    mappings['Interest Expense'] = st.selectbox(
+                        "Interest Expense",
+                        available_metrics,
+                        key="pn_interest"
+                    )
+                    mappings['Tax Expense'] = st.selectbox(
+                        "Tax Expense",
+                        available_metrics,
+                        key="pn_tax"
+                    )
+                
+                # Remove empty mappings
+                mappings = {k: v for k, v in mappings.items() if v}
+                
+                if st.button("Apply P-N Mappings", type="primary"):
+                    if len(mappings) >= 6:
+                        self.state.set('pn_mappings', mappings)
+                        st.success("Mappings applied successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Please provide at least 6 mappings for analysis")
+            
+            return
+        
+        # Run analysis
+        if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
+            mappings = self.state.get('pn_mappings')
+            
+            with st.spinner("Running Penman-Nissim analysis..."):
+                try:
+                    analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+                    results = analyzer.calculate_all()
+                    
+                    if 'error' in results:
+                        st.error(f"Analysis failed: {results['error']}")
+                        return
+                    
+                    self.state.set('pn_results', results)
+                    st.success("Analysis completed successfully!")
+                    
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+                    if self.config.get('app.debug', False):
+                        st.exception(e)
+                    return
+        
+        # Display results
+        if self.state.get('pn_results'):
+            results = self.state.get('pn_results')
+            
+            # Key metrics
+            st.subheader("Key Metrics")
+            
+            if 'ratios' in results:
+                ratios_df = results['ratios']
+                
+                # Display key ratios
+                col1, col2, col3, col4 = st.columns(4)
+                
+                key_ratios = [
+                    ('Return on Net Operating Assets (RNOA) %', 'RNOA'),
+                    ('Financial Leverage (FLEV)', 'FLEV'),
+                    ('Net Borrowing Cost (NBC) %', 'NBC'),
+                    ('Operating Profit Margin (OPM) %', 'OPM')
+                ]
+                
+                for i, (ratio_name, short_name) in enumerate(key_ratios):
+                    if ratio_name in ratios_df.index:
+                        col = [col1, col2, col3, col4][i]
+                        with col:
+                            latest_value = ratios_df.loc[ratio_name].iloc[-1]
+                            self.ui_factory.create_metric_card(
+                                short_name,
+                                f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}",
+                                help=self._get_pn_ratio_help(short_name)
+                            )
+            
+            # Reformulated statements
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if 'reformulated_balance_sheet' in results:
+                    st.subheader("Reformulated Balance Sheet")
+                    st.dataframe(
+                        results['reformulated_balance_sheet'].style.format("{:,.0f}"),
+                        use_container_width=True
+                    )
+            
+            with col2:
+                if 'reformulated_income_statement' in results:
+                    st.subheader("Reformulated Income Statement")
+                    st.dataframe(
+                        results['reformulated_income_statement'].style.format("{:,.0f}"),
+                        use_container_width=True
+                    )
+            
+            # Free Cash Flow
+            if 'free_cash_flow' in results:
+                st.subheader("Free Cash Flow Analysis")
+                fcf_df = results['free_cash_flow']
+                
+                # Visualization
+                fig = go.Figure()
+                
+                for metric in fcf_df.index:
+                    fig.add_trace(go.Bar(
+                        x=fcf_df.columns,
+                        y=fcf_df.loc[metric],
+                        name=metric
+                    ))
+                
+                fig.update_layout(
+                    title="Cash Flow Components",
+                    xaxis_title="Year",
+                    yaxis_title="Amount",
+                    barmode='group',
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+    
+    def _get_pn_ratio_help(self, ratio: str) -> str:
+        """Get help text for Penman-Nissim ratios"""
+        help_texts = {
+            'RNOA': "Return on Net Operating Assets - measures operating efficiency",
+            'FLEV': "Financial Leverage - ratio of financial obligations to equity",
+            'NBC': "Net Borrowing Cost - effective interest rate on net debt",
+            'OPM': "Operating Profit Margin - operating profitability",
+            'NOAT': "Net Operating Asset Turnover - efficiency in using assets"
+        }
+        return help_texts.get(ratio, "Financial ratio")
+    
+    def _render_industry_tab(self, data: pd.DataFrame):
+        """Render industry comparison tab"""
+        st.header("🏭 Industry Comparison")
+        
+        # Industry selection
+        industries = [
+            "Technology", "Healthcare", "Financial Services", "Retail",
+            "Manufacturing", "Energy", "Real Estate", "Consumer Goods"
+        ]
+        
+        selected_industry = st.selectbox(
+            "Select Industry for Comparison",
+            industries,
+            key="industry_selection"
+        )
+        
+        # Mock industry benchmarks
+        industry_benchmarks = {
+            'Technology': {
+                'Current Ratio': 2.5,
+                'Quick Ratio': 2.2,
+                'ROE %': 22.5,
+                'ROA %': 12.8,
+                'Net Profit Margin %': 15.2,
+                'Debt to Equity': 0.45
+            },
+            'Manufacturing': {
+                'Current Ratio': 1.8,
+                'Quick Ratio': 1.2,
+                'ROE %': 15.5,
+                'ROA %': 7.2,
+                'Net Profit Margin %': 8.5,
+                'Debt to Equity': 0.85
+            }
+        }
+        
+        # Get company's latest ratios
+        if self.state.get('metric_mappings'):
+            mappings = self.state.get('metric_mappings')
+            mapped_df = data.rename(index=mappings)
+            
+            analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
+            company_ratios = {}
+            
+            for category, ratio_df in analysis.get('ratios', {}).items():
+                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                    for ratio in ratio_df.index:
+                        if len(ratio_df.columns) > 0:
+                            company_ratios[ratio] = ratio_df.loc[ratio].iloc[-1]
+        else:
+            company_ratios = {}
+        
+        # Comparison visualization
+        if selected_industry in industry_benchmarks and company_ratios:
+            st.subheader("Performance vs Industry")
+            
+            benchmarks = industry_benchmarks[selected_industry]
+            
+            # Prepare data for radar chart
+            categories = []
+            company_values = []
+            industry_values = []
+            
+            for metric, industry_value in benchmarks.items():
+                if metric in company_ratios:
+                    categories.append(metric)
+                    company_values.append(company_ratios[metric])
+                    industry_values.append(industry_value)
+            
+            if categories:
+                # Create radar chart
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=company_values,
+                    theta=categories,
+                    fill='toself',
+                    name='Your Company'
+                ))
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=industry_values,
+                    theta=categories,
+                    fill='toself',
+                    name=f'{selected_industry} Average'
+                ))
+                
+                fig.update_layout(
+                    polar=dict(
+                        radialaxis=dict(
+                            visible=True,
+                            range=[0, max(max(company_values), max(industry_values)) * 1.2]
+                        )),
+                    showlegend=True,
+                    title=f"Company vs {selected_industry} Industry Benchmarks"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Detailed comparison table
+                st.subheader("Detailed Comparison")
+                
+                comparison_data = []
+                for metric, industry_value in benchmarks.items():
+                    if metric in company_ratios:
+                        company_value = company_ratios[metric]
+                        difference = company_value - industry_value
+                        performance = "Above" if difference > 0 else "Below"
+                        
+                        comparison_data.append({
+                            'Metric': metric,
+                            'Your Company': f"{company_value:.2f}",
+                            'Industry Avg': f"{industry_value:.2f}",
+                            'Difference': f"{difference:+.2f}",
+                            'Performance': performance
+                        })
+                
+                comparison_df = pd.DataFrame(comparison_data)
+                
+                # Style the dataframe
+                def highlight_performance(row):
+                    if row['Performance'] == 'Above':
+                        return ['background-color: #d4edda'] * len(row)
+                    else:
+                        return ['background-color: #f8d7da'] * len(row)
+                
+                st.dataframe(
+                    comparison_df.style.apply(highlight_performance, axis=1),
+                    use_container_width=True
+                )
+        else:
+            st.info("Please calculate financial ratios first to enable industry comparison")
+    
+    def _render_data_explorer_tab(self, data: pd.DataFrame):
+        """Render data explorer tab"""
+        st.header("🔍 Data Explorer")
+        
+        # Data summary
+        st.subheader("Data Summary")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Total Rows", len(data))
+        with col2:
+            st.metric("Total Columns", len(data.columns))
+        with col3:
+            st.metric("Data Points", data.size)
+        
+        # Data preview
+        st.subheader("Data Preview")
+        
+        # Display options
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            show_all = st.checkbox("Show all data", value=False)
+        with col2:
+            transpose = st.checkbox("Transpose", value=False)
+        with col3:
+            decimal_places = st.number_input("Decimal places", 0, 4, 2)
+        
+        # Display data
+        display_df = data.T if transpose else data
+        
+        if not show_all:
+            display_df = display_df.head(20)
+        
+        # Format numeric columns
+        format_dict = {}
+        for col in display_df.select_dtypes(include=[np.number]).columns:
+            format_dict[col] = f"{{:,.{decimal_places}f}}"
+        
+        st.dataframe(
+            display_df.style.format(format_dict, na_rep="-"),
+            use_container_width=True
+        )
+        
+        # Data filtering
+        st.subheader("Data Filtering")
+        
+        # Metric filter
+        selected_metrics = st.multiselect(
+            "Select metrics to display:",
+            data.index.tolist(),
+            default=data.index[:10].tolist() if len(data) >= 10 else data.index.tolist()
+        )
+        
+        # Year filter
+        selected_years = st.multiselect(
+            "Select years to display:",
+            data.columns.tolist(),
+            default=data.columns.tolist()
+        )
+        
+        if selected_metrics and selected_years:
+            filtered_df = data.loc[selected_metrics, selected_years]
+            
+            st.subheader("Filtered Data")
+            st.dataframe(
+                filtered_df.style.format(format_dict, na_rep="-"),
+                use_container_width=True
+            )
+            
+            # Export filtered data
+            csv = filtered_df.to_csv()
+            st.download_button(
+                label="Download Filtered Data (CSV)",
+                data=csv,
+                file_name="filtered_financial_data.csv",
+                mime="text/csv"
+            )
+    
+    def _render_reports_tab(self, data: pd.DataFrame):
+        """Render reports tab"""
+        st.header("📄 Financial Reports")
+        
+        # Report type selection
+        report_type = st.selectbox(
+            "Select Report Type",
+            [
+                "Executive Summary",
+                "Ratio Analysis Report",
+                "Trend Analysis Report",
+                "Penman-Nissim Report",
+                "Complete Financial Analysis"
+            ],
+            key="report_type"
+        )
+        
+        # Report configuration
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            include_charts = st.checkbox("Include Charts", value=True)
+            include_insights = st.checkbox("Include Insights", value=True)
+        
+        with col2:
+            report_format = st.selectbox("Export Format", ["PDF", "Excel", "Word", "HTML"])
+            include_raw_data = st.checkbox("Include Raw Data", value=False)
+        
+        # Generate report button
+        if st.button("Generate Report", type="primary", key="generate_report"):
+            with st.spinner(f"Generating {report_type}..."):
+                # Generate report content based on type
+                report_content = self._generate_report(data, report_type, include_charts, include_insights)
+                
+                st.success("Report generated successfully!")
+                
+                # Display report preview
+                st.subheader("Report Preview")
+                st.markdown(report_content['summary'])
+                
+                # For now, provide markdown download
+                # In production, you would convert to actual PDF/Word/Excel
+                st.download_button(
+                    label=f"Download Report",
+                    data=report_content['full_report'],
+                    file_name=f"{report_type.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                    mime="text/markdown"
+                )
+    
+    def _generate_report(self, data: pd.DataFrame, report_type: str, 
+                        include_charts: bool, include_insights: bool) -> Dict[str, str]:
+        """Generate report content"""
+        # Get all analysis results
+        analysis = self.components['analyzer'].analyze_financial_statements(data)
+        
+        # Build report
+        report_lines = [
+            f"# {report_type}",
+            f"\n**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\n**Company:** {self.state.get('company_name', 'Financial Analysis')}",
+            "\n---\n"
+        ]
+        
+        # Executive Summary
+        report_lines.extend([
+            "## Executive Summary\n",
+            f"- **Total Metrics Analyzed:** {analysis['summary']['total_metrics']}",
+            f"- **Period Covered:** {analysis['summary']['year_range']}",
+            f"- **Data Quality Score:** {analysis['quality_score']:.1f}%",
+            f"- **Data Completeness:** {analysis['summary']['completeness']:.1f}%",
+            "\n"
+        ])
+        
+        # Key Insights
+        if include_insights and analysis.get('insights'):
+            report_lines.extend([
+                "## Key Insights\n"
+            ])
+            for insight in analysis['insights']:
+                report_lines.append(f"- {insight}")
+            report_lines.append("\n")
+        
+        # Financial Ratios
+        if 'ratios' in analysis and report_type in ["Ratio Analysis Report", "Complete Financial Analysis"]:
+            report_lines.extend([
+                "## Financial Ratios\n"
+            ])
+            
+            for category, ratio_df in analysis['ratios'].items():
+                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                    report_lines.append(f"\n### {category} Ratios\n")
+                    report_lines.append(ratio_df.to_markdown())
+                    report_lines.append("\n")
+        
+        # Trend Analysis
+        if 'trends' in analysis and report_type in ["Trend Analysis Report", "Complete Financial Analysis"]:
+            report_lines.extend([
+                "## Trend Analysis\n"
+            ])
+            
+            significant_trends = []
+            for metric, trend in analysis['trends'].items():
+                if isinstance(trend, dict) and trend.get('cagr') is not None:
+                    significant_trends.append({
+                        'Metric': metric,
+                        'Direction': trend['direction'],
+                        'CAGR': trend['cagr'],
+                        'R-squared': trend.get('r_squared', 0)
+                    })
+            
+            if significant_trends:
+                trend_df = pd.DataFrame(significant_trends)
+                report_lines.append(trend_df.to_markdown())
+                report_lines.append("\n")
+        
+        # Summary for preview
+        summary = "\n".join(report_lines[:20]) + "\n\n*[Report continues...]*"
+        
+        return {
+            'summary': summary,
+            'full_report': "\n".join(report_lines)
+        }
+    
+    def _perform_ai_mapping(self, data: pd.DataFrame):
+        """Perform AI mapping for the data"""
+        source_metrics = data.index.tolist()
+        
+        with st.spinner("Performing AI-powered metric mapping..."):
+            try:
+                result = self.components['mapper'].map_metrics(source_metrics)
+                
+                if result['mappings']:
+                    self.state.set('metric_mappings', result['mappings'])
+                    self.state.set('ai_mapping_result', result)
+                    
+                    st.success(f"✅ Successfully mapped {len(result['mappings'])} out of {len(source_metrics)} metrics")
+                    
+                    # Show mapping summary
+                    with st.expander("View Mapping Details", expanded=True):
+                        mapping_df = pd.DataFrame([
+                            {
+                                'Source': source,
+                                'Target': target,
+                                'Confidence': f"{result['confidence_scores'].get(source, 0):.2%}"
+                            }
+                            for source, target in result['mappings'].items()
+                        ])
+                        st.dataframe(mapping_df, use_container_width=True)
+                    
+                    if result['unmapped_metrics']:
+                        st.warning(f"⚠️ {len(result['unmapped_metrics'])} metrics could not be mapped automatically")
+                        with st.expander("Unmapped Metrics"):
+                            st.write(result['unmapped_metrics'])
+                else:
+                    st.error("Could not map any metrics. Please use manual mapping.")
+                    
+            except Exception as e:
+                self.logger.error(f"AI mapping failed: {e}")
+                st.error("AI mapping failed. Please use manual mapping instead.")
     
     def _process_uploaded_files(self, files: List[UploadedFile]):
         """Process uploaded files"""
@@ -2319,33 +3534,53 @@ class FinancialAnalyticsPlatform:
                 with ErrorContext(f"Processing {file.name}", self.logger):
                     # Read and parse file based on type
                     if file.name.endswith('.csv'):
-                        df = pd.read_csv(file)
+                        df = pd.read_csv(file, index_col=0)
                     elif file.name.endswith(('.xls', '.xlsx')):
-                        df = pd.read_excel(file)
+                        df = pd.read_excel(file, index_col=0)
                     else:
                         # HTML or other formats
-                        content = file.read()
-                        # Parse HTML content (implement based on your needs)
-                        df = self._parse_html_content(content)
+                        if CORE_COMPONENTS_AVAILABLE:
+                            content = file.read()
+                            result = parse_html_content(content, file.name)
+                            if result:
+                                df = result['statement']
+                            else:
+                                df = None
+                        else:
+                            st.warning(f"Cannot parse {file.name} - core components not available")
+                            df = None
                     
                     if df is not None:
                         all_data.append(df)
             
             if all_data:
                 # Merge data if multiple files
-                merged_data = self._merge_financial_data(all_data)
+                if len(all_data) == 1:
+                    merged_data = all_data[0]
+                else:
+                    # Simple merge by columns
+                    merged_data = pd.concat(all_data, axis=1)
+                    merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
                 
                 # Process and validate
                 processed_data, validation = self.components['processor'].process(merged_data)
                 
                 if validation.is_valid:
                     self.state.set('analysis_data', processed_data)
+                    self.state.set('company_name', files[0].name.split('.')[0])
                     st.success("Files processed successfully!")
+                    
+                    # Auto-map if AI is enabled
+                    if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
+                        self._perform_ai_mapping(processed_data)
+                    
                     st.rerun()
                 else:
                     st.error("Validation failed:")
                     for error in validation.errors:
                         st.error(f"- {error}")
+                    for warning in validation.warnings:
+                        st.warning(f"- {warning}")
             else:
                 st.error("No valid data found in uploaded files")
                 
@@ -2355,6 +3590,40 @@ class FinancialAnalyticsPlatform:
             
             if self.config.get('app.debug', False):
                 st.exception(e)
+    
+    def _load_sample_data(self, sample_name: str):
+        """Load sample data"""
+        try:
+            if "Indian Tech" in sample_name:
+                data = self.sample_generator.generate_indian_tech_company()
+                company_name = "Indian Tech Company Ltd."
+            elif "US Manufacturing" in sample_name:
+                data = self.sample_generator.generate_us_manufacturing()
+                company_name = "US Manufacturing Corp."
+            else:
+                # Default to Indian Tech
+                data = self.sample_generator.generate_indian_tech_company()
+                company_name = "Sample Company"
+            
+            # Process and validate
+            processed_data, validation = self.components['processor'].process(data)
+            
+            if validation.is_valid:
+                self.state.set('analysis_data', processed_data)
+                self.state.set('company_name', company_name)
+                st.success(f"Loaded sample data: {company_name}")
+                
+                # Auto-map if AI is enabled
+                if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
+                    self._perform_ai_mapping(processed_data)
+                
+                st.rerun()
+            else:
+                st.error("Sample data validation failed")
+                
+        except Exception as e:
+            self.logger.error(f"Error loading sample data: {e}")
+            st.error(f"Error loading sample data: {str(e)}")
     
     def _clear_all_caches(self):
         """Clear all caches"""
@@ -2377,7 +3646,7 @@ class FinancialAnalyticsPlatform:
         self.state = StateManager("financial_analytics")
         self.logger.info("Configuration reset to defaults")
 
-# --- 18. Application Entry Point ---
+# --- 21. Application Entry Point ---
 def main():
     """Main application entry point"""
     try:

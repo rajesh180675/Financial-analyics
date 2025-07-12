@@ -2348,10 +2348,12 @@ class EnhancedFinancialAnalyticsPlatform:
             )
     
     def _find_index(self, options, *keywords):
-        """Find index of matching option"""
+        """Find index of matching option (FIXED to handle non-string values)"""
         for keyword in keywords:
             for i, option in enumerate(options):
-                if keyword.lower() in option.lower():
+                # Convert option to string to safely use .lower()
+                option_str = str(option) if option else ""
+                if keyword.lower() in option_str.lower():
                     return i
         return 0
     

@@ -3984,7 +3984,7 @@ def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = N
         return df
     
     def _validate_and_clean_dataframe(self, df: pd.DataFrame, filename: str) -> Optional[pd.DataFrame]:
-    """Validate and clean the dataframe (more robust version)"""
+        """Validate and clean the dataframe (more robust version)"""
         try:
             # Basic validation
             if df is None or df.empty:

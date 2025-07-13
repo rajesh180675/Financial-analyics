@@ -1,5 +1,5 @@
-# elite_financial_analytics_platform_v3.py
-# Enterprise-Grade Financial Analytics Platform - Complete Fixed Version with Enhanced Parsing
+# elite_financial_analytics_platform_v3_fixed.py
+# Enterprise-Grade Financial Analytics Platform - Fixed State Management Version
 
 # --- 1. Core Imports and Setup ---
 import asyncio
@@ -799,102 +799,32 @@ class PatternMatcher:
         
         return dict(classifications)
 
-# --- 9. State Management System ---
-class StateManager:
-    """Advanced state management with persistence and recovery"""
+# --- 9. Simplified State Management ---
+class SimpleState:
+    """Simple state wrapper for session state"""
     
-    def __init__(self, namespace: str = "app"):
-        self.namespace = namespace
-        self._state = {}
-        self._observers = defaultdict(list)
-        self._lock = threading.RLock()
-        self._logger = LoggerFactory.get_logger('StateManager')
-        self._persistence_path = Path(f".state/{namespace}")
-        self._persistence_path.mkdir(parents=True, exist_ok=True)
+    @staticmethod
+    def get(key: str, default: Any = None) -> Any:
+        """Get value from session state"""
+        return st.session_state.get(key, default)
     
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get state value"""
-        with self._lock:
-            return self._state.get(key, default)
+    @staticmethod
+    def set(key: str, value: Any):
+        """Set value in session state"""
+        st.session_state[key] = value
     
-    def set(self, key: str, value: Any, persist: bool = False):
-        """Set state value"""
-        with self._lock:
-            old_value = self._state.get(key)
-            self._state[key] = value
-            
-            # Notify observers
-            for observer in self._observers[key]:
-                try:
-                    observer(key, old_value, value)
-                except Exception as e:
-                    self._logger.error(f"Observer error for {key}: {e}")
-            
-            # Persist if requested
-            if persist:
-                self._persist_key(key, value)
-    
-    def update(self, updates: Dict[str, Any], persist: bool = False):
-        """Batch update state"""
-        with self._lock:
-            for key, value in updates.items():
-                self.set(key, value, persist)
-    
-    def observe(self, key: str, callback: Callable[[str, Any, Any], None]):
-        """Add observer for state changes"""
-        with self._lock:
-            self._observers[key].append(callback)
-    
-    def _persist_key(self, key: str, value: Any):
-        """Persist a key to disk"""
-        try:
-            filepath = self._persistence_path / f"{key}.pkl"
-            with open(filepath, 'wb') as f:
-                pickle.dump(value, f)
-        except Exception as e:
-            self._logger.error(f"Failed to persist {key}: {e}")
-    
-    def load_persisted(self):
-        """Load all persisted state"""
-        for filepath in self._persistence_path.glob("*.pkl"):
-            key = filepath.stem
-            try:
-                with open(filepath, 'rb') as f:
-                    value = pickle.load(f)
-                    self._state[key] = value
-                    self._logger.info(f"Loaded persisted state: {key}")
-            except Exception as e:
-                self._logger.error(f"Failed to load {filepath}: {e}")
-    
-    def create_checkpoint(self, name: str):
-        """Create a state checkpoint"""
-        checkpoint_path = self._persistence_path / f"checkpoint_{name}.pkl"
-        try:
-            with open(checkpoint_path, 'wb') as f:
-                pickle.dump(dict(self._state), f)
-            self._logger.info(f"Created checkpoint: {name}")
-        except Exception as e:
-            self._logger.error(f"Failed to create checkpoint {name}: {e}")
-    
-    def restore_checkpoint(self, name: str) -> bool:
-        """Restore from checkpoint"""
-        checkpoint_path = self._persistence_path / f"checkpoint_{name}.pkl"
-        try:
-            with open(checkpoint_path, 'rb') as f:
-                self._state = pickle.load(f)
-            self._logger.info(f"Restored checkpoint: {name}")
-            return True
-        except Exception as e:
-            self._logger.error(f"Failed to restore checkpoint {name}: {e}")
-            return False
+    @staticmethod
+    def update(updates: Dict[str, Any]):
+        """Batch update session state"""
+        for key, value in updates.items():
+            st.session_state[key] = value
 
 # --- 10. Base Components with Dependency Injection ---
 class Component(ABC):
     """Base component with lifecycle management"""
     
-    def __init__(self, config: Configuration, state: StateManager):
+    def __init__(self, config: Configuration):
         self.config = config
-        self.state = state
         self._logger = LoggerFactory.get_logger(self.__class__.__name__)
         self._initialized = False
     
@@ -925,8 +855,8 @@ class Component(ABC):
 class SecurityModule(Component):
     """Enhanced security with comprehensive validation"""
     
-    def __init__(self, config: Configuration, state: StateManager):
-        super().__init__(config, state)
+    def __init__(self, config: Configuration):
+        super().__init__(config)
         self._sanitizer = None
         self._rate_limiter = defaultdict(deque)
         self._blocked_ips = set()
@@ -1061,8 +991,8 @@ class SecurityModule(Component):
 class DataProcessor(Component):
     """Advanced data processing with pipeline architecture"""
     
-    def __init__(self, config: Configuration, state: StateManager):
-        super().__init__(config, state)
+    def __init__(self, config: Configuration):
+        super().__init__(config)
         self._transformers = []
         self._validators = []
         self.resource_manager = None
@@ -1181,9 +1111,9 @@ class DataProcessor(Component):
                     if outliers.any():
                         self._logger.info(f"Found {outliers.sum()} outliers in {col}")
                         
-                        # Store outlier information in metadata
+                        # Store outlier information in session state
                         outlier_indices = series[outliers].index.tolist()
-                        self.state.set(f"outliers_{col}", outlier_indices)
+                        SimpleState.set(f"outliers_{col}", outlier_indices)
         
         return df_clean
 
@@ -1191,8 +1121,8 @@ class DataProcessor(Component):
 class FinancialAnalysisEngine(Component):
     """Core financial analysis engine with advanced features"""
     
-    def __init__(self, config: Configuration, state: StateManager):
-        super().__init__(config, state)
+    def __init__(self, config: Configuration):
+        super().__init__(config)
         self.pattern_matcher = PatternMatcher()
         self.cache = AdvancedCache()
     
@@ -1520,8 +1450,8 @@ class FinancialAnalysisEngine(Component):
 class AIMapper(Component):
     """AI-powered mapping with fallback mechanisms"""
     
-    def __init__(self, config: Configuration, state: StateManager):
-        super().__init__(config, state)
+    def __init__(self, config: Configuration):
+        super().__init__(config)
         self.model = None
         self.embeddings_cache = AdvancedCache(max_size_mb=50)
         self.fallback_mapper = None
@@ -1548,7 +1478,7 @@ class AIMapper(Component):
             self._logger.error(f"Failed to initialize AI model: {e}")
         
         # Initialize fallback
-        self.fallback_mapper = FuzzyMapper(self.config, self.state)
+        self.fallback_mapper = FuzzyMapper(self.config)
         self.fallback_mapper.initialize()
     
     def _precompute_standard_embeddings(self):
@@ -1573,7 +1503,7 @@ class AIMapper(Component):
             combined_text = ' '.join(descriptions)
             embedding = self._get_embedding(combined_text)
             if embedding is not None:
-                self.state.set(f"standard_embedding_{metric}", embedding, persist=True)
+                SimpleState.set(f"standard_embedding_{metric}", embedding)
     
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
         """Get embedding with caching"""
@@ -1651,7 +1581,7 @@ class AIMapper(Component):
                 
                 for target in target_metrics:
                     # Check for pre-computed embedding
-                    embedding = self.state.get(f"standard_embedding_{target}")
+                    embedding = SimpleState.get(f"standard_embedding_{target}")
                     
                     if embedding is None:
                         embedding = self._get_embedding(target.lower())
@@ -2279,24 +2209,38 @@ class SampleDataGenerator:
         
         df = pd.DataFrame(data, index=list(data.keys()), columns=years)
         return df
-
-# --- 20. Main Application Class (Complete with Enhanced Processing) ---
+        
+# --- 20. Main Application Class (FIXED VERSION) ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture"""
     
     def __init__(self):
-        # Initialize configuration
-        self.config = Configuration()
-        
-        # Initialize state manager
-        self.state = StateManager("financial_analytics")
-        self.state.load_persisted()
+        # Initialize session state for persistent data
+        if 'initialized' not in st.session_state:
+            st.session_state.initialized = True
+            st.session_state.analysis_data = None
+            st.session_state.metric_mappings = None
+            st.session_state.pn_mappings = None
+            st.session_state.pn_results = None
+            st.session_state.ai_mapping_result = None
+            st.session_state.company_name = None
+            st.session_state.data_source = None
+            st.session_state.show_manual_mapping = False
+            st.session_state.config_overrides = {}
+            st.session_state.uploaded_files = []
+            st.session_state.simple_parse_mode = False
+            
+        # Initialize configuration with session state overrides
+        self.config = Configuration(st.session_state.get('config_overrides', {}))
         
         # Initialize logger
         self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
         
-        # Initialize components
-        self.components = self._initialize_components()
+        # Initialize components only once
+        if 'components' not in st.session_state:
+            st.session_state.components = self._initialize_components()
+        
+        self.components = st.session_state.components
         
         # Initialize UI factory
         self.ui_factory = UIComponentFactory()
@@ -2307,10 +2251,10 @@ class FinancialAnalyticsPlatform:
     def _initialize_components(self) -> Dict[str, Component]:
         """Initialize all components with dependency injection"""
         components = {
-            'security': SecurityModule(self.config, self.state),
-            'processor': DataProcessor(self.config, self.state),
-            'analyzer': FinancialAnalysisEngine(self.config, self.state),
-            'mapper': AIMapper(self.config, self.state),
+            'security': SecurityModule(self.config),
+            'processor': DataProcessor(self.config),
+            'analyzer': FinancialAnalysisEngine(self.config),
+            'mapper': AIMapper(self.config),
         }
         
         # Initialize all components
@@ -2322,6 +2266,15 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"Failed to initialize {name}: {e}")
         
         return components
+    
+    # State helper methods
+    def get_state(self, key: str, default: Any = None) -> Any:
+        """Get value from session state"""
+        return st.session_state.get(key, default)
+    
+    def set_state(self, key: str, value: Any):
+        """Set value in session state"""
+        st.session_state[key] = value
     
     def run(self):
         """Main application entry point"""
@@ -2475,7 +2428,7 @@ class FinancialAnalyticsPlatform:
         
         if selected_mode != current_mode.name:
             self.config.set('app.display_mode', Configuration.DisplayMode[selected_mode])
-            st.rerun()
+            self.set_state('config_overrides', {'app': {'display_mode': Configuration.DisplayMode[selected_mode]}})
         
         # AI Settings
         if selected_mode != "MINIMAL":
@@ -2508,7 +2461,7 @@ class FinancialAnalyticsPlatform:
             key="number_format"
         )
         
-        self.state.set('number_format', 
+        self.set_state('number_format', 
                       Configuration.NumberFormat.INDIAN if "Indian" in format_option 
                       else Configuration.NumberFormat.INTERNATIONAL)
         
@@ -2527,18 +2480,11 @@ class FinancialAnalyticsPlatform:
             
             if st.sidebar.button("Reset Configuration"):
                 self._reset_configuration()
-                st.rerun()
     
     def _render_file_upload(self):
         """Render file upload interface"""
         allowed_types = self.config.get('app.allowed_file_types', [])
         max_size = self.config.get('app.max_file_size_mb', 10)
-        
-        # Initialize session state for uploaded files and simple mode
-        if 'uploaded_files' not in st.session_state:
-            st.session_state['uploaded_files'] = []
-        if 'simple_parse_mode' not in st.session_state:
-            st.session_state['simple_parse_mode'] = False
         
         # File uploader - update session state on change
         temp_files = st.sidebar.file_uploader(
@@ -2573,7 +2519,7 @@ class FinancialAnalyticsPlatform:
             if all_valid and st.sidebar.button("Process Files", type="primary"):
                 self._process_uploaded_files(uploaded_files)
         
-        # Format guide (unchanged)
+        # Format guide
         with st.sidebar.expander("📋 File Format Guide"):
             st.info("""
             **Supported Financial Data Formats:**
@@ -2608,12 +2554,12 @@ class FinancialAnalyticsPlatform:
             self._load_sample_data(selected_sample)
     
     def _render_main_content(self):
-        """Render main content area"""
-        # Check if data is loaded
-        if not self.state.get('analysis_data'):
-            self._render_welcome_screen()
-        else:
+        """Render main content area (FIXED)"""
+        # Check if data is loaded from session state
+        if self.get_state('analysis_data') is not None:
             self._render_analysis_interface()
+        else:
+            self._render_welcome_screen()
     
     def _render_welcome_screen(self):
         """Render welcome screen"""
@@ -2661,10 +2607,10 @@ class FinancialAnalyticsPlatform:
     
     def _render_analysis_interface(self):
         """Render main analysis interface"""
-        data = self.state.get('analysis_data')
+        data = self.get_state('analysis_data')
         
-        if not data:
-            st.error("No data available for analysis")
+        if data is None:
+            self._render_welcome_screen()
             return
         
         # Analysis tabs
@@ -2799,11 +2745,11 @@ class FinancialAnalyticsPlatform:
             st.plotly_chart(fig, use_container_width=True)
     
     def _render_ratios_tab(self, data: pd.DataFrame):
-        """Render financial ratios tab with manual mapping support"""
+        """Render financial ratios tab with manual mapping support (FIXED)"""
         st.header("📈 Financial Ratio Analysis")
         
         # Check if mappings exist
-        if not self.state.get('metric_mappings'):
+        if not self.get_state('metric_mappings'):
             st.warning("Please map metrics first to calculate ratios")
             
             # Show mapping options based on mode
@@ -2813,9 +2759,8 @@ class FinancialAnalyticsPlatform:
                 mappings = manual_mapper.render()
                 
                 if st.button("✅ Apply Mappings", type="primary", key="apply_manual_mappings"):
-                    self.state.set('metric_mappings', mappings)
+                    self.set_state('metric_mappings', mappings)
                     st.success(f"Applied {len(mappings)} mappings!")
-                    st.rerun()
             else:
                 # Show both AI and manual options
                 col1, col2 = st.columns(2)
@@ -2826,24 +2771,23 @@ class FinancialAnalyticsPlatform:
                 
                 with col2:
                     if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
-                        st.session_state['show_manual_mapping'] = True
+                        self.set_state('show_manual_mapping', True)
                 
                 # Show manual mapping if requested
-                if st.session_state.get('show_manual_mapping', False):
+                if self.get_state('show_manual_mapping', False):
                     with st.expander("Manual Mapping", expanded=True):
                         manual_mapper = ManualMappingInterface(data)
                         mappings = manual_mapper.render()
                         
                         if st.button("✅ Apply Manual Mappings", type="primary", key="apply_manual_mappings_2"):
-                            self.state.set('metric_mappings', mappings)
+                            self.set_state('metric_mappings', mappings)
                             st.success(f"Applied {len(mappings)} mappings!")
-                            st.session_state['show_manual_mapping'] = False
-                            st.rerun()
+                            self.set_state('show_manual_mapping', False)
             
             return
         
         # Apply mappings and calculate ratios
-        mappings = self.state.get('metric_mappings')
+        mappings = self.get_state('metric_mappings')
         mapped_df = data.rename(index=mappings)
         
         # Calculate ratios
@@ -2854,8 +2798,7 @@ class FinancialAnalyticsPlatform:
         if not ratios:
             st.error("Unable to calculate ratios. Please check your mappings.")
             if st.button("🔄 Re-map Metrics"):
-                self.state.set('metric_mappings', None)
-                st.rerun()
+                self.set_state('metric_mappings', None)
             return
         
         # Display ratios by category
@@ -2863,7 +2806,6 @@ class FinancialAnalyticsPlatform:
             if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
                 st.subheader(f"{category} Ratios")
                 
-                # Format based on number preference
                 try:
                     st.dataframe(
                         ratio_df.style.format("{:,.2f}", na_rep="-"),
@@ -3001,7 +2943,7 @@ class FinancialAnalyticsPlatform:
         st.header("🎯 Penman-Nissim Analysis")
         
         # Check if mappings exist
-        if not self.state.get('pn_mappings'):
+        if not self.get_state('pn_mappings'):
             st.info("Configure Penman-Nissim mappings to proceed")
             
             # Mapping interface
@@ -3069,9 +3011,8 @@ class FinancialAnalyticsPlatform:
                 
                 if st.button("Apply P-N Mappings", type="primary"):
                     if len(mappings) >= 6:
-                        self.state.set('pn_mappings', mappings)
+                        self.set_state('pn_mappings', mappings)
                         st.success("Mappings applied successfully!")
-                        st.rerun()
                     else:
                         st.error("Please provide at least 6 mappings for analysis")
             
@@ -3079,7 +3020,7 @@ class FinancialAnalyticsPlatform:
         
         # Run analysis
         if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
-            mappings = self.state.get('pn_mappings')
+            mappings = self.get_state('pn_mappings')
             
             with st.spinner("Running Penman-Nissim analysis..."):
                 try:
@@ -3090,7 +3031,7 @@ class FinancialAnalyticsPlatform:
                         st.error(f"Analysis failed: {results['error']}")
                         return
                     
-                    self.state.set('pn_results', results)
+                    self.set_state('pn_results', results)
                     st.success("Analysis completed successfully!")
                     
                 except Exception as e:
@@ -3100,8 +3041,8 @@ class FinancialAnalyticsPlatform:
                     return
         
         # Display results
-        if self.state.get('pn_results'):
-            results = self.state.get('pn_results')
+        if self.get_state('pn_results'):
+            results = self.get_state('pn_results')
             
             # Key metrics
             st.subheader("Key Metrics")
@@ -3222,8 +3163,8 @@ class FinancialAnalyticsPlatform:
         }
         
         # Get company's latest ratios
-        if self.state.get('metric_mappings'):
-            mappings = self.state.get('metric_mappings')
+        if self.get_state('metric_mappings'):
+            mappings = self.get_state('metric_mappings')
             mapped_df = data.rename(index=mappings)
             
             analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
@@ -3456,7 +3397,7 @@ class FinancialAnalyticsPlatform:
         report_lines = [
             f"# {report_type}",
             f"\n**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"\n**Company:** {self.state.get('company_name', 'Financial Analysis')}",
+            f"\n**Company:** {self.get_state('company_name', 'Financial Analysis')}",
             "\n---\n"
         ]
         
@@ -3521,7 +3462,7 @@ class FinancialAnalyticsPlatform:
         }
     
     def _perform_ai_mapping(self, data: pd.DataFrame):
-        """Perform AI mapping for the data"""
+        """Perform AI mapping for the data (FIXED)"""
         source_metrics = data.index.tolist()
         
         with st.spinner("Performing AI-powered metric mapping..."):
@@ -3529,8 +3470,8 @@ class FinancialAnalyticsPlatform:
                 result = self.components['mapper'].map_metrics(source_metrics)
                 
                 if result['mappings']:
-                    self.state.set('metric_mappings', result['mappings'])
-                    self.state.set('ai_mapping_result', result)
+                    self.set_state('metric_mappings', result['mappings'])
+                    self.set_state('ai_mapping_result', result)
                     
                     st.success(f"✅ Successfully mapped {len(result['mappings'])} out of {len(source_metrics)} metrics")
                     
@@ -3559,7 +3500,7 @@ class FinancialAnalyticsPlatform:
     
     # --- ENHANCED FILE PROCESSING METHODS ---
     def _process_uploaded_files(self, files: List[UploadedFile]):
-        """Process uploaded files with enhanced financial HTML detection"""
+        """Process uploaded files with enhanced financial HTML detection (FIXED)"""
         try:
             all_data = []
             
@@ -3970,272 +3911,6 @@ class FinancialAnalyticsPlatform:
         
         return html_content
     
-    def _select_best_financial_table_enhanced(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
-        """Enhanced selection of the best financial table"""
-        if not tables:
-            return None
-        
-        if len(tables) == 1:
-            return tables[0]
-        
-        # Enhanced scoring system
-        scores = []
-        
-        for i, table in enumerate(tables):
-            score = 0
-            details = {}
-            
-            # Check table size
-            if 5 < table.shape[0] < 500 and 2 < table.shape[1] < 20:
-                score += 10
-                details['size'] = 'good'
-            
-            # Check for financial keywords
-            table_str = ' '.join([
-                ' '.join(table.columns.astype(str)),
-                ' '.join(table.iloc[:, 0].astype(str)) if table.shape[1] > 0 else ''
-            ]).lower()
-            
-            financial_keywords = {
-                'cash': 10, 'flow': 10, 'operating': 8, 'investing': 8,
-                'financing': 8, 'revenue': 7, 'income': 7, 'asset': 7,
-                'liability': 7, 'equity': 7, 'profit': 6, 'loss': 6,
-                'total': 5, 'net': 5, 'gross': 5
-            }
-            
-            keyword_score = sum(weight for keyword, weight in financial_keywords.items() 
-                              if keyword in table_str)
-            score += keyword_score
-            details['keywords'] = keyword_score
-            
-            # Check for year patterns in columns
-            year_pattern = re.compile(r'(20\d{2}|19\d{2}|mar-\d{2}|fy\d{2})', re.IGNORECASE)
-            year_matches = sum(1 for col in table.columns if year_pattern.search(str(col)))
-            score += year_matches * 5
-            details['years'] = year_matches
-            
-            # Capitaline specific checks
-            if source == 'Capitaline':
-                if 'mar-' in str(table.columns).lower():
-                    score += 20
-                if any('particulars' in str(col).lower() for col in table.columns):
-                    score += 10
-            
-            scores.append((i, score, table, details))
-            self.logger.info(f"Table {i}: score={score}, shape={table.shape}, details={details}")
-        
-        # Get the best scoring table
-        best_idx, best_score, best_table, details = max(scores, key=lambda x: x[1])
-        
-        if best_score < 10:
-            st.warning("Low confidence in table selection. The data might need manual review.")
-        
-        self.logger.info(f"Selected table {best_idx} with score {best_score}")
-        return best_table
-    
-    def _post_process_html_dataframe_enhanced(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
-        """Enhanced post-processing for HTML dataframes"""
-        try:
-            original_shape = df.shape
-            self.logger.info(f"Post-processing dataframe with shape {original_shape}")
-            
-            # Step 1: Clean column names
-            if isinstance(df.columns, pd.MultiIndex):
-                # Flatten MultiIndex columns
-                df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
-            
-            df.columns = [str(col).strip() for col in df.columns]
-            
-            # Step 2: Identify and set proper index
-            # Look for a column that contains metric names
-            potential_index_cols = []
-            
-            for i, col in enumerate(df.columns):
-                if df[col].dtype == 'object':
-                    # Check if this column has financial metric patterns
-                    sample = df[col].dropna().astype(str).str.lower().head(20)
-                    metric_keywords = ['cash', 'revenue', 'income', 'asset', 'liability', 'activity', 'flow']
-                    
-                    if any(any(keyword in val for keyword in metric_keywords) for val in sample):
-                        potential_index_cols.append((i, col))
-            
-            # Use the first column with metric names as index
-            if potential_index_cols:
-                idx_position, idx_col = potential_index_cols[0]
-                self.logger.info(f"Using column '{idx_col}' as index")
-                
-                # Set as index
-                df = df.set_index(idx_col)
-                
-                # Clean the index
-                df.index = df.index.astype(str).str.strip()
-                df = df[df.index != '']
-                df = df[~df.index.str.contains('Unnamed:', na=False)]
-            
-            # Step 3: Clean and convert numeric columns
-            for col in df.columns:
-                if col.lower() in ['unnamed', 'description', 'particulars']:
-                    continue
-                    
-                # Check if column likely contains numeric data
-                sample = df[col].dropna().astype(str).head(10)
-                
-                # Check for numeric patterns
-                numeric_pattern = re.compile(r'[\d,.\-\(\)]+')
-                if any(numeric_pattern.match(str(val)) for val in sample):
-                    try:
-                        # Clean the data
-                        cleaned = df[col].astype(str)
-                        cleaned = cleaned.str.replace(',', '')
-                        cleaned = cleaned.str.replace('(', '-').str.replace(')', '')
-                        cleaned = cleaned.str.replace('--', '')  # Double negative
-                        cleaned = cleaned.str.strip()
-                        
-                        # Replace common NA values
-                        cleaned = cleaned.replace(['', '-', '--', 'NA', 'N/A', 'nil'], np.nan)
-                        
-                        # Convert to numeric
-                        df[col] = pd.to_numeric(cleaned, errors='coerce')
-                        
-                    except Exception as e:
-                        self.logger.warning(f"Could not convert column {col}: {e}")
-            
-            # Step 4: Remove empty rows and columns
-            df = df.dropna(how='all')
-            df = df.dropna(axis=1, how='all')
-            
-            # Step 5: Capitaline specific cleaning
-            if source == 'Capitaline':
-                # Remove common footer rows
-                footer_patterns = ['note:', 'source:', 'disclaimer:', 'total', 'grand total']
-                mask = ~df.index.str.lower().str.contains('|'.join(footer_patterns), na=False)
-                df = df[mask]
-            
-            self.logger.info(f"Post-processing complete. Shape changed from {original_shape} to {df.shape}")
-            
-            return df
-            
-        except Exception as e:
-            self.logger.error(f"Error in post-processing: {e}", exc_info=True)
-            return df
-    
-    def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
-        """Clean financial data from HTML exports (safer version)"""
-        try:
-            # Clean index if it's not MultiIndex
-            if hasattr(df, 'index') and not isinstance(df.index, pd.MultiIndex):
-                if df.index.dtype == 'object':
-                    df.index = df.index.astype(str).str.strip()
-                    # Remove empty index values
-                    df = df[df.index.notna() & (df.index != '')]
-            
-            # Clean column names
-            df.columns = [str(col).strip() for col in df.columns]
-            
-            # Handle year columns
-            year_pattern = re.compile(r'(?:19|20)\d{2}|(?:mar|dec|jun|sep)[-\s]?\d{2}', re.IGNORECASE)
-            
-            # Convert numeric columns
-            for col in df.columns:
-                # Skip if column name suggests it's not a data column
-                if any(skip in str(col).lower() for skip in ['unnamed', 'index', 'description']):
-                    continue
-                    
-                # Check if it's likely a year/period column
-                if year_pattern.search(str(col)) or any(char.isdigit() for char in str(col)):
-                    try:
-                        # Only process if the column contains object dtype
-                        if df[col].dtype == 'object':
-                            # Clean numeric data
-                            cleaned = df[col].astype(str).str.replace(',', '')
-                            cleaned = cleaned.str.replace('(', '-').str.replace(')', '')
-                            cleaned = cleaned.str.strip()
-                            
-                            # Handle Indian number format
-                            if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
-                                df[col] = self._convert_indian_numbers_series(cleaned)
-                            else:
-                                df[col] = pd.to_numeric(cleaned, errors='coerce')
-                                
-                    except Exception as e:
-                        self.logger.warning(f"Could not process column {col}: {e}")
-                        continue
-            
-            # Remove completely empty rows and columns
-            df = df.dropna(how='all')
-            df = df.dropna(axis=1, how='all')
-            
-            return df
-            
-        except Exception as e:
-            self.logger.error(f"Error in clean_financial_html_data: {e}")
-            return df
-    
-    def _convert_indian_numbers(self, series: pd.Series) -> pd.Series:
-        """Convert Indian number format (with Cr, Lacs notation) to standard numbers"""
-        def convert_value(val):
-            if pd.isna(val) or val == '':
-                return np.nan
-            
-            val_str = str(val).strip().upper()
-            
-            # Remove currency symbols
-            val_str = re.sub(r'[₹$¥€£]', '', val_str)
-            
-            # Check for multipliers
-            multiplier = 1
-            if 'CR' in val_str or 'CRORE' in val_str:
-                multiplier = 10000000  # 1 crore = 10 million
-                val_str = re.sub(r'CR(ORE)?S?', '', val_str)
-            elif 'LAC' in val_str or 'LAKH' in val_str or 'LK' in val_str:
-                multiplier = 100000  # 1 lakh = 100 thousand
-                val_str = re.sub(r'LA(C|KH|K)S?', '', val_str)
-            elif 'MN' in val_str or 'MILLION' in val_str:
-                multiplier = 1000000
-                val_str = re.sub(r'M(ILLIO)?NS?', '', val_str)
-            
-            # Clean and convert
-            val_str = val_str.strip()
-            try:
-                return float(val_str) * multiplier
-            except:
-                return np.nan
-        
-        return series.apply(convert_value)
-    
-    def _convert_indian_numbers_series(self, series: pd.Series) -> pd.Series:
-        """Convert Indian number format in a series (safer version)"""
-        def safe_convert(val):
-            try:
-                if pd.isna(val) or str(val).strip() == '':
-                    return np.nan
-                
-                val_str = str(val).strip().upper()
-                
-                # Remove currency symbols
-                val_str = re.sub(r'[₹$¥€£]', '', val_str)
-                
-                # Check for multipliers
-                multiplier = 1
-                if 'CR' in val_str or 'CRORE' in val_str:
-                    multiplier = 10000000
-                    val_str = re.sub(r'CR(ORE)?S?', '', val_str)
-                elif 'LAC' in val_str or 'LAKH' in val_str or 'LK' in val_str:
-                    multiplier = 100000
-                    val_str = re.sub(r'LA(C|KH|K)S?', '', val_str)
-                elif 'MN' in val_str or 'MILLION' in val_str:
-                    multiplier = 1000000
-                    val_str = re.sub(r'M(ILLIO)?NS?', '', val_str)
-                
-                # Clean and convert
-                val_str = val_str.strip()
-                return float(val_str) * multiplier
-                
-            except:
-                return np.nan
-        
-        return series.apply(safe_convert)
-    
     def _apply_source_specific_cleaning(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
         """Apply source-specific data cleaning rules"""
         if source == 'Capitaline':
@@ -4318,7 +3993,7 @@ class FinancialAnalyticsPlatform:
             return None
     
     def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
-        """Merge multiple dataframes and finalize processing"""
+        """Merge multiple dataframes and finalize processing (FIXED)"""
         st.info(f"Successfully parsed {len(all_data)} file(s)")
         
         if len(all_data) == 1:
@@ -4348,15 +4023,16 @@ class FinancialAnalyticsPlatform:
         processed_data, validation = self.components['processor'].process(merged_data)
         
         if validation.is_valid:
-            self.state.set('analysis_data', processed_data)
-            self.state.set('company_name', files[0].name.split('.')[0])
-            self.state.set('data_source', self._detect_file_source(files[0].name))  # Store source
+            # Use session state instead of StateManager
+            self.set_state('analysis_data', processed_data)
+            self.set_state('company_name', files[0].name.split('.')[0])
+            self.set_state('data_source', self._detect_file_source(files[0].name))
             st.success("Files processed successfully!")
             
             if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
                 self._perform_ai_mapping(processed_data)
             
-            st.rerun()
+            # Don't use st.rerun() - the UI will update automatically
         else:
             st.error("Validation failed:")
             for error in validation.errors: st.error(f"- {error}")
@@ -4409,7 +4085,7 @@ class FinancialAnalyticsPlatform:
             """)
     
     def _load_sample_data(self, sample_name: str):
-        """Load sample data"""
+        """Load sample data (FIXED)"""
         try:
             if "Indian Tech" in sample_name:
                 data = self.sample_generator.generate_indian_tech_company()
@@ -4418,7 +4094,6 @@ class FinancialAnalyticsPlatform:
                 data = self.sample_generator.generate_us_manufacturing()
                 company_name = "US Manufacturing Corp."
             else:
-                # Default to Indian Tech
                 data = self.sample_generator.generate_indian_tech_company()
                 company_name = "Sample Company"
             
@@ -4426,15 +4101,15 @@ class FinancialAnalyticsPlatform:
             processed_data, validation = self.components['processor'].process(data)
             
             if validation.is_valid:
-                self.state.set('analysis_data', processed_data)
-                self.state.set('company_name', company_name)
+                self.set_state('analysis_data', processed_data)
+                self.set_state('company_name', company_name)
                 st.success(f"Loaded sample data: {company_name}")
                 
                 # Auto-map if AI is enabled
                 if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
                     self._perform_ai_mapping(processed_data)
                 
-                st.rerun()
+                # Don't use st.rerun()
             else:
                 st.error("Sample data validation failed")
                 
@@ -4459,8 +4134,25 @@ class FinancialAnalyticsPlatform:
     
     def _reset_configuration(self):
         """Reset configuration to defaults"""
-        self.config = Configuration()
-        self.state = StateManager("financial_analytics")
+        # Clear session state
+        for key in list(st.session_state.keys()):
+            if key not in ['initialized']:
+                del st.session_state[key]
+        
+        # Reinitialize
+        st.session_state.initialized = True
+        st.session_state.analysis_data = None
+        st.session_state.metric_mappings = None
+        st.session_state.pn_mappings = None
+        st.session_state.pn_results = None
+        st.session_state.ai_mapping_result = None
+        st.session_state.company_name = None
+        st.session_state.data_source = None
+        st.session_state.show_manual_mapping = False
+        st.session_state.config_overrides = {}
+        st.session_state.uploaded_files = []
+        st.session_state.simple_parse_mode = False
+        
         self.logger.info("Configuration reset to defaults")
 
 # --- 21. Application Entry Point ---
@@ -4478,4 +4170,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        

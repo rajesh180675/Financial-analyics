@@ -4221,7 +4221,7 @@ class FinancialAnalyticsPlatform:
             st.error(f"Validation error for {filename}: {str(e)}")
             return None
     
-     def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
+    def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
         """Merge multiple dataframes and finalize processing"""
         st.info(f"Successfully parsed {len(all_data)} file(s)")
         

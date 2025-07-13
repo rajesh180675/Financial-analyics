@@ -3693,7 +3693,7 @@ class FinancialAnalyticsPlatform:
         return self._process_html_financial_export(file, source)
     
     def _process_html_financial_export(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
-    """Process HTML exports from financial data providers with enhanced parsing"""
+        """Process HTML exports from financial data providers with enhanced parsing"""
         try:
             file.seek(0)
             content = file.read()

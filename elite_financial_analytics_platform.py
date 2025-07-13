@@ -2534,33 +2534,33 @@ class FinancialAnalyticsPlatform:
         allowed_types = self.config.get('app.allowed_file_types', [])
         max_size = self.config.get('app.max_file_size_mb', 10)
         
-        # Initialize session state for uploaded files and simple mode
-        if 'uploaded_files' not in st.session_state:
-            st.session_state['uploaded_files'] = []
-        if 'simple_parse_mode' not in st.session_state:
-            st.session_state['simple_parse_mode'] = False
-        
-        # File uploader - update session state on change
-        temp_files = st.sidebar.file_uploader(
-            f"Upload Financial Statements (Max {max_size}MB each)",
-            type=allowed_types,
-            accept_multiple_files=True,
-            key="file_uploader"
-        )
-        
-        if temp_files:
-            st.session_state['uploaded_files'] = temp_files
-            st.sidebar.success(f"✅ {len(temp_files)} file(s) uploaded")
-        
-        uploaded_files = st.session_state['uploaded_files']
-        
-        if uploaded_files:
-            # Simple parsing mode checkbox - persists in session state
-            st.session_state['simple_parse_mode'] = st.sidebar.checkbox(
-                "Use simple parsing mode", 
-                value=st.session_state['simple_parse_mode'],
-                help="Try this if normal parsing fails (persists across reruns)"
+        # Use a form to prevent reruns on every interaction
+        with st.sidebar.form("file_upload_form"):
+            uploaded_files = st.file_uploader(
+                f"Upload Financial Statements (Max {max_size}MB each)",
+                type=allowed_types,
+                accept_multiple_files=True,
+                key="file_uploader"
             )
+            
+            # Options inside the form
+            use_simple_mode = st.checkbox(
+                "Use simple parsing mode", 
+                help="Try this if normal parsing fails"
+            )
+            
+            enable_diagnostics = st.checkbox(
+                "Enable diagnostics",
+                help="Show detailed parsing information"
+            )
+            
+            # Submit button
+            submit_button = st.form_submit_button("Process Files", type="primary")
+        
+        # Process when form is submitted
+        if submit_button and uploaded_files:
+            st.session_state['simple_parse_mode'] = use_simple_mode
+            st.session_state['enable_diagnostics'] = enable_diagnostics
             
             # Validate files
             all_valid = True
@@ -2570,10 +2570,18 @@ class FinancialAnalyticsPlatform:
                     st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
                     all_valid = False
             
-            if all_valid and st.sidebar.button("Process Files", type="primary"):
-                self._process_uploaded_files(uploaded_files)
+            if all_valid:
+                # Process files immediately
+                self._process_uploaded_files_immediate(uploaded_files)
         
-        # Format guide (unchanged)
+        # Show current status
+        if self.state.get('analysis_data') is not None:
+            st.sidebar.success(f"✅ Data loaded: {self.state.get('company_name', 'Unknown')}")
+            if st.sidebar.button("Clear Data"):
+                self.state.set('analysis_data', None)
+                st.rerun()
+        
+        # Format guide
         with st.sidebar.expander("📋 File Format Guide"):
             st.info("""
             **Supported Financial Data Formats:**
@@ -2584,12 +2592,298 @@ class FinancialAnalyticsPlatform:
             
             **💡 Pro Tip**: If you're downloading from Capitaline, both "Export to Excel" 
             and "Download as Excel" options will work with this tool.
-            
-            **Having issues?**
-            - Enable "Use simple parsing mode" before processing
-            - Check "Enable diagnostic mode" after processing
-            - Turn on Debug Mode in Advanced Options
             """)
+    
+    def _process_uploaded_files_immediate(self, files: List[UploadedFile]):
+        """Process uploaded files immediately with progress indicator"""
+        progress_bar = st.sidebar.progress(0)
+        status_text = st.sidebar.empty()
+        
+        try:
+            all_data = []
+            total_files = len(files)
+            
+            for i, file in enumerate(files):
+                status_text.text(f"Processing {file.name}...")
+                progress_bar.progress((i + 1) / total_files)
+                
+                self.logger.info(f"Processing file: {file.name}, size: {file.size} bytes")
+                
+                # Detect file source based on patterns
+                file_source = self._detect_file_source(file.name)
+                if file_source:
+                    self.logger.info(f"Detected source: {file_source}")
+                
+                try:
+                    if file.name.endswith('.csv'):
+                        df = self._process_csv_file(file)
+                    
+                    elif file.name.endswith(('.xls', '.xlsx')):
+                        # Enhanced Excel/HTML detection
+                        df = self._process_excel_or_html_file_immediate(file, file_source)
+                    
+                    elif file.name.endswith(('.html', '.htm')):
+                        df = self._process_html_file_immediate(file, file_source)
+                    
+                    else:
+                        st.sidebar.warning(f"Unsupported file type: {file.name}")
+                        df = None
+                    
+                    # Post-processing based on source
+                    if df is not None and file_source:
+                        df = self._apply_source_specific_cleaning(df, file_source)
+                    
+                    # Validation
+                    if df is not None:
+                        df = self._validate_and_clean_dataframe(df, file.name)
+                        if df is not None:
+                            all_data.append(df)
+                            
+                except Exception as e:
+                    self.logger.error(f"Error processing {file.name}: {e}")
+                    st.sidebar.error(f"Error processing {file.name}: {str(e)}")
+                    if self.config.get('app.debug', False):
+                        st.sidebar.exception(e)
+            
+            # Clear progress
+            progress_bar.empty()
+            status_text.empty()
+            
+            # Merge and finalize data
+            if all_data:
+                self._merge_and_finalize_data_immediate(all_data, files)
+            else:
+                st.sidebar.error("No valid data found in uploaded files")
+                
+        except Exception as e:
+            self.logger.error(f"Error processing files: {e}", exc_info=True)
+            st.sidebar.error(f"Error processing files: {str(e)}")
+    
+    def _process_excel_or_html_file_immediate(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process files that might be Excel or HTML masquerading as Excel"""
+        engine = 'xlrd' if file.name.endswith('.xls') else 'openpyxl'
+        
+        # First, check if it's actually HTML by peeking at the content
+        file.seek(0)
+        first_bytes = file.read(1024)  # Read first 1KB
+        file.seek(0)  # Reset
+        
+        # Check for HTML signatures
+        is_likely_html = any(marker in first_bytes.lower() for marker in [
+            b'<html', b'<!doctype', b'<table', b'<head', b'<?xml'
+        ])
+        
+        if is_likely_html:
+            self.logger.info(f"{file.name} detected as HTML disguised as Excel")
+            return self._process_html_financial_export_immediate(file, source)
+        
+        # Try standard Excel parsing
+        try:
+            df = pd.read_excel(file, index_col=0, engine=engine)
+            self.logger.info(f"Successfully read {file.name} as standard Excel")
+            return df
+        except Exception as e:
+            error_msg = str(e)
+            
+            # If it fails with Excel-specific errors, try HTML
+            if any(err in error_msg for err in [
+                "Expected BOF record", "not a valid", "Unsupported format",
+                "corrupt", "Can't find workbook", "found b'<html"
+            ]):
+                self.logger.warning(f"Excel parsing failed, attempting HTML fallback: {error_msg}")
+                return self._process_html_financial_export_immediate(file, source)
+            else:
+                # Try without index_col as fallback
+                try:
+                    file.seek(0)
+                    df = pd.read_excel(file, engine=engine)
+                    if df.iloc[:, 0].dtype == 'object':
+                        df = df.set_index(df.columns[0])
+                    return df
+                except Exception as e2:
+                    self.logger.error(f"Could not read {file.name}: {e2}")
+                    return None
+    
+    def _process_html_file_immediate(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process HTML file immediately"""
+        return self._process_html_financial_export_immediate(file, source)
+    
+    def _process_html_financial_export_immediate(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process HTML exports with immediate feedback"""
+        try:
+            file.seek(0)
+            content = file.read()
+            
+            # Try different encodings
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    content_str = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                content_str = content.decode('utf-8', errors='ignore')
+            
+            # Show diagnostics if enabled
+            if st.session_state.get('enable_diagnostics', False):
+                with st.sidebar.expander("HTML Diagnostics"):
+                    # Check for tables
+                    table_count = content_str.lower().count('<table')
+                    st.write(f"Tables found: {table_count}")
+                    
+                    # Check for patterns
+                    patterns = {
+                        'Cash Flow': content_str.lower().count('cash flow'),
+                        'Operating': content_str.lower().count('operating'),
+                        'Mar-': content_str.count('Mar-'),
+                        '₹': content_str.count('₹')
+                    }
+                    for pattern, count in patterns.items():
+                        st.write(f"{pattern}: {count}")
+            
+            # Clean HTML
+            content_str = self._preprocess_financial_html(content_str, source)
+            
+            # Try parsing strategies
+            df = None
+            
+            # If simple mode is enabled, go straight to BeautifulSoup
+            if st.session_state.get('simple_parse_mode', False):
+                df = self._parse_with_beautifulsoup(content_str)
+            else:
+                # Try pandas first
+                try:
+                    tables = pd.read_html(
+                        io.StringIO(content_str),
+                        header=None,
+                        index_col=None,
+                        thousands=',',
+                        na_values=['', '-', 'NA', 'N/A']
+                    )
+                    
+                    if tables:
+                        df = max(tables, key=lambda x: x.size)
+                        self.logger.info(f"Pandas parsing successful, shape: {df.shape}")
+                        
+                except Exception as e:
+                    self.logger.error(f"Pandas parsing failed: {e}")
+                    # Fallback to BeautifulSoup
+                    df = self._parse_with_beautifulsoup(content_str)
+            
+            if df is None:
+                return None
+            
+            # Clean up the dataframe
+            df = self._clean_parsed_html_table(df, source)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
+            st.sidebar.error(f"Failed to parse HTML: {e}")
+            return None
+    
+    def _parse_with_beautifulsoup(self, content: str) -> Optional[pd.DataFrame]:
+        """Parse HTML using BeautifulSoup as fallback"""
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(content, 'lxml')
+            tables = soup.find_all('table')
+            
+            if not tables:
+                return None
+            
+            # Find the largest table
+            largest_table = max(tables, key=lambda t: len(t.find_all('tr')))
+            
+            # Extract rows
+            rows = []
+            for tr in largest_table.find_all('tr'):
+                cells = []
+                for td in tr.find_all(['td', 'th']):
+                    # Get text and clean it
+                    text = td.get_text(strip=True)
+                    # Replace multiple spaces with single space
+                    text = ' '.join(text.split())
+                    cells.append(text)
+                if cells:  # Skip empty rows
+                    rows.append(cells)
+            
+            if not rows:
+                return None
+            
+            # Create DataFrame
+            df = pd.DataFrame(rows)
+            
+            # Try to identify header row
+            if len(df) > 0:
+                # Check if first row looks like headers (no numbers)
+                first_row = df.iloc[0]
+                if all(not str(cell).replace('.', '').replace('-', '').isdigit() for cell in first_row):
+                    df.columns = df.iloc[0]
+                    df = df[1:].reset_index(drop=True)
+            
+            self.logger.info(f"BeautifulSoup parsing successful, shape: {df.shape}")
+            return df
+            
+        except ImportError:
+            st.sidebar.error("BeautifulSoup not installed. Run: pip install beautifulsoup4 lxml")
+            return None
+        except Exception as e:
+            self.logger.error(f"BeautifulSoup parsing failed: {e}")
+            return None
+    
+    def _merge_and_finalize_data_immediate(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
+        """Merge and finalize data with immediate storage in state"""
+        st.sidebar.info(f"Successfully parsed {len(all_data)} file(s)")
+        
+        if len(all_data) == 1:
+            merged_data = all_data[0]
+        else:
+            try:
+                # Try to merge intelligently
+                if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
+                    merged_data = pd.concat(all_data, axis=1)
+                    merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
+                    st.sidebar.info("Merged files by columns")
+                else:
+                    merged_data = all_data[0]
+                    for df in all_data[1:]:
+                        for idx in df.index:
+                            if idx not in merged_data.index:
+                                merged_data.loc[idx] = df.loc[idx]
+                    st.sidebar.info("Merged files by rows")
+            except Exception as e:
+                self.logger.error(f"Error merging data: {e}")
+                st.sidebar.warning("Could not merge files, using first file only")
+                merged_data = all_data[0]
+        
+        # Process and validate
+        processed_data, validation = self.components['processor'].process(merged_data)
+        
+        if validation.is_valid:
+            # Store in state
+            self.state.set('analysis_data', processed_data)
+            self.state.set('company_name', files[0].name.split('.')[0])
+            self.state.set('data_source', self._detect_file_source(files[0].name))
+            
+            st.sidebar.success("✅ Files processed successfully!")
+            
+            # Show data preview
+            with st.sidebar.expander("📊 Data Preview"):
+                st.dataframe(processed_data.head(5))
+                st.write(f"Shape: {processed_data.shape}")
+            
+            # Trigger rerun to show analysis interface
+            st.rerun()
+        else:
+            st.sidebar.error("Validation failed:")
+            for error in validation.errors:
+                st.sidebar.error(f"- {error}")
+            for warning in validation.warnings:
+                st.sidebar.warning(f"- {warning}")
+
+
     
     def _render_sample_data_loader(self):
         """Render sample data loader"""

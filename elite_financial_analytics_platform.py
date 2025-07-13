@@ -1,5 +1,5 @@
 # elite_financial_analytics_platform_v3.py
-# Enterprise-Grade Financial Analytics Platform - Complete Fixed Version
+# Enterprise-Grade Financial Analytics Platform - Complete Fixed Version with Enhanced Parsing
 
 # --- 1. Core Imports and Setup ---
 import asyncio
@@ -2099,8 +2099,6 @@ class ManualMappingInterface:
         return mappings
 
 # --- 18. UI Components Factory ---
-# Replace the UIComponentFactory class with this corrected version:
-
 class UIComponentFactory:
     """Factory for creating UI components with consistent styling"""
     
@@ -2282,7 +2280,7 @@ class SampleDataGenerator:
         df = pd.DataFrame(data, index=list(data.keys()), columns=years)
         return df
 
-# --- 20. Main Application Class (Complete) ---
+# --- 20. Main Application Class (Complete with Enhanced Processing) ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture"""
     
@@ -2556,6 +2554,19 @@ class FinancialAnalyticsPlatform:
             
             if all_valid and st.sidebar.button("Process Files", type="primary"):
                 self._process_uploaded_files(uploaded_files)
+        
+        # Format guide
+        with st.sidebar.expander("📋 File Format Guide"):
+            st.info("""
+            **Supported Financial Data Formats:**
+            
+            1. **Capitaline Exports**: Both .xls (HTML) and true Excel formats
+            2. **Moneycontrol/BSE/NSE**: HTML exports with .xls extension
+            3. **Standard CSV/Excel**: With metrics in rows and years in columns
+            
+            **💡 Pro Tip**: If you're downloading from Capitaline, both "Export to Excel" 
+            and "Download as Excel" options will work with this tool.
+            """)
     
     def _render_sample_data_loader(self):
         """Render sample data loader"""
@@ -3523,148 +3534,42 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
-          # --- Replacement for your _process_uploaded_files method ---
-         # This version integrates the "fake XLS" fix directly into YOUR existing logic.
-         #  --- THE COMPLETE AND CORRECTED _process_uploaded_files FUNCTION ---
-         # This is your full function with only the Excel parsing logic surgically replaced.
-
+    # --- ENHANCED FILE PROCESSING METHODS ---
     def _process_uploaded_files(self, files: List[UploadedFile]):
-        """Process uploaded files with enhanced error handling"""
+        """Process uploaded files with enhanced financial HTML detection"""
         try:
-            # Process each file
             all_data = []
             
             for file in files:
                 self.logger.info(f"Processing file: {file.name}, size: {file.size} bytes")
                 
+                # Detect file source based on patterns
+                file_source = self._detect_file_source(file.name)
+                if file_source:
+                    st.info(f"📊 Detected source: {file_source}")
+                
                 try:
-                    # Read and parse file based on type
                     if file.name.endswith('.csv'):
-                        # --- YOUR ORIGINAL CSV LOGIC (UNCHANGED) ---
-                        try:
-                            # First try with index_col=0
-                            df = pd.read_csv(file, index_col=0)
-                            self.logger.info(f"Read CSV with index_col=0, shape: {df.shape}")
-                        except Exception as e1:
-                            self.logger.warning(f"Failed with index_col=0: {e1}")
-                            file.seek(0)  # Reset file pointer
-                            try:
-                                # Try without index_col
-                                df = pd.read_csv(file)
-                                # Use first column as index if it looks like metric names
-                                if df.iloc[:, 0].dtype == 'object':
-                                    df = df.set_index(df.columns[0])
-                                self.logger.info(f"Read CSV without index_col, shape: {df.shape}")
-                            except Exception as e2:
-                                self.logger.error(f"Failed to read CSV: {e2}")
-                                st.error(f"Error reading {file.name}: {str(e2)}")
-                                df = None
+                        df = self._process_csv_file(file)
                     
-                    # --- START OF MODIFIED BLOCK FOR EXCEL / FAKE EXCEL FILES ---
                     elif file.name.endswith(('.xls', '.xlsx')):
-                        engine = 'xlrd' if file.name.endswith('.xls') else 'openpyxl'
-                        self.logger.debug(f"Attempting to read {file.name} as Excel with engine: {engine}")
-    
-                        try:
-                            # Step 1: Try to read as a standard Excel file.
-                            file.seek(0)
-                            df = pd.read_excel(file, index_col=0, engine=engine)
-                            self.logger.info(f"Successfully read {file.name} as native Excel.")
-    
-                        except Exception as e1:
-                            # Step 2: An error occurred. Now we diagnose it.
-                            error_message = str(e1)
-                            self.logger.warning(f"Initial Excel read for {file.name} failed: {error_message}")
-    
-                            # Step 3: Check for the specific "fake XLS" error and try the HTML fallback.
-                            if "Excel file format cannot be determined" in error_message:
-                                st.info(f"'{file.name}' is not a standard Excel file. Trying to read as an HTML report...")
-                                self.logger.warning(f"File {file.name} not native Excel; attempting HTML fallback.")
-                                
-                                try:
-                                    file.seek(0)
-                                    tables = pd.read_html(io.StringIO(file.read().decode('utf-8', errors='ignore')))
-                                    if tables:
-                                        df = max(tables, key=lambda x: x.size)
-                                        if df.iloc[:, 0].dtype == 'object':
-                                            df = df.set_index(df.columns[0])
-                                        self.logger.info(f"Successfully parsed {file.name} using HTML fallback.")
-                                    else:
-                                        df = None
-                                        st.error(f"HTML fallback for '{file.name}' failed: No data tables found inside.")
-                                except Exception as e_html:
-                                    df = None
-                                    self.logger.error(f"HTML fallback for {file.name} also failed: {e_html}")
-                                    st.error(f"Could not read '{file.name}' as either Excel or HTML. Error: {e_html}")
-                            
-                            else:
-                                # Step 4: Handle other, unexpected Excel errors by trying to read without an index.
-                                self.logger.warning(f"Retrying Excel read for {file.name} without index_col. Error was: {e1}")
-                                try:
-                                    file.seek(0)
-                                    df = pd.read_excel(file, engine=engine)
-                                    if not df.empty and df.iloc[:, 0].dtype == 'object':
-                                        df = df.set_index(df.columns[0])
-                                    self.logger.info(f"Successfully read {file.name} as Excel without index_col.")
-                                except Exception as e2:
-                                    self.logger.error(f"All Excel read attempts failed for {file.name}: {e2}")
-                                    st.error(f"Error reading Excel file {file.name}: {str(e2)}")
-                                    df = None
-                    # --- END OF MODIFIED BLOCK ---
-    
+                        # Enhanced Excel/HTML detection
+                        df = self._process_excel_or_html_file(file, file_source)
+                    
                     elif file.name.endswith(('.html', '.htm')):
-                        # --- YOUR ORIGINAL HTML LOGIC (UNCHANGED) ---
-                        try:
-                            content = file.read()
-                            try:
-                                dfs = pd.read_html(io.StringIO(content.decode('utf-8')))
-                                if dfs:
-                                    df = max(dfs, key=lambda x: x.size)
-                                    if df.iloc[:, 0].dtype == 'object':
-                                        df = df.set_index(df.columns[0])
-                                    self.logger.info(f"Read HTML table, shape: {df.shape}")
-                                else:
-                                    df = None
-                            except Exception as e:
-                                self.logger.warning(f"Pandas HTML parsing failed: {e}")
-                                if CORE_COMPONENTS_AVAILABLE:
-                                    result = parse_html_content(content, file.name)
-                                    df = result['statement'] if result else None
-                                else:
-                                    st.warning(f"Cannot parse {file.name} - install pandas with html support: pip install 'pandas[html]' lxml html5lib")
-                                    df = None
-                        except Exception as e:
-                            self.logger.error(f"Failed to read HTML: {e}")
-                            st.error(f"Error reading {file.name}: {str(e)}")
-                            df = None
+                        df = self._process_html_file(file, file_source)
                     
                     else:
                         st.warning(f"Unsupported file type: {file.name}")
                         df = None
                     
-                    # --- YOUR POST-PARSING VALIDATION LOGIC (UNCHANGED) ---
+                    # Post-processing based on source
+                    if df is not None and file_source:
+                        df = self._apply_source_specific_cleaning(df, file_source)
+                    
+                    # Validation
                     if df is not None:
-                        self.logger.info(f"Dataframe info for {file.name}:")
-                        self.logger.info(f"  Shape: {df.shape}")
-                        self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
-                        self.logger.info(f"  Index: {list(df.index)[:5]}...")
-                        
-                        if df.empty:
-                            st.warning(f"{file.name} is empty")
-                            df = None
-                        elif df.shape[0] < 2 or df.shape[1] < 2:
-                            st.warning(f"{file.name} has insufficient data (minimum 2x2 required)")
-                            df = None
-                        else:
-                            numeric_cols = df.select_dtypes(include=[np.number]).columns
-                            if len(numeric_cols) == 0:
-                                st.warning(f"{file.name} has no numeric columns")
-                                for col in df.columns:
-                                    df[col] = pd.to_numeric(df[col], errors='coerce')
-                                numeric_cols = df.select_dtypes(include=[np.number]).columns
-                                if len(numeric_cols) == 0:
-                                    df = None
-                        
+                        df = self._validate_and_clean_dataframe(df, file.name)
                         if df is not None:
                             all_data.append(df)
                             st.success(f"✅ Successfully parsed {file.name}")
@@ -3675,77 +3580,411 @@ class FinancialAnalyticsPlatform:
                     if self.config.get('app.debug', False):
                         st.exception(e)
             
-            # --- YOUR POST-LOOP PROCESSING AND MERGING LOGIC (UNCHANGED) ---
+            # Merge and finalize data
             if all_data:
-                st.info(f"Successfully parsed {len(all_data)} file(s)")
-                
-                if len(all_data) == 1:
-                    merged_data = all_data[0]
-                else:
-                    try:
-                        if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
-                            merged_data = pd.concat(all_data, axis=1)
-                            merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
-                            st.info("Merged files by columns (same metrics)")
-                        else:
-                            merged_data = all_data[0]
-                            for df in all_data[1:]:
-                                for idx in df.index:
-                                    if idx not in merged_data.index:
-                                        merged_data.loc[idx] = df.loc[idx]
-                            st.info("Merged files by combining unique metrics")
-                    except Exception as e:
-                        self.logger.error(f"Error merging data: {e}")
-                        st.warning("Could not merge files automatically, using first file only")
-                        merged_data = all_data[0]
-                
-                with st.expander("📊 Data Preview", expanded=False):
-                    st.dataframe(merged_data.head(10))
-                    st.write(f"Shape: {merged_data.shape}")
-                
-                processed_data, validation = self.components['processor'].process(merged_data)
-                
-                if validation.is_valid:
-                    self.state.set('analysis_data', processed_data)
-                    self.state.set('company_name', files[0].name.split('.')[0])
-                    st.success("Files processed successfully!")
-                    
-                    if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
-                        self._perform_ai_mapping(processed_data)
-                    
-                    st.rerun()
-                else:
-                    st.error("Validation failed:")
-                    for error in validation.errors: st.error(f"- {error}")
-                    for warning in validation.warnings: st.warning(f"- {warning}")
-                    if self.config.get('app.debug', False):
-                        st.write("Debug: Processed data shape:", processed_data.shape)
-                        st.dataframe(processed_data.head())
+                self._merge_and_finalize_data(all_data, files)
             else:
-                # YOUR "NO DATA" MESSAGE (UNCHANGED)
-                st.error("No valid data found in uploaded files")
-                st.info("""
-                **Troubleshooting tips:**
-                1. Ensure your CSV/Excel file has financial metrics in rows and years in columns
-                2. The first column should contain metric names (e.g., Revenue, Total Assets)
-                3. Other columns should contain years or periods
-                4. Example structure:
-                """)
-                
-                example_df = pd.DataFrame({
-                    'Metric': ['Revenue', 'Total Assets', 'Net Income'],
-                    '2021': [100000, 500000, 20000],
-                    '2022': [120000, 550000, 25000],
-                    '2023': [140000, 600000, 30000]
-                }).set_index('Metric')
-                
-                st.dataframe(example_df)
+                self._show_no_data_message()
                 
         except Exception as e:
             self.logger.error(f"Error processing files: {e}", exc_info=True)
             st.error(f"Error processing files: {str(e)}")
+    
+    def _detect_file_source(self, filename: str) -> Optional[str]:
+        """Detect the source of the file based on naming patterns"""
+        filename_lower = filename.lower()
+        
+        # Common patterns from financial data providers
+        patterns = {
+            'Capitaline': ['capitaline', 'capline', 'cap_'],
+            'Moneycontrol': ['moneycontrol', 'mc_', 'mcontrol'],
+            'BSE': ['bse', 'bseindia', 'bombay_stock'],
+            'NSE': ['nse', 'nseindia', 'national_stock'],
+            'Screener': ['screener', 'screener.in'],
+            'MCA': ['mca', 'ministry_corporate'],
+            'Bloomberg': ['bloomberg', 'bbg'],
+            'Reuters': ['reuters', 'thomsonreuters'],
+            'CapitalIQ': ['capitaliq', 'capiq', 's&p'],
+            'Yahoo Finance': ['yahoo', 'yfinance']
+        }
+        
+        for source, keywords in patterns.items():
+            if any(keyword in filename_lower for keyword in keywords):
+                return source
+        
+        return None
+    
+    def _process_csv_file(self, file: UploadedFile) -> Optional[pd.DataFrame]:
+        """Process CSV file"""
+        try:
+            # First try with index_col=0
+            df = pd.read_csv(file, index_col=0)
+            self.logger.info(f"Read CSV with index_col=0, shape: {df.shape}")
+        except Exception as e1:
+            self.logger.warning(f"Failed with index_col=0: {e1}")
+            file.seek(0)  # Reset file pointer
+            try:
+                # Try without index_col
+                df = pd.read_csv(file)
+                # Use first column as index if it looks like metric names
+                if df.iloc[:, 0].dtype == 'object':
+                    df = df.set_index(df.columns[0])
+                self.logger.info(f"Read CSV without index_col, shape: {df.shape}")
+            except Exception as e2:
+                self.logger.error(f"Failed to read CSV: {e2}")
+                st.error(f"Error reading {file.name}: {str(e2)}")
+                return None
+        
+        return df
+    
+    def _process_excel_or_html_file(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process files that might be Excel or HTML masquerading as Excel"""
+        engine = 'xlrd' if file.name.endswith('.xls') else 'openpyxl'
+        
+        # First, check if it's actually HTML by peeking at the content
+        file.seek(0)
+        first_bytes = file.read(1024)  # Read first 1KB
+        file.seek(0)  # Reset
+        
+        # Check for HTML signatures
+        is_likely_html = any(marker in first_bytes.lower() for marker in [
+            b'<html', b'<!doctype', b'<table', b'<head', b'<?xml'
+        ])
+        
+        if is_likely_html:
+            self.logger.info(f"{file.name} detected as HTML disguised as Excel")
+            st.info(f"📄 {file.name} appears to be an HTML export. Using specialized parser...")
+            return self._process_html_financial_export(file, source)
+        
+        # Try standard Excel parsing
+        try:
+            df = pd.read_excel(file, index_col=0, engine=engine)
+            self.logger.info(f"Successfully read {file.name} as standard Excel")
+            return df
+        except Exception as e:
+            error_msg = str(e)
+            
+            # If it fails with Excel-specific errors, try HTML
+            if any(err in error_msg for err in [
+                "Expected BOF record", "not a valid", "Unsupported format",
+                "corrupt", "Can't find workbook", "found b'<html"
+            ]):
+                self.logger.warning(f"Excel parsing failed, attempting HTML fallback: {error_msg}")
+                return self._process_html_financial_export(file, source)
+            else:
+                # Try without index_col as fallback
+                try:
+                    file.seek(0)
+                    df = pd.read_excel(file, engine=engine)
+                    if df.iloc[:, 0].dtype == 'object':
+                        df = df.set_index(df.columns[0])
+                    return df
+                except Exception as e2:
+                    st.error(f"Could not read {file.name}: {e2}")
+                    return None
+    
+    def _process_html_file(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process HTML file"""
+        return self._process_html_financial_export(file, source)
+    
+    def _process_html_financial_export(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """Process HTML exports from financial data providers with enhanced parsing"""
+        try:
+            file.seek(0)
+            content = file.read()
+            
+            # Try different encodings
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    content_str = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                content_str = content.decode('utf-8', errors='ignore')
+            
+            # Clean HTML for better parsing
+            content_str = self._preprocess_financial_html(content_str, source)
+            
+            # Parse with specific parameters for financial data
+            tables = pd.read_html(
+                io.StringIO(content_str),
+                thousands=',',  # Handle Indian number format
+                decimal='.',
+                parse_dates=False,  # Avoid date parsing issues
+                index_col=0,  # Try to use first column as index
+                converters={i: str for i in range(20)}  # Initially read as strings
+            )
+            
+            if not tables:
+                st.error("No data tables found in the HTML file")
+                return None
+            
+            # Select the most likely financial statement table
+            df = self._select_best_financial_table(tables, source)
+            
+            # Clean and convert data types
+            df = self._clean_financial_html_data(df, source)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"HTML parsing failed: {e}")
+            st.error(f"Failed to parse HTML data: {e}")
+            return None
+    
+    def _preprocess_financial_html(self, html_content: str, source: Optional[str] = None) -> str:
+        """Preprocess HTML content based on source-specific quirks"""
+        # Remove problematic elements
+        import re
+        
+        # Remove scripts and styles
+        html_content = re.sub(r'<script.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+        html_content = re.sub(r'<style.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Source-specific preprocessing
+        if source == 'Capitaline':
+            # Capitaline often has merged cells and complex headers
+            html_content = re.sub(r'rowspan=[\"\']?\d+[\"\']?', '', html_content)
+            html_content = re.sub(r'colspan=[\"\']?\d+[\"\']?', '', html_content)
+            # Remove footnote markers
+            html_content = re.sub(r'<sup>.*?</sup>', '', html_content)
+            
+        elif source == 'Moneycontrol':
+            # Moneycontrol uses specific class names
+            html_content = re.sub(r'class=[\"\']?.*?[\"\']?', '', html_content)
+            
+        elif source in ['BSE', 'NSE']:
+            # Exchange data often has extra formatting
+            html_content = re.sub(r'&nbsp;', ' ', html_content)
+            html_content = re.sub(r'\s+', ' ', html_content)
+        
+        return html_content
+    
+    def _select_best_financial_table(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
+        """Select the most likely financial statement from multiple tables"""
+        if len(tables) == 1:
+            return tables[0]
+        
+        # Score each table based on financial keywords
+        financial_keywords = [
+            'revenue', 'income', 'expense', 'asset', 'liability', 'equity',
+            'cash', 'profit', 'loss', 'total', 'net', 'gross', 'operating',
+            'ebitda', 'ebit', 'sales', 'cost', 'tax', 'interest'
+        ]
+        
+        best_table = None
+        best_score = -1
+        
+        for table in tables:
+            score = 0
+            
+            # Check index
+            if hasattr(table, 'index'):
+                for keyword in financial_keywords:
+                    score += sum(1 for idx in table.index if keyword in str(idx).lower())
+            
+            # Check columns
+            for keyword in financial_keywords:
+                score += sum(1 for col in table.columns if keyword in str(col).lower())
+            
+            # Prefer larger tables
+            score += min(table.size / 100, 10)  # Cap size bonus at 10
+            
+            # Source-specific preferences
+            if source == 'Capitaline' and 'mar-' in str(table.columns).lower():
+                score += 20  # Capitaline uses Mar-XX format
+            
+            if score > best_score:
+                best_score = score
+                best_table = table
+        
+        self.logger.info(f"Selected table with score {best_score}")
+        return best_table
+    
+    def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
+        """Clean financial data from HTML exports"""
+        # Clean index
+        if df.index.dtype == 'object':
+            df.index = df.index.str.strip()
+            # Remove empty index values
+            df = df[df.index.notna() & (df.index != '')]
+        
+        # Clean column names
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # Handle year columns
+        year_pattern = re.compile(r'(?:19|20)\d{2}|(?:mar|dec|jun|sep)[-\s]?\d{2}', re.IGNORECASE)
+        
+        # Identify year columns
+        year_cols = []
+        for col in df.columns:
+            if year_pattern.search(str(col)):
+                year_cols.append(col)
+        
+        # Convert to numeric
+        for col in df.columns:
+            if col in year_cols or any(char.isdigit() for char in str(col)):
+                # Clean numeric data
+                df[col] = df[col].astype(str).str.replace(',', '')
+                df[col] = df[col].str.replace('(', '-').str.replace(')', '')
+                df[col] = df[col].str.strip()
+                
+                # Handle Indian number format (lakhs/crores)
+                if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
+                    df[col] = self._convert_indian_numbers(df[col])
+                
+                # Convert to numeric
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        return df
+    
+    def _convert_indian_numbers(self, series: pd.Series) -> pd.Series:
+        """Convert Indian number format (with Cr, Lacs notation) to standard numbers"""
+        def convert_value(val):
+            if pd.isna(val) or val == '':
+                return np.nan
+            
+            val_str = str(val).strip().upper()
+            
+            # Remove currency symbols
+            val_str = re.sub(r'[₹$¥€£]', '', val_str)
+            
+            # Check for multipliers
+            multiplier = 1
+            if 'CR' in val_str or 'CRORE' in val_str:
+                multiplier = 10000000  # 1 crore = 10 million
+                val_str = re.sub(r'CR(ORE)?S?', '', val_str)
+            elif 'LAC' in val_str or 'LAKH' in val_str or 'LK' in val_str:
+                multiplier = 100000  # 1 lakh = 100 thousand
+                val_str = re.sub(r'LA(C|KH|K)S?', '', val_str)
+            elif 'MN' in val_str or 'MILLION' in val_str:
+                multiplier = 1000000
+                val_str = re.sub(r'M(ILLIO)?NS?', '', val_str)
+            
+            # Clean and convert
+            val_str = val_str.strip()
+            try:
+                return float(val_str) * multiplier
+            except:
+                return np.nan
+        
+        return series.apply(convert_value)
+    
+    def _apply_source_specific_cleaning(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
+        """Apply source-specific data cleaning rules"""
+        if source == 'Capitaline':
+            # Capitaline specific cleaning
+            # Remove footnote rows
+            df = df[~df.index.str.contains('Note:|Source:', case=False, na=False)]
+            
+            # Standardize metric names
+            rename_map = {
+                'PBDIT': 'EBITDA',
+                'PBDT': 'EBIT',
+                'PAT': 'Net Income',
+                'Total Income': 'Revenue'
+            }
+            df.index = df.index.to_series().replace(rename_map)
+            
+        elif source == 'Moneycontrol':
+            # Remove percentage columns
+            df = df.loc[:, ~df.columns.str.contains('%', na=False)]
+        
+        return df
+    
+    def _validate_and_clean_dataframe(self, df: pd.DataFrame, filename: str) -> Optional[pd.DataFrame]:
+        """Validate and clean the dataframe"""
+        # Your existing validation logic
+        if df.empty:
+            st.warning(f"{filename} is empty")
+            return None
+        
+        if df.shape[0] < 2 or df.shape[1] < 2:
+            st.warning(f"{filename} has insufficient data (minimum 2x2 required)")
+            return None
+        
+        # Ensure numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) == 0:
+            st.warning(f"{filename} has no numeric columns. Attempting conversion...")
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Remove rows with all NaN values
+        df = df.dropna(how='all')
+        
+        # Remove columns with all NaN values
+        df = df.dropna(axis=1, how='all')
+        
+        return df if not df.empty else None
+    
+    def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
+        """Merge multiple dataframes and finalize processing"""
+        st.info(f"Successfully parsed {len(all_data)} file(s)")
+        
+        if len(all_data) == 1:
+            merged_data = all_data[0]
+        else:
+            try:
+                if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
+                    merged_data = pd.concat(all_data, axis=1)
+                    merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
+                    st.info("Merged files by columns (same metrics)")
+                else:
+                    merged_data = all_data[0]
+                    for df in all_data[1:]:
+                        for idx in df.index:
+                            if idx not in merged_data.index:
+                                merged_data.loc[idx] = df.loc[idx]
+                    st.info("Merged files by combining unique metrics")
+            except Exception as e:
+                self.logger.error(f"Error merging data: {e}")
+                st.warning("Could not merge files automatically, using first file only")
+                merged_data = all_data[0]
+        
+        with st.expander("📊 Data Preview", expanded=False):
+            st.dataframe(merged_data.head(10))
+            st.write(f"Shape: {merged_data.shape}")
+        
+        processed_data, validation = self.components['processor'].process(merged_data)
+        
+        if validation.is_valid:
+            self.state.set('analysis_data', processed_data)
+            self.state.set('company_name', files[0].name.split('.')[0])
+            st.success("Files processed successfully!")
+            
+            if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
+                self._perform_ai_mapping(processed_data)
+            
+            st.rerun()
+        else:
+            st.error("Validation failed:")
+            for error in validation.errors: st.error(f"- {error}")
+            for warning in validation.warnings: st.warning(f"- {warning}")
             if self.config.get('app.debug', False):
-                st.exception(e)
+                st.write("Debug: Processed data shape:", processed_data.shape)
+                st.dataframe(processed_data.head())
+    
+    def _show_no_data_message(self):
+        """Show message when no valid data is found"""
+        st.error("No valid data found in uploaded files")
+        st.info("""
+        **Troubleshooting tips:**
+        1. Ensure your CSV/Excel file has financial metrics in rows and years in columns
+        2. The first column should contain metric names (e.g., Revenue, Total Assets)
+        3. Other columns should contain years or periods
+        4. Example structure:
+        """)
+        
+        example_df = pd.DataFrame({
+            'Metric': ['Revenue', 'Total Assets', 'Net Income'],
+            '2021': [100000, 500000, 20000],
+            '2022': [120000, 550000, 25000],
+            '2023': [140000, 600000, 30000]
+        }).set_index('Metric')
+        
+        st.dataframe(example_df)
     
     def _load_sample_data(self, sample_name: str):
         """Load sample data"""

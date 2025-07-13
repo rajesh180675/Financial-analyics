@@ -3534,7 +3534,7 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
-    # --- ENHANCED FILE PROCESSING METHODS ---
+     # --- ENHANCED FILE PROCESSING METHODS ---
     def _process_uploaded_files(self, files: List[UploadedFile]):
         """Process uploaded files with enhanced financial HTML detection"""
         try:
@@ -3596,7 +3596,7 @@ class FinancialAnalyticsPlatform:
         
         # Common patterns from financial data providers
         patterns = {
-            'Capitaline': ['capitaline', 'capline', 'cap_'],
+            'Capitaline': ['capitaline', 'capline', 'cap_', 'cashflow_'],
             'Moneycontrol': ['moneycontrol', 'mc_', 'mcontrol'],
             'BSE': ['bse', 'bseindia', 'bombay_stock'],
             'NSE': ['nse', 'nseindia', 'national_stock'],
@@ -3654,6 +3654,11 @@ class FinancialAnalyticsPlatform:
         if is_likely_html:
             self.logger.info(f"{file.name} detected as HTML disguised as Excel")
             st.info(f"📄 {file.name} appears to be an HTML export. Using specialized parser...")
+            
+            # Add diagnostic option for debugging
+            if st.checkbox("Show file diagnostics", key=f"diag_{file.name}"):
+                self._diagnose_html_content(file)
+            
             return self._process_html_financial_export(file, source)
         
         # Try standard Excel parsing
@@ -3706,22 +3711,42 @@ class FinancialAnalyticsPlatform:
             # Clean HTML for better parsing
             content_str = self._preprocess_financial_html(content_str, source)
             
-            # Parse with specific parameters for financial data
-            tables = pd.read_html(
-                io.StringIO(content_str),
-                thousands=',',  # Handle Indian number format
-                decimal='.',
-                parse_dates=False,  # Avoid date parsing issues
-                index_col=0,  # Try to use first column as index
-                converters={i: str for i in range(20)}  # Initially read as strings
-            )
+            # First try without index_col to see what we get
+            try:
+                tables = pd.read_html(
+                    io.StringIO(content_str),
+                    thousands=',',  # Handle Indian number format
+                    decimal='.',
+                    parse_dates=False,  # Avoid date parsing issues
+                    # Don't set index_col yet
+                    converters={i: str for i in range(20)}  # Initially read as strings
+                )
+            except Exception as e:
+                self.logger.error(f"Initial HTML parsing failed: {e}")
+                # Try simpler parsing
+                tables = pd.read_html(io.StringIO(content_str))
             
             if not tables:
                 st.error("No data tables found in the HTML file")
                 return None
             
+            # Log information about found tables
+            self.logger.info(f"Found {len(tables)} table(s) in HTML")
+            for i, table in enumerate(tables):
+                self.logger.info(f"Table {i}: shape={table.shape}, columns={list(table.columns)[:5]}")
+            
             # Select the most likely financial statement table
             df = self._select_best_financial_table(tables, source)
+            
+            # Now try to set the index if the first column looks like metric names
+            if df is not None and len(df.columns) > 0:
+                first_col = df.iloc[:, 0] if not df.empty else None
+                if first_col is not None and first_col.dtype == 'object':
+                    # Check if first column contains financial metric names
+                    metric_keywords = ['asset', 'liability', 'revenue', 'income', 'expense', 'cash', 'profit']
+                    if any(keyword in str(first_col).lower() for keyword in metric_keywords):
+                        df = df.set_index(df.columns[0])
+                        self.logger.info("Set first column as index")
             
             # Clean and convert data types
             df = self._clean_financial_html_data(df, source)
@@ -3729,9 +3754,51 @@ class FinancialAnalyticsPlatform:
             return df
             
         except Exception as e:
-            self.logger.error(f"HTML parsing failed: {e}")
+            self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
             st.error(f"Failed to parse HTML data: {e}")
+            
+            # Try a more basic approach as last resort
+            try:
+                file.seek(0)
+                content = file.read()
+                content_str = content.decode('utf-8', errors='ignore')
+                
+                # Use pandas without any special parameters
+                tables = pd.read_html(io.StringIO(content_str))
+                
+                if tables:
+                    df = tables[0]  # Just take the first table
+                    st.warning("Using simplified parsing - please verify data accuracy")
+                    return df
+                    
+            except Exception as e2:
+                self.logger.error(f"Even basic HTML parsing failed: {e2}")
+                
             return None
+    
+    def _diagnose_html_content(self, file: UploadedFile) -> None:
+        """Diagnose HTML content to understand structure"""
+        try:
+            file.seek(0)
+            content = file.read()
+            content_str = content.decode('utf-8', errors='ignore')
+            
+            # Show first 1000 characters
+            st.text("First 1000 characters of file:")
+            st.code(content_str[:1000])
+            
+            # Try to find tables
+            tables = pd.read_html(io.StringIO(content_str))
+            st.write(f"Found {len(tables)} tables")
+            
+            for i, table in enumerate(tables[:3]):  # Show first 3 tables
+                st.write(f"Table {i}:")
+                st.write(f"Shape: {table.shape}")
+                st.write(f"Columns: {list(table.columns)}")
+                st.dataframe(table.head())
+                
+        except Exception as e:
+            st.error(f"Diagnostic failed: {e}")
     
     def _preprocess_financial_html(self, html_content: str, source: Optional[str] = None) -> str:
         """Preprocess HTML content based on source-specific quirks"""
@@ -3763,6 +3830,9 @@ class FinancialAnalyticsPlatform:
     
     def _select_best_financial_table(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
         """Select the most likely financial statement from multiple tables"""
+        if not tables:
+            return None
+            
         if len(tables) == 1:
             return tables[0]
         
@@ -3776,24 +3846,28 @@ class FinancialAnalyticsPlatform:
         best_table = None
         best_score = -1
         
-        for table in tables:
+        for i, table in enumerate(tables):
+            if table.empty:
+                continue
+                
             score = 0
             
-            # Check index
-            if hasattr(table, 'index'):
-                for keyword in financial_keywords:
-                    score += sum(1 for idx in table.index if keyword in str(idx).lower())
+            # Convert table to string for keyword searching
+            table_str = str(table.head(20)).lower()  # Look at first 20 rows
             
-            # Check columns
+            # Check for financial keywords in the entire table content
             for keyword in financial_keywords:
-                score += sum(1 for col in table.columns if keyword in str(col).lower())
+                score += table_str.count(keyword)
             
-            # Prefer larger tables
-            score += min(table.size / 100, 10)  # Cap size bonus at 10
+            # Prefer larger tables (but not too large)
+            if 10 < table.size < 10000:  # Reasonable size for financial statements
+                score += min(table.size / 100, 10)  # Cap size bonus at 10
             
             # Source-specific preferences
             if source == 'Capitaline' and 'mar-' in str(table.columns).lower():
                 score += 20  # Capitaline uses Mar-XX format
+            
+            self.logger.debug(f"Table {i}: score={score}, shape={table.shape}")
             
             if score > best_score:
                 best_score = score
@@ -3952,6 +4026,7 @@ class FinancialAnalyticsPlatform:
         if validation.is_valid:
             self.state.set('analysis_data', processed_data)
             self.state.set('company_name', files[0].name.split('.')[0])
+            self.state.set('data_source', self._detect_file_source(files[0].name))  # Store source
             st.success("Files processed successfully!")
             
             if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
@@ -3985,6 +4060,23 @@ class FinancialAnalyticsPlatform:
         }).set_index('Metric')
         
         st.dataframe(example_df)
+        
+        # Additional help for common sources
+        with st.expander("📋 Help for Common Data Sources"):
+            st.markdown("""
+            **Capitaline:**
+            - Both HTML exports (.xls) and true Excel files are supported
+            - The tool automatically detects and converts Lakhs/Crores notation
+            
+            **Moneycontrol/BSE/NSE:**
+            - Download financial statements as Excel/CSV
+            - HTML exports disguised as .xls files are automatically handled
+            
+            **Other Sources:**
+            - Ensure data is in tabular format
+            - Financial metrics should be in rows
+            - Years/periods should be in columns
+            """)
     
     def _load_sample_data(self, sample_name: str):
         """Load sample data"""

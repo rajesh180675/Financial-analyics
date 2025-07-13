@@ -2534,21 +2534,33 @@ class FinancialAnalyticsPlatform:
         allowed_types = self.config.get('app.allowed_file_types', [])
         max_size = self.config.get('app.max_file_size_mb', 10)
         
-        uploaded_files = st.sidebar.file_uploader(
+        # Initialize session state for uploaded files and simple mode
+        if 'uploaded_files' not in st.session_state:
+            st.session_state['uploaded_files'] = []
+        if 'simple_parse_mode' not in st.session_state:
+            st.session_state['simple_parse_mode'] = False
+        
+        # File uploader - update session state on change
+        temp_files = st.sidebar.file_uploader(
             f"Upload Financial Statements (Max {max_size}MB each)",
             type=allowed_types,
             accept_multiple_files=True,
             key="file_uploader"
         )
         
+        if temp_files:
+            st.session_state['uploaded_files'] = temp_files
+            st.sidebar.success(f"✅ {len(temp_files)} file(s) uploaded")
+        
+        uploaded_files = st.session_state['uploaded_files']
+        
         if uploaded_files:
-            st.sidebar.success(f"✅ {len(uploaded_files)} file(s) uploaded")
-            
-            # Add a simple parse option for problematic files
-            if st.sidebar.checkbox("Use simple parsing mode", help="Try this if normal parsing fails"):
-                st.session_state['simple_parse_mode'] = True
-            else:
-                st.session_state['simple_parse_mode'] = False
+            # Simple parsing mode checkbox - persists in session state
+            st.session_state['simple_parse_mode'] = st.sidebar.checkbox(
+                "Use simple parsing mode", 
+                value=st.session_state['simple_parse_mode'],
+                help="Try this if normal parsing fails (persists across reruns)"
+            )
             
             # Validate files
             all_valid = True
@@ -2561,7 +2573,7 @@ class FinancialAnalyticsPlatform:
             if all_valid and st.sidebar.button("Process Files", type="primary"):
                 self._process_uploaded_files(uploaded_files)
         
-        # Format guide
+        # Format guide (unchanged)
         with st.sidebar.expander("📋 File Format Guide"):
             st.info("""
             **Supported Financial Data Formats:**

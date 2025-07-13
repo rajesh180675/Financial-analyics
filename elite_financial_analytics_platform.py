@@ -2544,6 +2544,12 @@ class FinancialAnalyticsPlatform:
         if uploaded_files:
             st.sidebar.success(f"✅ {len(uploaded_files)} file(s) uploaded")
             
+            # Add a simple parse option for problematic files
+            if st.sidebar.checkbox("Use simple parsing mode", help="Try this if normal parsing fails"):
+                st.session_state['simple_parse_mode'] = True
+            else:
+                st.session_state['simple_parse_mode'] = False
+            
             # Validate files
             all_valid = True
             for file in uploaded_files:
@@ -2566,6 +2572,11 @@ class FinancialAnalyticsPlatform:
             
             **💡 Pro Tip**: If you're downloading from Capitaline, both "Export to Excel" 
             and "Download as Excel" options will work with this tool.
+            
+            **Having issues?**
+            - Enable "Use simple parsing mode" before processing
+            - Check "Enable diagnostic mode" after processing
+            - Turn on Debug Mode in Advanced Options
             """)
     
     def _render_sample_data_loader(self):
@@ -3703,104 +3714,177 @@ class FinancialAnalyticsPlatform:
             else:
                 content_str = content.decode('utf-8', errors='ignore')
             
-            # Add diagnostic mode
-            if st.checkbox("Enable diagnostic mode", key=f"diag_mode_{file.name}"):
+            # Use session state for diagnostic mode to persist across reruns
+            diagnostic_key = f"diag_mode_{file.name}"
+            if diagnostic_key not in st.session_state:
+                st.session_state[diagnostic_key] = False
+            
+            # Show diagnostic checkbox
+            st.session_state[diagnostic_key] = st.checkbox(
+                "Enable diagnostic mode", 
+                value=st.session_state[diagnostic_key],
+                key=f"checkbox_{diagnostic_key}"
+            )
+            
+            # Show diagnostics if enabled
+            if st.session_state[diagnostic_key]:
                 self._show_html_diagnostics(content_str, file.name)
+                
+                # Try a very basic parse to show what pandas sees
+                st.write("### Basic Pandas Parse Attempt")
+                try:
+                    # Most basic read_html call
+                    basic_tables = pd.read_html(io.StringIO(content_str), header=None, index_col=None)
+                    st.write(f"Found {len(basic_tables)} tables with basic parsing")
+                    
+                    for i, table in enumerate(basic_tables[:3]):
+                        with st.expander(f"Table {i} preview (shape: {table.shape})"):
+                            st.dataframe(table.head(10))
+                            
+                            # Show data types
+                            st.write("Column data types:")
+                            st.write(table.dtypes)
+                            
+                except Exception as e:
+                    st.error(f"Basic parsing error: {e}")
             
             # Clean HTML for better parsing
             content_str = self._preprocess_financial_html(content_str, source)
             
-            # Try multiple parsing strategies
-            all_tables = []
+            # For the MultiIndex error, let's use a simpler approach
+            df = None
+            error_messages = []
             
-            # Strategy 1: Basic pandas read_html
-            try:
-                tables = pd.read_html(io.StringIO(content_str))
-                all_tables.extend(tables)
-                self.logger.info(f"Basic parsing found {len(tables)} tables")
-            except Exception as e:
-                self.logger.warning(f"Basic parsing failed: {e}")
-            
-            # Strategy 2: With specific parameters
+            # Strategy 1: Simplest possible parsing
             try:
                 tables = pd.read_html(
                     io.StringIO(content_str),
-                    match='.+',  # Match any table with content
-                    header=None,
-                    index_col=None,
-                    skiprows=0,
-                    attrs={'class': None}  # Don't filter by class
+                    header=None,  # No header
+                    index_col=None,  # No index
+                    thousands=',',  # Handle thousands separator
+                    na_values=['', '-', 'NA', 'N/A'],  # Common NA values
+                    keep_default_na=True
                 )
-                all_tables.extend(tables)
-                self.logger.info(f"Detailed parsing found {len(tables)} tables")
-            except Exception as e:
-                self.logger.warning(f"Detailed parsing failed: {e}")
-            
-            # Strategy 3: For Capitaline specific format
-            if source == 'Capitaline':
-                try:
-                    # Capitaline often uses specific table structures
-                    tables = pd.read_html(
-                        io.StringIO(content_str),
-                        thousands=',',
-                        parse_dates=False,
-                        keep_default_na=False,  # Don't convert to NaN
-                        displayed_only=False  # Parse hidden tables too
-                    )
-                    all_tables.extend(tables)
-                    self.logger.info(f"Capitaline parsing found {len(tables)} tables")
-                except Exception as e:
-                    self.logger.warning(f"Capitaline parsing failed: {e}")
-            
-            if not all_tables:
-                st.error("No tables found in the HTML file")
                 
-                # Show raw HTML preview for debugging
-                with st.expander("View raw HTML (first 2000 characters)"):
-                    st.code(content_str[:2000])
+                if tables:
+                    # Take the largest table
+                    df = max(tables, key=lambda x: x.size)
+                    self.logger.info(f"Simple parsing successful, got table with shape {df.shape}")
+                    
+            except Exception as e:
+                error_messages.append(f"Simple parsing: {str(e)}")
+                self.logger.error(f"Simple parsing failed: {e}")
+            
+            # If simple parsing failed, try without any parameters
+            if df is None:
+                try:
+                    tables = pd.read_html(io.StringIO(content_str))
+                    if tables:
+                        df = tables[0]  # Just take the first table
+                        self.logger.info(f"Basic parsing successful, got table with shape {df.shape}")
+                        
+                except Exception as e:
+                    error_messages.append(f"Basic parsing: {str(e)}")
+                    self.logger.error(f"Basic parsing failed: {e}")
+            
+            # If we still don't have data, show errors
+            if df is None:
+                st.error("Could not parse the HTML file")
+                
+                if st.session_state.get(diagnostic_key, False):
+                    st.write("### Parsing Errors:")
+                    for error in error_messages:
+                        st.write(f"- {error}")
+                    
+                    # Show raw HTML for inspection
+                    with st.expander("View raw HTML (first 5000 characters)"):
+                        st.code(content_str[:5000])
                 
                 return None
-            
-            # Remove duplicates and empty tables
-            unique_tables = []
-            for table in all_tables:
-                if not table.empty and not any(table.equals(t) for t in unique_tables):
-                    unique_tables.append(table)
-            
-            self.logger.info(f"Total unique non-empty tables: {len(unique_tables)}")
-            
-            # Select the best table
-            df = self._select_best_financial_table_enhanced(unique_tables, source)
-            
-            if df is None or df.empty:
-                st.error("No valid financial data found in the tables")
-                
-                # Show all tables for manual selection
-                if st.checkbox("Show all tables for manual selection", key=f"show_tables_{file.name}"):
-                    for i, table in enumerate(unique_tables[:5]):  # Show first 5
-                        st.write(f"Table {i+1}: Shape {table.shape}")
-                        st.dataframe(table.head())
-                        if st.button(f"Use Table {i+1}", key=f"use_table_{i}_{file.name}"):
-                            df = table
-                            break
-                
-                if df is None:
-                    return None
             
             # Post-process the dataframe
-            df = self._post_process_html_dataframe_enhanced(df, source)
+            st.info(f"Successfully parsed table with shape {df.shape}")
             
-            # Final validation
-            if df.empty:
-                st.error("Dataframe is empty after processing")
-                return None
+            # Clean up the dataframe
+            df = self._clean_parsed_html_table(df, source)
             
             return df
             
         except Exception as e:
             self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
             st.error(f"Failed to parse HTML data: {e}")
+            
+            # If diagnostic mode is on, show more details
+            if st.session_state.get(f"diag_mode_{file.name}", False):
+                st.write("### Full Error Details:")
+                st.exception(e)
+            
             return None
+    
+    def _clean_parsed_html_table(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
+        """Clean a parsed HTML table with minimal assumptions"""
+        try:
+            self.logger.info(f"Cleaning table with shape {df.shape}")
+            
+            # Step 1: Remove completely empty rows and columns
+            df = df.dropna(how='all')
+            df = df.dropna(axis=1, how='all')
+            
+            # Step 2: Try to identify the structure
+            # Look for a column that might be metric names (usually first column with strings)
+            metric_col_idx = None
+            for i, col in enumerate(df.columns):
+                if df.iloc[:, i].dtype == 'object':
+                    # Check if this column has financial terms
+                    sample = df.iloc[:, i].dropna().astype(str).str.lower()
+                    if any('cash' in s or 'revenue' in s or 'asset' in s or 'income' in s for s in sample.head(20)):
+                        metric_col_idx = i
+                        break
+            
+            # Step 3: Restructure if we found a metric column
+            if metric_col_idx is not None:
+                # Set the metric column as index
+                df = df.set_index(df.columns[metric_col_idx])
+                df.index.name = 'Metrics'
+                
+                # Clean the index
+                df.index = df.index.astype(str).str.strip()
+                df = df[df.index != '']
+            
+            # Step 4: Clean column names (potential years)
+            new_columns = []
+            for col in df.columns:
+                col_str = str(col).strip()
+                # Remove common prefixes/suffixes
+                col_str = col_str.replace('Unnamed:', '').strip()
+                new_columns.append(col_str if col_str else f'Col_{len(new_columns)}')
+            
+            df.columns = new_columns
+            
+            # Step 5: Convert numeric columns
+            for col in df.columns:
+                try:
+                    # Only convert if it looks numeric
+                    sample = df[col].dropna().astype(str).head(5)
+                    if any(any(c.isdigit() for c in str(s)) for s in sample):
+                        df[col] = pd.to_numeric(
+                            df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''),
+                            errors='coerce'
+                        )
+                except:
+                    continue
+            
+            # Step 6: Final cleanup
+            df = df.dropna(how='all')
+            df = df.dropna(axis=1, how='all')
+            
+            self.logger.info(f"Cleaning complete. Final shape: {df.shape}")
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error cleaning table: {e}")
+            return df
     
     def _show_html_diagnostics(self, content: str, filename: str):
         """Show HTML diagnostics for debugging"""

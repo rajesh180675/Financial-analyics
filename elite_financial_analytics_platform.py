@@ -1448,7 +1448,24 @@ class FinancialAnalysisEngine(Component):
             
             for idx in numeric_df.index:
                 if any(keyword in str(idx).lower() for keyword in positive_metrics):
-                    negative_count = (numeric_df.loc[idx] < 0).sum()
+                    # Get the row data
+                    row_data = numeric_df.loc[idx]
+                    
+                    # Handle case where loc returns a DataFrame (duplicate indices)
+                    if isinstance(row_data, pd.DataFrame):
+                        row_data = row_data.iloc[0]
+                    
+                    # Count negative values
+                    negative_count = (row_data < 0).sum()
+                    
+                    # Ensure negative_count is a scalar
+                    if hasattr(negative_count, 'item'):
+                        negative_count = negative_count.item()
+                    elif isinstance(negative_count, np.ndarray):
+                        negative_count = int(negative_count)
+                    else:
+                        negative_count = int(negative_count)
+                    
                     if negative_count > 0:
                         consistency_score -= (negative_count / len(numeric_df.columns)) * 20
             
@@ -1460,11 +1477,28 @@ class FinancialAnalysisEngine(Component):
             extreme_changes = 0
             
             for idx in numeric_df.index:
-                series = numeric_df.loc[idx].dropna()
+                series = numeric_df.loc[idx]
+                
+                # Handle case where loc returns a DataFrame (duplicate indices)
+                if isinstance(series, pd.DataFrame):
+                    series = series.iloc[0]
+                
+                series = series.dropna()
+                
                 if len(series) > 1:
                     pct_changes = series.pct_change().dropna()
                     # Flag changes over 200%
-                    extreme_changes += (pct_changes.abs() > 2).sum()
+                    extreme_count = (pct_changes.abs() > 2).sum()
+                    
+                    # Ensure extreme_count is a scalar
+                    if hasattr(extreme_count, 'item'):
+                        extreme_count = extreme_count.item()
+                    elif isinstance(extreme_count, np.ndarray):
+                        extreme_count = int(extreme_count)
+                    else:
+                        extreme_count = int(extreme_count)
+                    
+                    extreme_changes += extreme_count
             
             total_changes = len(numeric_df) * (len(numeric_df.columns) - 1)
             if total_changes > 0:

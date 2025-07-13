@@ -3694,87 +3694,87 @@ class FinancialAnalyticsPlatform:
     
     def _process_html_financial_export(self, file: UploadedFile, source: Optional[str] = None) -> Optional[pd.DataFrame]:
     """Process HTML exports from financial data providers with enhanced parsing"""
-    try:
-        file.seek(0)
-        content = file.read()
-        
-        # Try different encodings
-        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
-            try:
-                content_str = content.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        else:
-            content_str = content.decode('utf-8', errors='ignore')
-        
-        # Clean HTML for better parsing
-        content_str = self._preprocess_financial_html(content_str, source)
-        
-        # Try multiple parsing strategies
-        df = None
-        
-        # Strategy 1: Parse without any index specification
         try:
-            tables = pd.read_html(
-                io.StringIO(content_str),
-                thousands=',',
-                decimal='.',
-                parse_dates=False,
-                header=None,  # Don't assume header structure
-                index_col=None  # Don't set index yet
-            )
+            file.seek(0)
+            content = file.read()
             
-            if tables:
-                self.logger.info(f"Strategy 1: Found {len(tables)} tables")
-                df = self._select_best_financial_table(tables, source)
-                
-        except Exception as e:
-            self.logger.warning(f"Strategy 1 failed: {e}")
-        
-        # Strategy 2: Try with header=0
-        if df is None:
+            # Try different encodings
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+                try:
+                    content_str = content.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                content_str = content.decode('utf-8', errors='ignore')
+            
+            # Clean HTML for better parsing
+            content_str = self._preprocess_financial_html(content_str, source)
+            
+            # Try multiple parsing strategies
+            df = None
+            
+            # Strategy 1: Parse without any index specification
             try:
                 tables = pd.read_html(
                     io.StringIO(content_str),
                     thousands=',',
                     decimal='.',
                     parse_dates=False,
-                    header=0  # First row as header
+                    header=None,  # Don't assume header structure
+                    index_col=None  # Don't set index yet
                 )
                 
                 if tables:
-                    self.logger.info(f"Strategy 2: Found {len(tables)} tables")
+                    self.logger.info(f"Strategy 1: Found {len(tables)} tables")
                     df = self._select_best_financial_table(tables, source)
                     
             except Exception as e:
-                self.logger.warning(f"Strategy 2 failed: {e}")
-        
-        # Strategy 3: Basic parsing
-        if df is None:
-            try:
-                tables = pd.read_html(io.StringIO(content_str))
-                if tables:
-                    self.logger.info(f"Strategy 3: Found {len(tables)} tables")
-                    df = tables[0]  # Just take the first table
+                self.logger.warning(f"Strategy 1 failed: {e}")
+            
+            # Strategy 2: Try with header=0
+            if df is None:
+                try:
+                    tables = pd.read_html(
+                        io.StringIO(content_str),
+                        thousands=',',
+                        decimal='.',
+                        parse_dates=False,
+                        header=0  # First row as header
+                    )
                     
-            except Exception as e:
-                self.logger.error(f"All strategies failed: {e}")
+                    if tables:
+                        self.logger.info(f"Strategy 2: Found {len(tables)} tables")
+                        df = self._select_best_financial_table(tables, source)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Strategy 2 failed: {e}")
+            
+            # Strategy 3: Basic parsing
+            if df is None:
+                try:
+                    tables = pd.read_html(io.StringIO(content_str))
+                    if tables:
+                        self.logger.info(f"Strategy 3: Found {len(tables)} tables")
+                        df = tables[0]  # Just take the first table
+                        
+                except Exception as e:
+                    self.logger.error(f"All strategies failed: {e}")
+                    return None
+            
+            if df is None:
+                st.error("Could not parse any tables from the HTML file")
                 return None
-        
-        if df is None:
-            st.error("Could not parse any tables from the HTML file")
+            
+            # Post-process the dataframe
+            df = self._post_process_html_dataframe(df, source)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
+            st.error(f"Failed to parse HTML data: {e}")
             return None
-        
-        # Post-process the dataframe
-        df = self._post_process_html_dataframe(df, source)
-        
-        return df
-        
-    except Exception as e:
-        self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
-        st.error(f"Failed to parse HTML data: {e}")
-        return None
 
 def _post_process_html_dataframe(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
     """Post-process HTML dataframe to fix structure issues"""

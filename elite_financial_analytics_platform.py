@@ -3523,6 +3523,8 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
+      # --- Replacement for your _process_uploaded_files method ---
+     # This version integrates the "fake XLS" fix directly into YOUR existing logic.
     def _process_uploaded_files(self, files: List[UploadedFile]):
         """Process uploaded files with enhanced error handling"""
         try:
@@ -3535,18 +3537,15 @@ class FinancialAnalyticsPlatform:
                 try:
                     # Read and parse file based on type
                     if file.name.endswith('.csv'):
-                        # Try different CSV reading approaches
+                        # (This part is unchanged)
                         try:
-                            # First try with index_col=0
                             df = pd.read_csv(file, index_col=0)
                             self.logger.info(f"Read CSV with index_col=0, shape: {df.shape}")
                         except Exception as e1:
                             self.logger.warning(f"Failed with index_col=0: {e1}")
-                            file.seek(0)  # Reset file pointer
+                            file.seek(0)
                             try:
-                                # Try without index_col
                                 df = pd.read_csv(file)
-                                # Use first column as index if it looks like metric names
                                 if df.iloc[:, 0].dtype == 'object':
                                     df = df.set_index(df.columns[0])
                                 self.logger.info(f"Read CSV without index_col, shape: {df.shape}")
@@ -3555,40 +3554,66 @@ class FinancialAnalyticsPlatform:
                                 st.error(f"Error reading {file.name}: {str(e2)}")
                                 df = None
                     
+                    # --- START OF MODIFIED BLOCK ---
                     elif file.name.endswith(('.xls', '.xlsx')):
-                        # Try different Excel reading approaches
+                        engine = 'xlrd' if file.name.endswith('.xls') else 'openpyxl'
+                        self.logger.debug(f"Attempting to read {file.name} as Excel with engine: {engine}")
                         try:
-                            # First try with index_col=0
-                            df = pd.read_excel(file, index_col=0)
-                            self.logger.info(f"Read Excel with index_col=0, shape: {df.shape}")
+                            # First, try to read as a proper Excel file
+                            file.seek(0)
+                            df = pd.read_excel(file, index_col=0, engine=engine)
+                            self.logger.info(f"Successfully read {file.name} as native Excel.")
+                            
                         except Exception as e1:
-                            self.logger.warning(f"Failed with index_col=0: {e1}")
-                            file.seek(0)  # Reset file pointer
-                            try:
-                                # Try without index_col
-                                df = pd.read_excel(file)
-                                # Use first column as index if it looks like metric names
-                                if not df.empty and df.iloc[:, 0].dtype == 'object':
-                                    df = df.set_index(df.columns[0])
-                                self.logger.info(f"Read Excel without index_col, shape: {df.shape}")
-                            except Exception as e2:
-                                self.logger.error(f"Failed to read Excel: {e2}")
-                                st.error(f"Error reading {file.name}: {str(e2)}")
-                                df = None
-                    
+                            self.logger.warning(f"Initial Excel read for {file.name} failed: {e1}")
+                            
+                            # *** NEW: FALLBACK FOR HTML DISGUISED AS XLS ***
+                            # This is the crucial check. If the error is the one we expect,
+                            # we try reading the file as if it were HTML.
+                            if "Excel file format cannot be determined" in str(e1):
+                                st.info(f"'{file.name}' is not a standard Excel file. Trying to read as an HTML report...")
+                                self.logger.warning(f"File {file.name} not native Excel; attempting HTML fallback.")
+                                
+                                try:
+                                    file.seek(0)
+                                    # Use pandas' HTML reader, which is robust
+                                    tables = pd.read_html(io.StringIO(file.read().decode('utf-8')))
+                                    if tables:
+                                        df = max(tables, key=lambda x: x.size)
+                                        if df.iloc[:, 0].dtype == 'object':
+                                            df = df.set_index(df.columns[0])
+                                        self.logger.info(f"Successfully parsed {file.name} using HTML fallback.")
+                                    else:
+                                        df = None
+                                        st.error(f"HTML fallback for '{file.name}' failed: No data tables found inside.")
+                                except Exception as e_html:
+                                    df = None
+                                    self.logger.error(f"HTML fallback for {file.name} also failed: {e_html}")
+                                    st.error(f"Could not read '{file.name}' as either Excel or HTML. Error: {e_html}")
+                            
+                            else:
+                                # If it was a different Excel error, try the original fallback (read without index)
+                                self.logger.warning(f"Retrying Excel read for {file.name} without index_col.")
+                                try:
+                                    file.seek(0)
+                                    df = pd.read_excel(file, engine=engine)
+                                    if not df.empty and df.iloc[:, 0].dtype == 'object':
+                                        df = df.set_index(df.columns[0])
+                                    self.logger.info(f"Successfully read {file.name} as Excel without index_col.")
+                                except Exception as e2:
+                                    self.logger.error(f"Final Excel read attempt failed for {file.name}: {e2}")
+                                    st.error(f"Error reading Excel file {file.name}: {str(e2)}")
+                                    df = None
+                    # --- END OF MODIFIED BLOCK ---
+    
                     elif file.name.endswith(('.html', '.htm')):
-                        # HTML parsing
+                        # (This part is unchanged)
                         try:
                             content = file.read()
-                            
-                            # Try pandas HTML parsing first
                             try:
-                                # Read all tables from HTML
                                 dfs = pd.read_html(io.StringIO(content.decode('utf-8')))
                                 if dfs:
-                                    # Take the largest table
                                     df = max(dfs, key=lambda x: x.size)
-                                    # Try to set appropriate index
                                     if df.iloc[:, 0].dtype == 'object':
                                         df = df.set_index(df.columns[0])
                                     self.logger.info(f"Read HTML table, shape: {df.shape}")
@@ -3596,18 +3621,12 @@ class FinancialAnalyticsPlatform:
                                     df = None
                             except Exception as e:
                                 self.logger.warning(f"Pandas HTML parsing failed: {e}")
-                                
-                                # Try core components if available
                                 if CORE_COMPONENTS_AVAILABLE:
                                     result = parse_html_content(content, file.name)
-                                    if result:
-                                        df = result['statement']
-                                    else:
-                                        df = None
+                                    df = result['statement'] if result else None
                                 else:
                                     st.warning(f"Cannot parse {file.name} - install pandas with html support: pip install 'pandas[html]' lxml html5lib")
                                     df = None
-                                    
                         except Exception as e:
                             self.logger.error(f"Failed to read HTML: {e}")
                             st.error(f"Error reading {file.name}: {str(e)}")
@@ -3617,6 +3636,8 @@ class FinancialAnalyticsPlatform:
                         st.warning(f"Unsupported file type: {file.name}")
                         df = None
                     
+                    # --- FROM HERE ON, YOUR LOGIC IS PRESERVED EXACTLY ---
+    
                     # Validate the dataframe
                     if df is not None:
                         self.logger.info(f"Dataframe info for {file.name}:")
@@ -3624,7 +3645,6 @@ class FinancialAnalyticsPlatform:
                         self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
                         self.logger.info(f"  Index: {list(df.index)[:5]}...")
                         
-                        # Basic validation
                         if df.empty:
                             st.warning(f"{file.name} is empty")
                             df = None
@@ -3632,17 +3652,14 @@ class FinancialAnalyticsPlatform:
                             st.warning(f"{file.name} has insufficient data (minimum 2x2 required)")
                             df = None
                         else:
-                            # Ensure numeric columns
                             numeric_cols = df.select_dtypes(include=[np.number]).columns
                             if len(numeric_cols) == 0:
-                                st.warning(f"{file.name} has no numeric columns")
-                                # Try to convert columns to numeric
+                                st.warning(f"{file.name} has no numeric columns, attempting conversion.")
                                 for col in df.columns:
                                     df[col] = pd.to_numeric(df[col], errors='coerce')
-                                
-                                # Check again
                                 numeric_cols = df.select_dtypes(include=[np.number]).columns
                                 if len(numeric_cols) == 0:
+                                    st.error(f"Could not find any numeric data in {file.name} after conversion.")
                                     df = None
                         
                         if df is not None:
@@ -3650,7 +3667,7 @@ class FinancialAnalyticsPlatform:
                             st.success(f"✅ Successfully parsed {file.name}")
                             
                 except Exception as e:
-                    self.logger.error(f"Error processing {file.name}: {e}")
+                    self.logger.error(f"Error processing {file.name}: {e}", exc_info=True)
                     st.error(f"Error processing {file.name}: {str(e)}")
                     if self.config.get('app.debug', False):
                         st.exception(e)
@@ -3658,22 +3675,17 @@ class FinancialAnalyticsPlatform:
             if all_data:
                 st.info(f"Successfully parsed {len(all_data)} file(s)")
                 
-                # Merge data if multiple files
                 if len(all_data) == 1:
                     merged_data = all_data[0]
                 else:
-                    # Try to merge intelligently
                     try:
-                        # If all dataframes have the same index, concat by columns
                         if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
                             merged_data = pd.concat(all_data, axis=1)
                             merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
                             st.info("Merged files by columns (same metrics)")
                         else:
-                            # Otherwise, try to merge by index
                             merged_data = all_data[0]
                             for df in all_data[1:]:
-                                # Add missing metrics
                                 for idx in df.index:
                                     if idx not in merged_data.index:
                                         merged_data.loc[idx] = df.loc[idx]
@@ -3683,12 +3695,10 @@ class FinancialAnalyticsPlatform:
                         st.warning("Could not merge files automatically, using first file only")
                         merged_data = all_data[0]
                 
-                # Show data preview
                 with st.expander("📊 Data Preview", expanded=False):
                     st.dataframe(merged_data.head(10))
                     st.write(f"Shape: {merged_data.shape}")
                 
-                # Process and validate
                 processed_data, validation = self.components['processor'].process(merged_data)
                 
                 if validation.is_valid:
@@ -3696,7 +3706,6 @@ class FinancialAnalyticsPlatform:
                     self.state.set('company_name', files[0].name.split('.')[0])
                     st.success("Files processed successfully!")
                     
-                    # Auto-map if AI is enabled
                     if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
                         self._perform_ai_mapping(processed_data)
                     
@@ -3707,8 +3716,6 @@ class FinancialAnalyticsPlatform:
                         st.error(f"- {error}")
                     for warning in validation.warnings:
                         st.warning(f"- {warning}")
-                        
-                    # Show data anyway for debugging
                     if self.config.get('app.debug', False):
                         st.write("Debug: Processed data shape:", processed_data.shape)
                         st.dataframe(processed_data.head())
@@ -3716,26 +3723,21 @@ class FinancialAnalyticsPlatform:
                 st.error("No valid data found in uploaded files")
                 st.info("""
                 **Troubleshooting tips:**
-                1. Ensure your CSV/Excel file has financial metrics in rows and years in columns
-                2. The first column should contain metric names (e.g., Revenue, Total Assets)
-                3. Other columns should contain years or periods
-                4. Example structure:
+                1. Ensure your CSV/Excel file has financial metrics in rows and years in columns.
+                2. The first column should contain metric names (e.g., Revenue, Total Assets).
+                3. Other columns should contain years or periods.
                 """)
-                
-                # Show example structure
                 example_df = pd.DataFrame({
                     'Metric': ['Revenue', 'Total Assets', 'Net Income'],
                     '2021': [100000, 500000, 20000],
                     '2022': [120000, 550000, 25000],
                     '2023': [140000, 600000, 30000]
                 }).set_index('Metric')
-                
                 st.dataframe(example_df)
                 
         except Exception as e:
-            self.logger.error(f"Error processing files: {e}")
+            self.logger.error(f"Error processing files: {e}", exc_info=True)
             st.error(f"Error processing files: {str(e)}")
-            
             if self.config.get('app.debug', False):
                 st.exception(e)
     

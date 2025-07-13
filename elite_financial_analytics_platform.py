@@ -1223,6 +1223,14 @@ class FinancialAnalysisEngine(Component):
         # Extract key metrics using pattern matching
         metrics = self._extract_key_metrics(df)
         
+        # Helper function to check if value exists
+        def is_valid_metric(metric):
+            if metric is None:
+                return False
+            if isinstance(metric, pd.Series):
+                return not metric.empty
+            return True
+        
         # Liquidity Ratios
         try:
             liquidity_data = {}
@@ -1231,23 +1239,31 @@ class FinancialAnalysisEngine(Component):
             current_assets = self._get_metric_value(df, metrics, 'current_assets')
             current_liabilities = self._get_metric_value(df, metrics, 'current_liabilities')
             
-            if current_assets is not None and current_liabilities is not None:
-                # Ensure we have Series and calculate ratio
+            if is_valid_metric(current_assets) and is_valid_metric(current_liabilities):
+                # Ensure we have Series
                 ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
                 cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
-                liquidity_data['Current Ratio'] = ca_series / cl_series.replace(0, np.nan)
+                
+                # Ensure same index
+                if ca_series.index.equals(cl_series.index):
+                    liquidity_data['Current Ratio'] = ca_series / cl_series.replace(0, np.nan)
             
             # Quick Ratio
             inventory = self._get_metric_value(df, metrics, 'inventory')
-            if current_assets is not None and inventory is not None and current_liabilities is not None:
+            if (is_valid_metric(current_assets) and is_valid_metric(inventory) and 
+                is_valid_metric(current_liabilities)):
                 ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
                 inv_series = inventory if isinstance(inventory, pd.Series) else pd.Series(inventory)
                 cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
-                liquidity_data['Quick Ratio'] = (ca_series - inv_series) / cl_series.replace(0, np.nan)
+                
+                # Ensure same index
+                if ca_series.index.equals(inv_series.index) and ca_series.index.equals(cl_series.index):
+                    liquidity_data['Quick Ratio'] = (ca_series - inv_series) / cl_series.replace(0, np.nan)
             
             if liquidity_data:
-                liquidity = pd.DataFrame(liquidity_data)
-                ratios['Liquidity'] = liquidity.T
+                # Create DataFrame from dictionary
+                liquidity_df = pd.DataFrame(liquidity_data)
+                ratios['Liquidity'] = liquidity_df.T
                 
         except Exception as e:
             self._logger.error(f"Error calculating liquidity ratios: {e}")
@@ -1260,28 +1276,38 @@ class FinancialAnalysisEngine(Component):
             net_income = self._get_metric_value(df, metrics, 'net_income')
             revenue = self._get_metric_value(df, metrics, 'revenue')
             
-            if net_income is not None and revenue is not None:
+            if is_valid_metric(net_income) and is_valid_metric(revenue):
                 ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
                 rev_series = revenue if isinstance(revenue, pd.Series) else pd.Series(revenue)
-                profitability_data['Net Profit Margin %'] = (ni_series / rev_series.replace(0, np.nan)) * 100
+                
+                # Ensure same index
+                if ni_series.index.equals(rev_series.index):
+                    profitability_data['Net Profit Margin %'] = (ni_series / rev_series.replace(0, np.nan)) * 100
             
             # ROA
             total_assets = self._get_metric_value(df, metrics, 'total_assets')
-            if net_income is not None and total_assets is not None:
+            if is_valid_metric(net_income) and is_valid_metric(total_assets):
                 ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
                 ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
-                profitability_data['Return on Assets %'] = (ni_series / ta_series.replace(0, np.nan)) * 100
+                
+                # Ensure same index
+                if ni_series.index.equals(ta_series.index):
+                    profitability_data['Return on Assets %'] = (ni_series / ta_series.replace(0, np.nan)) * 100
             
             # ROE
             total_equity = self._get_metric_value(df, metrics, 'total_equity')
-            if net_income is not None and total_equity is not None:
+            if is_valid_metric(net_income) and is_valid_metric(total_equity):
                 ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
                 te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
-                profitability_data['Return on Equity %'] = (ni_series / te_series.replace(0, np.nan)) * 100
+                
+                # Ensure same index
+                if ni_series.index.equals(te_series.index):
+                    profitability_data['Return on Equity %'] = (ni_series / te_series.replace(0, np.nan)) * 100
             
             if profitability_data:
-                profitability = pd.DataFrame(profitability_data)
-                ratios['Profitability'] = profitability.T
+                # Create DataFrame from dictionary
+                profitability_df = pd.DataFrame(profitability_data)
+                ratios['Profitability'] = profitability_df.T
                 
         except Exception as e:
             self._logger.error(f"Error calculating profitability ratios: {e}")
@@ -1292,20 +1318,27 @@ class FinancialAnalysisEngine(Component):
             
             # Debt to Equity
             total_liabilities = self._get_metric_value(df, metrics, 'total_liabilities')
-            if total_liabilities is not None and total_equity is not None:
+            if is_valid_metric(total_liabilities) and is_valid_metric(total_equity):
                 tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
                 te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
-                leverage_data['Debt to Equity'] = tl_series / te_series.replace(0, np.nan)
+                
+                # Ensure same index
+                if tl_series.index.equals(te_series.index):
+                    leverage_data['Debt to Equity'] = tl_series / te_series.replace(0, np.nan)
             
             # Debt Ratio
-            if total_liabilities is not None and total_assets is not None:
+            if is_valid_metric(total_liabilities) and is_valid_metric(total_assets):
                 tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
                 ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
-                leverage_data['Debt Ratio'] = tl_series / ta_series.replace(0, np.nan)
+                
+                # Ensure same index
+                if tl_series.index.equals(ta_series.index):
+                    leverage_data['Debt Ratio'] = tl_series / ta_series.replace(0, np.nan)
             
             if leverage_data:
-                leverage = pd.DataFrame(leverage_data)
-                ratios['Leverage'] = leverage.T
+                # Create DataFrame from dictionary
+                leverage_df = pd.DataFrame(leverage_data)
+                ratios['Leverage'] = leverage_df.T
                 
         except Exception as e:
             self._logger.error(f"Error calculating leverage ratios: {e}")

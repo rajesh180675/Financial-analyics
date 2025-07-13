@@ -1325,20 +1325,44 @@ class FinancialAnalysisEngine(Component):
                 slope, intercept = np.polyfit(years, values, 1)
                 
                 # Compound Annual Growth Rate (CAGR)
-                if series.iloc[0] > 0 and series.iloc[-1] > 0:
-                    years_diff = len(series) - 1
-                    cagr = ((series.iloc[-1] / series.iloc[0]) ** (1 / years_diff) - 1) * 100
-                else:
+                # FIX: Ensure we're working with scalar values
+                try:
+                    first_value = series.iloc[0]
+                    last_value = series.iloc[-1]
+                    
+                    # Convert to float if needed
+                    if hasattr(first_value, 'item'):
+                        first_value = first_value.item()
+                    if hasattr(last_value, 'item'):
+                        last_value = last_value.item()
+                    
+                    # Ensure they are scalars
+                    first_value = float(first_value)
+                    last_value = float(last_value)
+                    
+                    if first_value > 0 and last_value > 0:
+                        years_diff = len(series) - 1
+                        cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+                    else:
+                        cagr = None
+                        
+                except Exception as e:
+                    self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
                     cagr = None
                 
                 # Volatility
-                volatility = series.pct_change().std() * 100
+                try:
+                    volatility = series.pct_change().std() * 100
+                    if pd.isna(volatility):
+                        volatility = 0
+                except Exception:
+                    volatility = 0
                 
                 trends[str(idx)] = {
-                    'slope': slope,
+                    'slope': float(slope),
                     'direction': 'increasing' if slope > 0 else 'decreasing',
                     'cagr': cagr,
-                    'volatility': volatility,
+                    'volatility': float(volatility),
                     'r_squared': self._calculate_r_squared(years, values, slope, intercept)
                 }
         

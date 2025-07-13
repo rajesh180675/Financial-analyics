@@ -3775,159 +3775,226 @@ class FinancialAnalyticsPlatform:
             self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
             st.error(f"Failed to parse HTML data: {e}")
             return None
-
-def _post_process_html_dataframe(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
-    """Post-process HTML dataframe to fix structure issues"""
-    try:
-        # Handle MultiIndex columns
-        if isinstance(df.columns, pd.MultiIndex):
-            self.logger.info("Flattening MultiIndex columns")
-            # Flatten multi-level columns
-            df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
-        
-        # Clean column names
-        df.columns = [str(col).strip() for col in df.columns]
-        
-        # Remove unnamed columns
-        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-        
-        # Handle MultiIndex rows
-        if isinstance(df.index, pd.MultiIndex):
-            self.logger.info("Resetting MultiIndex")
-            df = df.reset_index()
-        
-        # Identify the metric column (usually the first text column)
-        metric_col = None
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                # Check if this column contains financial metrics
-                sample_values = df[col].dropna().astype(str).str.lower().head(10)
-                if any(keyword in ' '.join(sample_values) for keyword in ['revenue', 'asset', 'cash', 'income']):
-                    metric_col = col
-                    break
-        
-        # Set index if we found a metric column
-        if metric_col:
-            self.logger.info(f"Setting '{metric_col}' as index")
-            df = df.set_index(metric_col)
-            # Clean the index
-            df.index = df.index.astype(str).str.strip()
-            df = df[df.index != '']
-            df = df[df.index.notna()]
-        
-        # Clean numeric columns
-        for col in df.columns:
-            if df[col].dtype == 'object':
-                # Try to convert to numeric
-                try:
-                    # First, clean the data
-                    cleaned = df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', '')
-                    cleaned = cleaned.str.strip()
-                    
-                    # Handle Indian number format if needed
-                    if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
-                        cleaned = self._convert_indian_numbers_series(cleaned)
-                    else:
-                        cleaned = pd.to_numeric(cleaned, errors='coerce')
-                    
-                    # Only replace if we got some numeric values
-                    if cleaned.notna().any():
-                        df[col] = cleaned
-                        
-                except Exception as e:
-                    self.logger.warning(f"Could not convert column {col} to numeric: {e}")
-        
-        return df
-        
-    except Exception as e:
-        self.logger.error(f"Post-processing failed: {e}")
-        # Return the dataframe as-is if post-processing fails
-        return df
-
-def _convert_indian_numbers_series(self, series: pd.Series) -> pd.Series:
-    """Convert Indian number format in a series (safer version)"""
-    def safe_convert(val):
-        try:
-            if pd.isna(val) or str(val).strip() == '':
-                return np.nan
-            
-            val_str = str(val).strip().upper()
-            
-            # Remove currency symbols
-            val_str = re.sub(r'[₹$¥€£]', '', val_str)
-            
-            # Check for multipliers
-            multiplier = 1
-            if 'CR' in val_str or 'CRORE' in val_str:
-                multiplier = 10000000
-                val_str = re.sub(r'CR(ORE)?S?', '', val_str)
-            elif 'LAC' in val_str or 'LAKH' in val_str or 'LK' in val_str:
-                multiplier = 100000
-                val_str = re.sub(r'LA(C|KH|K)S?', '', val_str)
-            elif 'MN' in val_str or 'MILLION' in val_str:
-                multiplier = 1000000
-                val_str = re.sub(r'M(ILLIO)?NS?', '', val_str)
-            
-            # Clean and convert
-            val_str = val_str.strip()
-            return float(val_str) * multiplier
-            
-        except:
-            return np.nan
     
-    return series.apply(safe_convert)
-
-def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
-    """Clean financial data from HTML exports (safer version)"""
-    try:
-        # Clean index if it's not MultiIndex
-        if hasattr(df, 'index') and not isinstance(df.index, pd.MultiIndex):
-            if df.index.dtype == 'object':
+    def _preprocess_financial_html(self, html_content: str, source: Optional[str] = None) -> str:
+        """Preprocess HTML content based on source-specific quirks"""
+        # Remove problematic elements
+        import re
+        
+        # Remove scripts and styles
+        html_content = re.sub(r'<script.*?</script>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+        html_content = re.sub(r'<style.*?</style>', '', html_content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Source-specific preprocessing
+        if source == 'Capitaline':
+            # Capitaline often has merged cells and complex headers
+            html_content = re.sub(r'rowspan=[\"\']?\d+[\"\']?', '', html_content)
+            html_content = re.sub(r'colspan=[\"\']?\d+[\"\']?', '', html_content)
+            # Remove footnote markers
+            html_content = re.sub(r'<sup>.*?</sup>', '', html_content)
+            
+        elif source == 'Moneycontrol':
+            # Moneycontrol uses specific class names
+            html_content = re.sub(r'class=[\"\']?.*?[\"\']?', '', html_content)
+            
+        elif source in ['BSE', 'NSE']:
+            # Exchange data often has extra formatting
+            html_content = re.sub(r'&nbsp;', ' ', html_content)
+            html_content = re.sub(r'\s+', ' ', html_content)
+        
+        return html_content
+    
+    def _post_process_html_dataframe(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
+        """Post-process HTML dataframe to fix structure issues"""
+        try:
+            # Handle MultiIndex columns
+            if isinstance(df.columns, pd.MultiIndex):
+                self.logger.info("Flattening MultiIndex columns")
+                # Flatten multi-level columns
+                df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+            
+            # Clean column names
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Remove unnamed columns
+            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+            
+            # Handle MultiIndex rows
+            if isinstance(df.index, pd.MultiIndex):
+                self.logger.info("Resetting MultiIndex")
+                df = df.reset_index()
+            
+            # Identify the metric column (usually the first text column)
+            metric_col = None
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Check if this column contains financial metrics
+                    sample_values = df[col].dropna().astype(str).str.lower().head(10)
+                    if any(keyword in ' '.join(sample_values) for keyword in ['revenue', 'asset', 'cash', 'income']):
+                        metric_col = col
+                        break
+            
+            # Set index if we found a metric column
+            if metric_col:
+                self.logger.info(f"Setting '{metric_col}' as index")
+                df = df.set_index(metric_col)
+                # Clean the index
                 df.index = df.index.astype(str).str.strip()
-                # Remove empty index values
-                df = df[df.index.notna() & (df.index != '')]
-        
-        # Clean column names
-        df.columns = [str(col).strip() for col in df.columns]
-        
-        # Handle year columns
-        year_pattern = re.compile(r'(?:19|20)\d{2}|(?:mar|dec|jun|sep)[-\s]?\d{2}', re.IGNORECASE)
-        
-        # Convert numeric columns
-        for col in df.columns:
-            # Skip if column name suggests it's not a data column
-            if any(skip in str(col).lower() for skip in ['unnamed', 'index', 'description']):
-                continue
-                
-            # Check if it's likely a year/period column
-            if year_pattern.search(str(col)) or any(char.isdigit() for char in str(col)):
-                try:
-                    # Only process if the column contains object dtype
-                    if df[col].dtype == 'object':
-                        # Clean numeric data
-                        cleaned = df[col].astype(str).str.replace(',', '')
-                        cleaned = cleaned.str.replace('(', '-').str.replace(')', '')
+                df = df[df.index != '']
+                df = df[df.index.notna()]
+            
+            # Clean numeric columns
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    # Try to convert to numeric
+                    try:
+                        # First, clean the data
+                        cleaned = df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', '')
                         cleaned = cleaned.str.strip()
                         
-                        # Handle Indian number format
+                        # Handle Indian number format if needed
                         if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
-                            df[col] = self._convert_indian_numbers_series(cleaned)
+                            cleaned = self._convert_indian_numbers_series(cleaned)
                         else:
-                            df[col] = pd.to_numeric(cleaned, errors='coerce')
+                            cleaned = pd.to_numeric(cleaned, errors='coerce')
+                        
+                        # Only replace if we got some numeric values
+                        if cleaned.notna().any():
+                            df[col] = cleaned
                             
-                except Exception as e:
-                    self.logger.warning(f"Could not process column {col}: {e}")
+                    except Exception as e:
+                        self.logger.warning(f"Could not convert column {col} to numeric: {e}")
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Post-processing failed: {e}")
+            # Return the dataframe as-is if post-processing fails
+            return df
+    
+    def _diagnose_html_content(self, file: UploadedFile) -> None:
+        """Diagnose HTML content to understand structure"""
+        try:
+            file.seek(0)
+            content = file.read()
+            content_str = content.decode('utf-8', errors='ignore')
+            
+            # Show first 1000 characters
+            st.text("First 1000 characters of file:")
+            st.code(content_str[:1000])
+            
+            # Try to find tables
+            tables = pd.read_html(io.StringIO(content_str))
+            st.write(f"Found {len(tables)} tables")
+            
+            for i, table in enumerate(tables[:3]):  # Show first 3 tables
+                st.write(f"Table {i}:")
+                st.write(f"Shape: {table.shape}")
+                st.write(f"Columns: {list(table.columns)}")
+                st.dataframe(table.head())
+                
+        except Exception as e:
+            st.error(f"Diagnostic failed: {e}")
+    
+    def _select_best_financial_table(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
+        """Select the most likely financial statement from multiple tables"""
+        if not tables:
+            return None
+            
+        if len(tables) == 1:
+            return tables[0]
+        
+        # Score each table based on financial keywords
+        financial_keywords = [
+            'revenue', 'income', 'expense', 'asset', 'liability', 'equity',
+            'cash', 'profit', 'loss', 'total', 'net', 'gross', 'operating',
+            'ebitda', 'ebit', 'sales', 'cost', 'tax', 'interest'
+        ]
+        
+        best_table = None
+        best_score = -1
+        
+        for i, table in enumerate(tables):
+            if table.empty:
+                continue
+                
+            score = 0
+            
+            # Convert table to string for keyword searching
+            table_str = str(table.head(20)).lower()  # Look at first 20 rows
+            
+            # Check for financial keywords in the entire table content
+            for keyword in financial_keywords:
+                score += table_str.count(keyword)
+            
+            # Prefer larger tables (but not too large)
+            if 10 < table.size < 10000:  # Reasonable size for financial statements
+                score += min(table.size / 100, 10)  # Cap size bonus at 10
+            
+            # Source-specific preferences
+            if source == 'Capitaline' and 'mar-' in str(table.columns).lower():
+                score += 20  # Capitaline uses Mar-XX format
+            
+            self.logger.debug(f"Table {i}: score={score}, shape={table.shape}")
+            
+            if score > best_score:
+                best_score = score
+                best_table = table
+        
+        self.logger.info(f"Selected table with score {best_score}")
+        return best_table
+    
+    def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
+        """Clean financial data from HTML exports (safer version)"""
+        try:
+            # Clean index if it's not MultiIndex
+            if hasattr(df, 'index') and not isinstance(df.index, pd.MultiIndex):
+                if df.index.dtype == 'object':
+                    df.index = df.index.astype(str).str.strip()
+                    # Remove empty index values
+                    df = df[df.index.notna() & (df.index != '')]
+            
+            # Clean column names
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Handle year columns
+            year_pattern = re.compile(r'(?:19|20)\d{2}|(?:mar|dec|jun|sep)[-\s]?\d{2}', re.IGNORECASE)
+            
+            # Convert numeric columns
+            for col in df.columns:
+                # Skip if column name suggests it's not a data column
+                if any(skip in str(col).lower() for skip in ['unnamed', 'index', 'description']):
                     continue
-        
-        # Remove completely empty rows and columns
-        df = df.dropna(how='all')
-        df = df.dropna(axis=1, how='all')
-        
-        return df
-        
-    except Exception as e:
-        self.logger.error(f"Error in clean_financial_html_data: {e}")
-        return df
+                    
+                # Check if it's likely a year/period column
+                if year_pattern.search(str(col)) or any(char.isdigit() for char in str(col)):
+                    try:
+                        # Only process if the column contains object dtype
+                        if df[col].dtype == 'object':
+                            # Clean numeric data
+                            cleaned = df[col].astype(str).str.replace(',', '')
+                            cleaned = cleaned.str.replace('(', '-').str.replace(')', '')
+                            cleaned = cleaned.str.strip()
+                            
+                            # Handle Indian number format
+                            if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
+                                df[col] = self._convert_indian_numbers_series(cleaned)
+                            else:
+                                df[col] = pd.to_numeric(cleaned, errors='coerce')
+                                
+                    except Exception as e:
+                        self.logger.warning(f"Could not process column {col}: {e}")
+                        continue
+            
+            # Remove completely empty rows and columns
+            df = df.dropna(how='all')
+            df = df.dropna(axis=1, how='all')
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error in clean_financial_html_data: {e}")
+            return df
     
     def _convert_indian_numbers(self, series: pd.Series) -> pd.Series:
         """Convert Indian number format (with Cr, Lacs notation) to standard numbers"""
@@ -3960,6 +4027,39 @@ def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = N
                 return np.nan
         
         return series.apply(convert_value)
+    
+    def _convert_indian_numbers_series(self, series: pd.Series) -> pd.Series:
+        """Convert Indian number format in a series (safer version)"""
+        def safe_convert(val):
+            try:
+                if pd.isna(val) or str(val).strip() == '':
+                    return np.nan
+                
+                val_str = str(val).strip().upper()
+                
+                # Remove currency symbols
+                val_str = re.sub(r'[₹$¥€£]', '', val_str)
+                
+                # Check for multipliers
+                multiplier = 1
+                if 'CR' in val_str or 'CRORE' in val_str:
+                    multiplier = 10000000
+                    val_str = re.sub(r'CR(ORE)?S?', '', val_str)
+                elif 'LAC' in val_str or 'LAKH' in val_str or 'LK' in val_str:
+                    multiplier = 100000
+                    val_str = re.sub(r'LA(C|KH|K)S?', '', val_str)
+                elif 'MN' in val_str or 'MILLION' in val_str:
+                    multiplier = 1000000
+                    val_str = re.sub(r'M(ILLIO)?NS?', '', val_str)
+                
+                # Clean and convert
+                val_str = val_str.strip()
+                return float(val_str) * multiplier
+                
+            except:
+                return np.nan
+        
+        return series.apply(safe_convert)
     
     def _apply_source_specific_cleaning(self, df: pd.DataFrame, source: str) -> pd.DataFrame:
         """Apply source-specific data cleaning rules"""

@@ -1223,45 +1223,34 @@ class FinancialAnalysisEngine(Component):
         # Extract key metrics using pattern matching
         metrics = self._extract_key_metrics(df)
         
-        # Helper function to check if value exists
-        def is_valid_metric(metric):
+        # Helper function to check if value exists and ensure it's 1-dimensional
+        def get_clean_metric(metric):
             if metric is None:
-                return False
-            if isinstance(metric, pd.Series):
-                return not metric.empty
-            return True
+                return None
+            if isinstance(metric, pd.DataFrame):
+                # If DataFrame, take first row
+                metric = metric.iloc[0]
+            if isinstance(metric, pd.Series) and metric.empty:
+                return None
+            return metric
         
         # Liquidity Ratios
         try:
             liquidity_data = {}
             
             # Current Ratio
-            current_assets = self._get_metric_value(df, metrics, 'current_assets')
-            current_liabilities = self._get_metric_value(df, metrics, 'current_liabilities')
+            current_assets = get_clean_metric(self._get_metric_value(df, metrics, 'current_assets'))
+            current_liabilities = get_clean_metric(self._get_metric_value(df, metrics, 'current_liabilities'))
             
-            if is_valid_metric(current_assets) and is_valid_metric(current_liabilities):
-                # Ensure we have Series
-                ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
-                cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
-                
-                # Ensure same index
-                if ca_series.index.equals(cl_series.index):
-                    liquidity_data['Current Ratio'] = ca_series / cl_series.replace(0, np.nan)
+            if current_assets is not None and current_liabilities is not None:
+                liquidity_data['Current Ratio'] = current_assets / current_liabilities.replace(0, np.nan)
             
             # Quick Ratio
-            inventory = self._get_metric_value(df, metrics, 'inventory')
-            if (is_valid_metric(current_assets) and is_valid_metric(inventory) and 
-                is_valid_metric(current_liabilities)):
-                ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
-                inv_series = inventory if isinstance(inventory, pd.Series) else pd.Series(inventory)
-                cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
-                
-                # Ensure same index
-                if ca_series.index.equals(inv_series.index) and ca_series.index.equals(cl_series.index):
-                    liquidity_data['Quick Ratio'] = (ca_series - inv_series) / cl_series.replace(0, np.nan)
+            inventory = get_clean_metric(self._get_metric_value(df, metrics, 'inventory'))
+            if current_assets is not None and inventory is not None and current_liabilities is not None:
+                liquidity_data['Quick Ratio'] = (current_assets - inventory) / current_liabilities.replace(0, np.nan)
             
             if liquidity_data:
-                # Create DataFrame from dictionary
                 liquidity_df = pd.DataFrame(liquidity_data)
                 ratios['Liquidity'] = liquidity_df.T
                 
@@ -1273,39 +1262,23 @@ class FinancialAnalysisEngine(Component):
             profitability_data = {}
             
             # Net Profit Margin
-            net_income = self._get_metric_value(df, metrics, 'net_income')
-            revenue = self._get_metric_value(df, metrics, 'revenue')
+            net_income = get_clean_metric(self._get_metric_value(df, metrics, 'net_income'))
+            revenue = get_clean_metric(self._get_metric_value(df, metrics, 'revenue'))
             
-            if is_valid_metric(net_income) and is_valid_metric(revenue):
-                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
-                rev_series = revenue if isinstance(revenue, pd.Series) else pd.Series(revenue)
-                
-                # Ensure same index
-                if ni_series.index.equals(rev_series.index):
-                    profitability_data['Net Profit Margin %'] = (ni_series / rev_series.replace(0, np.nan)) * 100
+            if net_income is not None and revenue is not None:
+                profitability_data['Net Profit Margin %'] = (net_income / revenue.replace(0, np.nan)) * 100
             
             # ROA
-            total_assets = self._get_metric_value(df, metrics, 'total_assets')
-            if is_valid_metric(net_income) and is_valid_metric(total_assets):
-                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
-                ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
-                
-                # Ensure same index
-                if ni_series.index.equals(ta_series.index):
-                    profitability_data['Return on Assets %'] = (ni_series / ta_series.replace(0, np.nan)) * 100
+            total_assets = get_clean_metric(self._get_metric_value(df, metrics, 'total_assets'))
+            if net_income is not None and total_assets is not None:
+                profitability_data['Return on Assets %'] = (net_income / total_assets.replace(0, np.nan)) * 100
             
             # ROE
-            total_equity = self._get_metric_value(df, metrics, 'total_equity')
-            if is_valid_metric(net_income) and is_valid_metric(total_equity):
-                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
-                te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
-                
-                # Ensure same index
-                if ni_series.index.equals(te_series.index):
-                    profitability_data['Return on Equity %'] = (ni_series / te_series.replace(0, np.nan)) * 100
+            total_equity = get_clean_metric(self._get_metric_value(df, metrics, 'total_equity'))
+            if net_income is not None and total_equity is not None:
+                profitability_data['Return on Equity %'] = (net_income / total_equity.replace(0, np.nan)) * 100
             
             if profitability_data:
-                # Create DataFrame from dictionary
                 profitability_df = pd.DataFrame(profitability_data)
                 ratios['Profitability'] = profitability_df.T
                 
@@ -1317,26 +1290,15 @@ class FinancialAnalysisEngine(Component):
             leverage_data = {}
             
             # Debt to Equity
-            total_liabilities = self._get_metric_value(df, metrics, 'total_liabilities')
-            if is_valid_metric(total_liabilities) and is_valid_metric(total_equity):
-                tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
-                te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
-                
-                # Ensure same index
-                if tl_series.index.equals(te_series.index):
-                    leverage_data['Debt to Equity'] = tl_series / te_series.replace(0, np.nan)
+            total_liabilities = get_clean_metric(self._get_metric_value(df, metrics, 'total_liabilities'))
+            if total_liabilities is not None and total_equity is not None:
+                leverage_data['Debt to Equity'] = total_liabilities / total_equity.replace(0, np.nan)
             
             # Debt Ratio
-            if is_valid_metric(total_liabilities) and is_valid_metric(total_assets):
-                tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
-                ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
-                
-                # Ensure same index
-                if tl_series.index.equals(ta_series.index):
-                    leverage_data['Debt Ratio'] = tl_series / ta_series.replace(0, np.nan)
+            if total_liabilities is not None and total_assets is not None:
+                leverage_data['Debt Ratio'] = total_liabilities / total_assets.replace(0, np.nan)
             
             if leverage_data:
-                # Create DataFrame from dictionary
                 leverage_df = pd.DataFrame(leverage_data)
                 ratios['Leverage'] = leverage_df.T
                 
@@ -1353,7 +1315,12 @@ class FinancialAnalysisEngine(Component):
             metric_name = best_match['name']
             
             if metric_name in df.index:
-                return df.loc[metric_name]
+                result = df.loc[metric_name]
+                # If multiple rows match (DataFrame), take the first one
+                if isinstance(result, pd.DataFrame):
+                    self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
+                    result = result.iloc[0]
+                return result
         
         return None
     
@@ -1366,31 +1333,44 @@ class FinancialAnalysisEngine(Component):
             return {'error': 'Insufficient data for trend analysis'}
         
         for idx in numeric_df.index:
-            series = numeric_df.loc[idx].dropna()
+            series = numeric_df.loc[idx]
+            
+            # Handle case where loc returns a DataFrame (duplicate indices)
+            if isinstance(series, pd.DataFrame):
+                self._logger.warning(f"Multiple rows found for {idx}, taking first")
+                series = series.iloc[0]
+            
+            series = series.dropna()
             
             if len(series) >= 3:
                 # Calculate trend metrics
                 years = np.arange(len(series))
                 values = series.values
                 
-                # Linear regression
-                slope, intercept = np.polyfit(years, values, 1)
+                # Linear regression - polyfit returns coefficients
+                coefficients = np.polyfit(years, values, 1)
+                slope = coefficients[0]  # First coefficient is slope
+                intercept = coefficients[1]  # Second coefficient is intercept
                 
                 # Compound Annual Growth Rate (CAGR)
-                # FIX: Ensure we're working with scalar values
                 try:
                     first_value = series.iloc[0]
                     last_value = series.iloc[-1]
                     
-                    # Convert to float if needed
+                    # Convert to scalar properly
                     if hasattr(first_value, 'item'):
                         first_value = first_value.item()
+                    elif isinstance(first_value, np.ndarray):
+                        first_value = first_value.flat[0]
+                    else:
+                        first_value = float(first_value)
+                        
                     if hasattr(last_value, 'item'):
                         last_value = last_value.item()
-                    
-                    # Ensure they are scalars
-                    first_value = float(first_value)
-                    last_value = float(last_value)
+                    elif isinstance(last_value, np.ndarray):
+                        last_value = last_value.flat[0]
+                    else:
+                        last_value = float(last_value)
                     
                     if first_value > 0 and last_value > 0:
                         years_diff = len(series) - 1
@@ -1407,14 +1387,37 @@ class FinancialAnalysisEngine(Component):
                     volatility = series.pct_change().std() * 100
                     if pd.isna(volatility):
                         volatility = 0
+                    else:
+                        # Ensure it's a scalar
+                        if hasattr(volatility, 'item'):
+                            volatility = volatility.item()
+                        elif isinstance(volatility, np.ndarray):
+                            volatility = volatility.flat[0]
+                        else:
+                            volatility = float(volatility)
                 except Exception:
                     volatility = 0
                 
+                # Ensure slope and intercept are scalars
+                if hasattr(slope, 'item'):
+                    slope = slope.item()
+                elif isinstance(slope, np.ndarray):
+                    slope = slope.flat[0]
+                else:
+                    slope = float(slope)
+                    
+                if hasattr(intercept, 'item'):
+                    intercept = intercept.item()
+                elif isinstance(intercept, np.ndarray):
+                    intercept = intercept.flat[0]
+                else:
+                    intercept = float(intercept)
+                
                 trends[str(idx)] = {
-                    'slope': float(slope),
+                    'slope': slope,
                     'direction': 'increasing' if slope > 0 else 'decreasing',
                     'cagr': cagr,
-                    'volatility': float(volatility),
+                    'volatility': volatility,
                     'r_squared': self._calculate_r_squared(years, values, slope, intercept)
                 }
         

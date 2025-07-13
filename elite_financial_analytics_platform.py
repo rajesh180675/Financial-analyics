@@ -3534,7 +3534,7 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
-     # --- ENHANCED FILE PROCESSING METHODS ---
+    # --- ENHANCED FILE PROCESSING METHODS ---
     def _process_uploaded_files(self, files: List[UploadedFile]):
         """Process uploaded files with enhanced financial HTML detection"""
         try:
@@ -3654,11 +3654,6 @@ class FinancialAnalyticsPlatform:
         if is_likely_html:
             self.logger.info(f"{file.name} detected as HTML disguised as Excel")
             st.info(f"📄 {file.name} appears to be an HTML export. Using specialized parser...")
-            
-            # Add diagnostic option for debugging
-            if st.checkbox("Show file diagnostics", key=f"diag_{file.name}"):
-                self._diagnose_html_content(file)
-            
             return self._process_html_financial_export(file, source)
         
         # Try standard Excel parsing
@@ -3708,66 +3703,97 @@ class FinancialAnalyticsPlatform:
             else:
                 content_str = content.decode('utf-8', errors='ignore')
             
+            # Add diagnostic mode
+            if st.checkbox("Enable diagnostic mode", key=f"diag_mode_{file.name}"):
+                self._show_html_diagnostics(content_str, file.name)
+            
             # Clean HTML for better parsing
             content_str = self._preprocess_financial_html(content_str, source)
             
             # Try multiple parsing strategies
-            df = None
+            all_tables = []
             
-            # Strategy 1: Parse without any index specification
+            # Strategy 1: Basic pandas read_html
+            try:
+                tables = pd.read_html(io.StringIO(content_str))
+                all_tables.extend(tables)
+                self.logger.info(f"Basic parsing found {len(tables)} tables")
+            except Exception as e:
+                self.logger.warning(f"Basic parsing failed: {e}")
+            
+            # Strategy 2: With specific parameters
             try:
                 tables = pd.read_html(
                     io.StringIO(content_str),
-                    thousands=',',
-                    decimal='.',
-                    parse_dates=False,
-                    header=None,  # Don't assume header structure
-                    index_col=None  # Don't set index yet
+                    match='.+',  # Match any table with content
+                    header=None,
+                    index_col=None,
+                    skiprows=0,
+                    attrs={'class': None}  # Don't filter by class
                 )
-                
-                if tables:
-                    self.logger.info(f"Strategy 1: Found {len(tables)} tables")
-                    df = self._select_best_financial_table(tables, source)
-                    
+                all_tables.extend(tables)
+                self.logger.info(f"Detailed parsing found {len(tables)} tables")
             except Exception as e:
-                self.logger.warning(f"Strategy 1 failed: {e}")
+                self.logger.warning(f"Detailed parsing failed: {e}")
             
-            # Strategy 2: Try with header=0
-            if df is None:
+            # Strategy 3: For Capitaline specific format
+            if source == 'Capitaline':
                 try:
+                    # Capitaline often uses specific table structures
                     tables = pd.read_html(
                         io.StringIO(content_str),
                         thousands=',',
-                        decimal='.',
                         parse_dates=False,
-                        header=0  # First row as header
+                        keep_default_na=False,  # Don't convert to NaN
+                        displayed_only=False  # Parse hidden tables too
                     )
-                    
-                    if tables:
-                        self.logger.info(f"Strategy 2: Found {len(tables)} tables")
-                        df = self._select_best_financial_table(tables, source)
-                        
+                    all_tables.extend(tables)
+                    self.logger.info(f"Capitaline parsing found {len(tables)} tables")
                 except Exception as e:
-                    self.logger.warning(f"Strategy 2 failed: {e}")
+                    self.logger.warning(f"Capitaline parsing failed: {e}")
             
-            # Strategy 3: Basic parsing
-            if df is None:
-                try:
-                    tables = pd.read_html(io.StringIO(content_str))
-                    if tables:
-                        self.logger.info(f"Strategy 3: Found {len(tables)} tables")
-                        df = tables[0]  # Just take the first table
-                        
-                except Exception as e:
-                    self.logger.error(f"All strategies failed: {e}")
-                    return None
-            
-            if df is None:
-                st.error("Could not parse any tables from the HTML file")
+            if not all_tables:
+                st.error("No tables found in the HTML file")
+                
+                # Show raw HTML preview for debugging
+                with st.expander("View raw HTML (first 2000 characters)"):
+                    st.code(content_str[:2000])
+                
                 return None
             
+            # Remove duplicates and empty tables
+            unique_tables = []
+            for table in all_tables:
+                if not table.empty and not any(table.equals(t) for t in unique_tables):
+                    unique_tables.append(table)
+            
+            self.logger.info(f"Total unique non-empty tables: {len(unique_tables)}")
+            
+            # Select the best table
+            df = self._select_best_financial_table_enhanced(unique_tables, source)
+            
+            if df is None or df.empty:
+                st.error("No valid financial data found in the tables")
+                
+                # Show all tables for manual selection
+                if st.checkbox("Show all tables for manual selection", key=f"show_tables_{file.name}"):
+                    for i, table in enumerate(unique_tables[:5]):  # Show first 5
+                        st.write(f"Table {i+1}: Shape {table.shape}")
+                        st.dataframe(table.head())
+                        if st.button(f"Use Table {i+1}", key=f"use_table_{i}_{file.name}"):
+                            df = table
+                            break
+                
+                if df is None:
+                    return None
+            
             # Post-process the dataframe
-            df = self._post_process_html_dataframe(df, source)
+            df = self._post_process_html_dataframe_enhanced(df, source)
+            
+            # Final validation
+            if df.empty:
+                st.error("Dataframe is empty after processing")
+                return None
             
             return df
             
@@ -3775,6 +3801,50 @@ class FinancialAnalyticsPlatform:
             self.logger.error(f"HTML parsing failed: {e}", exc_info=True)
             st.error(f"Failed to parse HTML data: {e}")
             return None
+    
+    def _show_html_diagnostics(self, content: str, filename: str):
+        """Show HTML diagnostics for debugging"""
+        st.write("### HTML Diagnostics")
+        
+        # Check for tables
+        table_count = content.lower().count('<table')
+        st.write(f"Number of <table> tags found: {table_count}")
+        
+        # Check for common Capitaline patterns
+        capitaline_patterns = [
+            ('Cash Flow Statement', content.lower().count('cash flow')),
+            ('Operating Activities', content.lower().count('operating activities')),
+            ('Investing Activities', content.lower().count('investing activities')),
+            ('Financing Activities', content.lower().count('financing activities')),
+            ('Mar-', content.count('Mar-')),
+            ('₹', content.count('₹')),
+            ('Cr.', content.count('Cr.')),
+            ('Lacs', content.count('Lacs'))
+        ]
+        
+        st.write("Pattern matches:")
+        for pattern, count in capitaline_patterns:
+            st.write(f"- {pattern}: {count}")
+        
+        # Try to extract tables manually
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(content, 'html.parser')
+            tables = soup.find_all('table')
+            st.write(f"BeautifulSoup found {len(tables)} tables")
+            
+            if tables:
+                st.write("First table structure:")
+                first_table = tables[0]
+                rows = first_table.find_all('tr')[:5]  # First 5 rows
+                for i, row in enumerate(rows):
+                    cells = row.find_all(['td', 'th'])
+                    st.write(f"Row {i}: {len(cells)} cells - {[cell.text.strip()[:30] for cell in cells[:3]]}")
+                    
+        except ImportError:
+            st.info("Install beautifulsoup4 for better diagnostics: pip install beautifulsoup4")
+        except Exception as e:
+            st.error(f"Diagnostic error: {e}")
     
     def _preprocess_financial_html(self, html_content: str, source: Optional[str] = None) -> str:
         """Preprocess HTML content based on source-specific quirks"""
@@ -3804,145 +3874,154 @@ class FinancialAnalyticsPlatform:
         
         return html_content
     
-    def _post_process_html_dataframe(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
-        """Post-process HTML dataframe to fix structure issues"""
-        try:
-            # Handle MultiIndex columns
-            if isinstance(df.columns, pd.MultiIndex):
-                self.logger.info("Flattening MultiIndex columns")
-                # Flatten multi-level columns
-                df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
-            
-            # Clean column names
-            df.columns = [str(col).strip() for col in df.columns]
-            
-            # Remove unnamed columns
-            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-            
-            # Handle MultiIndex rows
-            if isinstance(df.index, pd.MultiIndex):
-                self.logger.info("Resetting MultiIndex")
-                df = df.reset_index()
-            
-            # Identify the metric column (usually the first text column)
-            metric_col = None
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    # Check if this column contains financial metrics
-                    sample_values = df[col].dropna().astype(str).str.lower().head(10)
-                    if any(keyword in ' '.join(sample_values) for keyword in ['revenue', 'asset', 'cash', 'income']):
-                        metric_col = col
-                        break
-            
-            # Set index if we found a metric column
-            if metric_col:
-                self.logger.info(f"Setting '{metric_col}' as index")
-                df = df.set_index(metric_col)
-                # Clean the index
-                df.index = df.index.astype(str).str.strip()
-                df = df[df.index != '']
-                df = df[df.index.notna()]
-            
-            # Clean numeric columns
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    # Try to convert to numeric
-                    try:
-                        # First, clean the data
-                        cleaned = df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', '')
-                        cleaned = cleaned.str.strip()
-                        
-                        # Handle Indian number format if needed
-                        if source in ['Capitaline', 'Moneycontrol', 'BSE', 'NSE']:
-                            cleaned = self._convert_indian_numbers_series(cleaned)
-                        else:
-                            cleaned = pd.to_numeric(cleaned, errors='coerce')
-                        
-                        # Only replace if we got some numeric values
-                        if cleaned.notna().any():
-                            df[col] = cleaned
-                            
-                    except Exception as e:
-                        self.logger.warning(f"Could not convert column {col} to numeric: {e}")
-            
-            return df
-            
-        except Exception as e:
-            self.logger.error(f"Post-processing failed: {e}")
-            # Return the dataframe as-is if post-processing fails
-            return df
-    
-    def _diagnose_html_content(self, file: UploadedFile) -> None:
-        """Diagnose HTML content to understand structure"""
-        try:
-            file.seek(0)
-            content = file.read()
-            content_str = content.decode('utf-8', errors='ignore')
-            
-            # Show first 1000 characters
-            st.text("First 1000 characters of file:")
-            st.code(content_str[:1000])
-            
-            # Try to find tables
-            tables = pd.read_html(io.StringIO(content_str))
-            st.write(f"Found {len(tables)} tables")
-            
-            for i, table in enumerate(tables[:3]):  # Show first 3 tables
-                st.write(f"Table {i}:")
-                st.write(f"Shape: {table.shape}")
-                st.write(f"Columns: {list(table.columns)}")
-                st.dataframe(table.head())
-                
-        except Exception as e:
-            st.error(f"Diagnostic failed: {e}")
-    
-    def _select_best_financial_table(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
-        """Select the most likely financial statement from multiple tables"""
+    def _select_best_financial_table_enhanced(self, tables: List[pd.DataFrame], source: Optional[str] = None) -> pd.DataFrame:
+        """Enhanced selection of the best financial table"""
         if not tables:
             return None
-            
+        
         if len(tables) == 1:
             return tables[0]
         
-        # Score each table based on financial keywords
-        financial_keywords = [
-            'revenue', 'income', 'expense', 'asset', 'liability', 'equity',
-            'cash', 'profit', 'loss', 'total', 'net', 'gross', 'operating',
-            'ebitda', 'ebit', 'sales', 'cost', 'tax', 'interest'
-        ]
-        
-        best_table = None
-        best_score = -1
+        # Enhanced scoring system
+        scores = []
         
         for i, table in enumerate(tables):
-            if table.empty:
-                continue
-                
             score = 0
+            details = {}
             
-            # Convert table to string for keyword searching
-            table_str = str(table.head(20)).lower()  # Look at first 20 rows
+            # Check table size
+            if 5 < table.shape[0] < 500 and 2 < table.shape[1] < 20:
+                score += 10
+                details['size'] = 'good'
             
-            # Check for financial keywords in the entire table content
-            for keyword in financial_keywords:
-                score += table_str.count(keyword)
+            # Check for financial keywords
+            table_str = ' '.join([
+                ' '.join(table.columns.astype(str)),
+                ' '.join(table.iloc[:, 0].astype(str)) if table.shape[1] > 0 else ''
+            ]).lower()
             
-            # Prefer larger tables (but not too large)
-            if 10 < table.size < 10000:  # Reasonable size for financial statements
-                score += min(table.size / 100, 10)  # Cap size bonus at 10
+            financial_keywords = {
+                'cash': 10, 'flow': 10, 'operating': 8, 'investing': 8,
+                'financing': 8, 'revenue': 7, 'income': 7, 'asset': 7,
+                'liability': 7, 'equity': 7, 'profit': 6, 'loss': 6,
+                'total': 5, 'net': 5, 'gross': 5
+            }
             
-            # Source-specific preferences
-            if source == 'Capitaline' and 'mar-' in str(table.columns).lower():
-                score += 20  # Capitaline uses Mar-XX format
+            keyword_score = sum(weight for keyword, weight in financial_keywords.items() 
+                              if keyword in table_str)
+            score += keyword_score
+            details['keywords'] = keyword_score
             
-            self.logger.debug(f"Table {i}: score={score}, shape={table.shape}")
+            # Check for year patterns in columns
+            year_pattern = re.compile(r'(20\d{2}|19\d{2}|mar-\d{2}|fy\d{2})', re.IGNORECASE)
+            year_matches = sum(1 for col in table.columns if year_pattern.search(str(col)))
+            score += year_matches * 5
+            details['years'] = year_matches
             
-            if score > best_score:
-                best_score = score
-                best_table = table
+            # Capitaline specific checks
+            if source == 'Capitaline':
+                if 'mar-' in str(table.columns).lower():
+                    score += 20
+                if any('particulars' in str(col).lower() for col in table.columns):
+                    score += 10
+            
+            scores.append((i, score, table, details))
+            self.logger.info(f"Table {i}: score={score}, shape={table.shape}, details={details}")
         
-        self.logger.info(f"Selected table with score {best_score}")
+        # Get the best scoring table
+        best_idx, best_score, best_table, details = max(scores, key=lambda x: x[1])
+        
+        if best_score < 10:
+            st.warning("Low confidence in table selection. The data might need manual review.")
+        
+        self.logger.info(f"Selected table {best_idx} with score {best_score}")
         return best_table
+    
+    def _post_process_html_dataframe_enhanced(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
+        """Enhanced post-processing for HTML dataframes"""
+        try:
+            original_shape = df.shape
+            self.logger.info(f"Post-processing dataframe with shape {original_shape}")
+            
+            # Step 1: Clean column names
+            if isinstance(df.columns, pd.MultiIndex):
+                # Flatten MultiIndex columns
+                df.columns = ['_'.join(map(str, col)).strip() for col in df.columns.values]
+            
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Step 2: Identify and set proper index
+            # Look for a column that contains metric names
+            potential_index_cols = []
+            
+            for i, col in enumerate(df.columns):
+                if df[col].dtype == 'object':
+                    # Check if this column has financial metric patterns
+                    sample = df[col].dropna().astype(str).str.lower().head(20)
+                    metric_keywords = ['cash', 'revenue', 'income', 'asset', 'liability', 'activity', 'flow']
+                    
+                    if any(any(keyword in val for keyword in metric_keywords) for val in sample):
+                        potential_index_cols.append((i, col))
+            
+            # Use the first column with metric names as index
+            if potential_index_cols:
+                idx_position, idx_col = potential_index_cols[0]
+                self.logger.info(f"Using column '{idx_col}' as index")
+                
+                # Set as index
+                df = df.set_index(idx_col)
+                
+                # Clean the index
+                df.index = df.index.astype(str).str.strip()
+                df = df[df.index != '']
+                df = df[~df.index.str.contains('Unnamed:', na=False)]
+            
+            # Step 3: Clean and convert numeric columns
+            for col in df.columns:
+                if col.lower() in ['unnamed', 'description', 'particulars']:
+                    continue
+                    
+                # Check if column likely contains numeric data
+                sample = df[col].dropna().astype(str).head(10)
+                
+                # Check for numeric patterns
+                numeric_pattern = re.compile(r'[\d,.\-\(\)]+')
+                if any(numeric_pattern.match(str(val)) for val in sample):
+                    try:
+                        # Clean the data
+                        cleaned = df[col].astype(str)
+                        cleaned = cleaned.str.replace(',', '')
+                        cleaned = cleaned.str.replace('(', '-').str.replace(')', '')
+                        cleaned = cleaned.str.replace('--', '')  # Double negative
+                        cleaned = cleaned.str.strip()
+                        
+                        # Replace common NA values
+                        cleaned = cleaned.replace(['', '-', '--', 'NA', 'N/A', 'nil'], np.nan)
+                        
+                        # Convert to numeric
+                        df[col] = pd.to_numeric(cleaned, errors='coerce')
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Could not convert column {col}: {e}")
+            
+            # Step 4: Remove empty rows and columns
+            df = df.dropna(how='all')
+            df = df.dropna(axis=1, how='all')
+            
+            # Step 5: Capitaline specific cleaning
+            if source == 'Capitaline':
+                # Remove common footer rows
+                footer_patterns = ['note:', 'source:', 'disclaimer:', 'total', 'grand total']
+                mask = ~df.index.str.lower().str.contains('|'.join(footer_patterns), na=False)
+                df = df[mask]
+            
+            self.logger.info(f"Post-processing complete. Shape changed from {original_shape} to {df.shape}")
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error in post-processing: {e}", exc_info=True)
+            return df
     
     def _clean_financial_html_data(self, df: pd.DataFrame, source: Optional[str] = None) -> pd.DataFrame:
         """Clean financial data from HTML exports (safer version)"""
@@ -4084,65 +4163,65 @@ class FinancialAnalyticsPlatform:
         return df
     
     def _validate_and_clean_dataframe(self, df: pd.DataFrame, filename: str) -> Optional[pd.DataFrame]:
-        """Validate and clean the dataframe (more robust version)"""
+        """Validate and clean the dataframe with better error reporting"""
         try:
+            # Log initial state
+            self.logger.info(f"Validating {filename}: shape={df.shape if df is not None else None}")
+            
             # Basic validation
-            if df is None or df.empty:
-                st.warning(f"{filename} is empty")
+            if df is None:
+                st.error(f"{filename}: Dataframe is None")
+                return None
+                
+            if df.empty:
+                st.error(f"{filename}: Dataframe is empty")
+                
+                # Provide more context
+                st.info("""
+                The file was parsed but resulted in an empty dataframe. This could be because:
+                1. The file format is not standard
+                2. The data is in an unexpected structure
+                3. All data was filtered out during processing
+                
+                Try enabling 'diagnostic mode' when uploading to see more details.
+                """)
                 return None
             
-            if df.shape[0] < 2 or df.shape[1] < 2:
-                st.warning(f"{filename} has insufficient data (minimum 2x2 required)")
+            if df.shape[0] < 2:
+                st.error(f"{filename}: Insufficient rows ({df.shape[0]} rows found, minimum 2 required)")
+                return None
+                
+            if df.shape[1] < 2:
+                st.error(f"{filename}: Insufficient columns ({df.shape[1]} columns found, minimum 2 required)")
                 return None
             
-            # Ensure we have at least some numeric data
+            # Check for numeric data
             numeric_cols = df.select_dtypes(include=[np.number]).columns
+            self.logger.info(f"Found {len(numeric_cols)} numeric columns")
             
             if len(numeric_cols) == 0:
-                st.warning(f"{filename} has no numeric columns. Attempting conversion...")
-                
-                # Try to convert columns to numeric
-                converted_any = False
-                for col in df.columns:
-                    try:
-                        # Skip columns that are clearly not numeric
-                        if df[col].dtype == 'object':
-                            # Sample the column to check if it contains numbers
-                            sample = df[col].dropna().head(10).astype(str)
-                            if sample.str.match(r'^[\d,.\-\(\)]+$').any():
-                                df[col] = pd.to_numeric(
-                                    df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''),
-                                    errors='coerce'
-                                )
-                                if df[col].notna().any():
-                                    converted_any = True
-                    except Exception as e:
-                        self.logger.warning(f"Could not convert column {col}: {e}")
-                        continue
-                
-                if not converted_any:
-                    st.error(f"{filename} contains no numeric data")
-                    return None
-            
-            # Remove rows with all NaN values
-            df = df.dropna(how='all')
-            
-            # Remove columns with all NaN values
-            df = df.dropna(axis=1, how='all')
-            
-            # Final check
-            if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
-                st.warning(f"{filename}: Insufficient valid data after cleaning")
+                st.warning(f"{filename}: No numeric columns found. Data preview:")
+                st.dataframe(df.head())
                 return None
             
+            # Remove completely empty rows and columns
+            df = df.dropna(how='all')
+            df = df.dropna(axis=1, how='all')
+            
+            # Final validation
+            if df.empty or df.shape[0] < 2 or df.shape[1] < 2:
+                st.error(f"{filename}: Insufficient valid data after cleaning")
+                return None
+            
+            st.success(f"✅ {filename}: Valid data found - {df.shape[0]} rows, {df.shape[1]} columns")
             return df
             
         except Exception as e:
-            self.logger.error(f"Error validating {filename}: {e}")
+            self.logger.error(f"Error validating {filename}: {e}", exc_info=True)
             st.error(f"Validation error for {filename}: {str(e)}")
             return None
     
-    def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
+     def _merge_and_finalize_data(self, all_data: List[pd.DataFrame], files: List[UploadedFile]):
         """Merge multiple dataframes and finalize processing"""
         st.info(f"Successfully parsed {len(all_data)} file(s)")
         
@@ -4216,6 +4295,7 @@ class FinancialAnalyticsPlatform:
             **Capitaline:**
             - Both HTML exports (.xls) and true Excel files are supported
             - The tool automatically detects and converts Lakhs/Crores notation
+            - Enable 'diagnostic mode' to see what's in the file
             
             **Moneycontrol/BSE/NSE:**
             - Download financial statements as Excel/CSV
@@ -4225,6 +4305,11 @@ class FinancialAnalyticsPlatform:
             - Ensure data is in tabular format
             - Financial metrics should be in rows
             - Years/periods should be in columns
+            
+            **If parsing fails:**
+            1. Enable 'diagnostic mode' checkbox when it appears
+            2. Check 'Show all tables for manual selection' if automatic selection fails
+            3. Use the debug mode in Advanced Options for detailed error information
             """)
     
     def _load_sample_data(self, sample_name: str):
@@ -4297,3 +4382,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+        

@@ -1225,21 +1225,28 @@ class FinancialAnalysisEngine(Component):
         
         # Liquidity Ratios
         try:
-            liquidity = pd.DataFrame()
+            liquidity_data = {}
             
             # Current Ratio
             current_assets = self._get_metric_value(df, metrics, 'current_assets')
             current_liabilities = self._get_metric_value(df, metrics, 'current_liabilities')
             
             if current_assets is not None and current_liabilities is not None:
-                liquidity['Current Ratio'] = current_assets / current_liabilities.replace(0, np.nan)
+                # Ensure we have Series and calculate ratio
+                ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
+                cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
+                liquidity_data['Current Ratio'] = ca_series / cl_series.replace(0, np.nan)
             
             # Quick Ratio
             inventory = self._get_metric_value(df, metrics, 'inventory')
             if current_assets is not None and inventory is not None and current_liabilities is not None:
-                liquidity['Quick Ratio'] = (current_assets - inventory) / current_liabilities.replace(0, np.nan)
+                ca_series = current_assets if isinstance(current_assets, pd.Series) else pd.Series(current_assets)
+                inv_series = inventory if isinstance(inventory, pd.Series) else pd.Series(inventory)
+                cl_series = current_liabilities if isinstance(current_liabilities, pd.Series) else pd.Series(current_liabilities)
+                liquidity_data['Quick Ratio'] = (ca_series - inv_series) / cl_series.replace(0, np.nan)
             
-            if not liquidity.empty:
+            if liquidity_data:
+                liquidity = pd.DataFrame(liquidity_data)
                 ratios['Liquidity'] = liquidity.T
                 
         except Exception as e:
@@ -1247,26 +1254,33 @@ class FinancialAnalysisEngine(Component):
         
         # Profitability Ratios
         try:
-            profitability = pd.DataFrame()
+            profitability_data = {}
             
             # Net Profit Margin
             net_income = self._get_metric_value(df, metrics, 'net_income')
             revenue = self._get_metric_value(df, metrics, 'revenue')
             
             if net_income is not None and revenue is not None:
-                profitability['Net Profit Margin %'] = (net_income / revenue.replace(0, np.nan)) * 100
+                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
+                rev_series = revenue if isinstance(revenue, pd.Series) else pd.Series(revenue)
+                profitability_data['Net Profit Margin %'] = (ni_series / rev_series.replace(0, np.nan)) * 100
             
             # ROA
             total_assets = self._get_metric_value(df, metrics, 'total_assets')
             if net_income is not None and total_assets is not None:
-                profitability['Return on Assets %'] = (net_income / total_assets.replace(0, np.nan)) * 100
+                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
+                ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
+                profitability_data['Return on Assets %'] = (ni_series / ta_series.replace(0, np.nan)) * 100
             
             # ROE
             total_equity = self._get_metric_value(df, metrics, 'total_equity')
             if net_income is not None and total_equity is not None:
-                profitability['Return on Equity %'] = (net_income / total_equity.replace(0, np.nan)) * 100
+                ni_series = net_income if isinstance(net_income, pd.Series) else pd.Series(net_income)
+                te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
+                profitability_data['Return on Equity %'] = (ni_series / te_series.replace(0, np.nan)) * 100
             
-            if not profitability.empty:
+            if profitability_data:
+                profitability = pd.DataFrame(profitability_data)
                 ratios['Profitability'] = profitability.T
                 
         except Exception as e:
@@ -1274,18 +1288,23 @@ class FinancialAnalysisEngine(Component):
         
         # Leverage Ratios
         try:
-            leverage = pd.DataFrame()
+            leverage_data = {}
             
             # Debt to Equity
             total_liabilities = self._get_metric_value(df, metrics, 'total_liabilities')
             if total_liabilities is not None and total_equity is not None:
-                leverage['Debt to Equity'] = total_liabilities / total_equity.replace(0, np.nan)
+                tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
+                te_series = total_equity if isinstance(total_equity, pd.Series) else pd.Series(total_equity)
+                leverage_data['Debt to Equity'] = tl_series / te_series.replace(0, np.nan)
             
             # Debt Ratio
             if total_liabilities is not None and total_assets is not None:
-                leverage['Debt Ratio'] = total_liabilities / total_assets.replace(0, np.nan)
+                tl_series = total_liabilities if isinstance(total_liabilities, pd.Series) else pd.Series(total_liabilities)
+                ta_series = total_assets if isinstance(total_assets, pd.Series) else pd.Series(total_assets)
+                leverage_data['Debt Ratio'] = tl_series / ta_series.replace(0, np.nan)
             
-            if not leverage.empty:
+            if leverage_data:
+                leverage = pd.DataFrame(leverage_data)
                 ratios['Leverage'] = leverage.T
                 
         except Exception as e:

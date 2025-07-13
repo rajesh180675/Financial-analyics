@@ -2229,6 +2229,7 @@ class FinancialAnalyticsPlatform:
             st.session_state.config_overrides = {}
             st.session_state.uploaded_files = []
             st.session_state.simple_parse_mode = False
+            st.session_state.number_format_value = 'Indian'  # Add this
             
         # Initialize configuration with session state overrides
         self.config = Configuration(st.session_state.get('config_overrides', {}))
@@ -2452,18 +2453,22 @@ class FinancialAnalyticsPlatform:
                 )
                 self.config.set('ai.similarity_threshold', confidence_threshold)
         
-        # Number format
+        # Number format - FIX: Don't manually set the state, let the widget handle it
         st.sidebar.subheader("🔢 Number Format")
+        
+        # Get current format from session state or default
+        current_format = self.get_state('number_format_value', 'Indian')
         
         format_option = st.sidebar.radio(
             "Display Format",
             ["Indian (₹ Lakhs/Crores)", "International ($ Millions)"],
-            key="number_format"
+            index=0 if current_format == 'Indian' else 1,
+            key="number_format_radio"  # Changed key to avoid conflict
         )
         
-        self.set_state('number_format', 
-                      Configuration.NumberFormat.INDIAN if "Indian" in format_option 
-                      else Configuration.NumberFormat.INTERNATIONAL)
+        # Store the parsed format value separately
+        self.set_state('number_format_value', 
+                      'Indian' if "Indian" in format_option else 'International')
         
         # Advanced options
         with st.sidebar.expander("🔧 Advanced Options"):
@@ -4152,9 +4157,10 @@ class FinancialAnalyticsPlatform:
         st.session_state.config_overrides = {}
         st.session_state.uploaded_files = []
         st.session_state.simple_parse_mode = False
+        st.session_state.number_format_value = 'Indian'  # Add this
         
         self.logger.info("Configuration reset to defaults")
-
+    
 # --- 21. Application Entry Point ---
 def main():
     """Main application entry point"""

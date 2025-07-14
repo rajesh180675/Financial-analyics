@@ -371,9 +371,11 @@ def error_boundary(fallback_return=None):
                 # Show user-friendly error in Streamlit
                 st.error(f"An error occurred in {func.__name__}. Please try again or contact support.")
                 
-                if fallback_return is not None:
-                    return fallback_return
-                return None
+                # If fallback_return is callable, call it
+                if callable(fallback_return):
+                    return fallback_return()
+                    
+                return fallback_return
         return wrapper
     return decorator
 
@@ -852,7 +854,7 @@ class DataValidator:
         self._logger = LoggerFactory.get_logger('DataValidator')
         self.enable_auto_correction = config.get('analysis.enable_auto_correction', True)
     
-    @error_boundary()
+    @error_boundary((pd.DataFrame(), ValidationResult()))  # Return proper tuple as default
     def validate_and_correct(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Validate and auto-correct dataframe"""
         result = self.validate_dataframe(df, context)
@@ -870,10 +872,23 @@ class DataValidator:
         for idx in corrected_df.index:
             for metric in positive_metrics:
                 if metric in str(idx).lower():
-                    negative_mask = corrected_df.loc[idx] < 0
-                    if negative_mask.any():
-                        corrected_df.loc[idx][negative_mask] = abs(corrected_df.loc[idx][negative_mask])
-                        corrections_made.append(f"Converted negative values to positive in {idx}")
+                    # Get the row data
+                    row_data = corrected_df.loc[idx]
+                    
+                    # Handle case where loc returns a DataFrame (duplicate indices)
+                    if isinstance(row_data, pd.DataFrame):
+                        # Process each duplicate row
+                        for i in range(len(row_data)):
+                            negative_mask = row_data.iloc[i] < 0
+                            if negative_mask.any():
+                                corrected_df.loc[idx].iloc[i][negative_mask] = abs(row_data.iloc[i][negative_mask])
+                                corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
+                    else:
+                        # Single row - process normally
+                        negative_mask = row_data < 0
+                        if negative_mask.any():
+                            corrected_df.loc[idx][negative_mask] = abs(row_data[negative_mask])
+                            corrections_made.append(f"Converted negative values to positive in {idx}")
         
         # Fix outliers using IQR method
         for col in corrected_df.select_dtypes(include=[np.number]).columns:
@@ -1474,8 +1489,12 @@ class DataProcessor(Component):
             # Auto-correction if enabled
             if self.config.get('analysis.enable_auto_correction', True):
                 validator = DataValidator(self.config)
-                processed_df, correction_result = validator.validate_and_correct(processed_df, context)
-                result.merge(correction_result)
+                try:
+                    processed_df, correction_result = validator.validate_and_correct(processed_df, context)
+                    result.merge(correction_result)
+                except Exception as e:
+                    self._logger.error(f"Auto-correction failed: {e}")
+                    # Continue without auto-correction
             
             # Transformation phase
             if result.is_valid:
@@ -6527,57 +6546,105 @@ class FinancialAnalyticsPlatform:
             merged_data = all_data[0]
         else:
             try:
-                # Check if all dataframes have the same index
-                if all(df.index.equals(all_data[0].index) for df in all_data[1:]):
-                    # Merge by columns
-                    merged_data = pd.concat(all_data, axis=1)
-                    merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
-                    st.info("Merged files by columns (same metrics)")
+                # More robust merging logic
+                st.info("Attempting to merge multiple files...")
+                
+                # First, check if files have overlapping columns (years)
+                all_columns = [set(df.columns) for df in all_data]
+                common_columns = set.intersection(*all_columns) if all_columns else set()
+                
+                if common_columns:
+                    # Files have common years - likely different metrics for same years
+                    st.info(f"Found common columns: {common_columns}")
+                    
+                    # Merge by combining rows (metrics)
+                    merged_data = pd.concat(all_data, axis=0)
+                    
+                    # Remove duplicate rows based on index
+                    merged_data = merged_data[~merged_data.index.duplicated(keep='first')]
+                    st.success("Merged files by combining metrics")
+                    
                 else:
-                    # Merge by combining unique metrics
-                    merged_data = all_data[0]
-                    for df in all_data[1:]:
-                        for idx in df.index:
-                            if idx not in merged_data.index:
-                                merged_data.loc[idx] = df.loc[idx]
-                    st.info("Merged files by combining unique metrics")
+                    # No common columns - likely same metrics for different years
+                    st.info("No common columns found - attempting to merge by years")
+                    
+                    # Check if indices are similar
+                    index_similarity = sum(
+                        len(set(df.index) & set(all_data[0].index)) / len(df.index) 
+                        for df in all_data[1:]
+                    ) / (len(all_data) - 1)
+                    
+                    if index_similarity > 0.7:  # 70% similarity threshold
+                        # Merge by columns (years)
+                        merged_data = pd.concat(all_data, axis=1)
+                        
+                        # Remove duplicate columns
+                        merged_data = merged_data.loc[:, ~merged_data.columns.duplicated()]
+                        st.success("Merged files by combining years")
+                    else:
+                        # Different structure - use first file and warn
+                        st.warning("Files have different structures. Using first file only.")
+                        st.info("For best results, ensure all files have similar metric names.")
+                        merged_data = all_data[0]
+                        
             except Exception as e:
                 self.logger.error(f"Error merging data: {e}")
-                st.warning("Could not merge files automatically, using first file only")
+                st.warning(f"Could not merge files automatically: {str(e)}")
+                st.info("Using first file only. You can process files separately if needed.")
                 merged_data = all_data[0]
         
         # Show data preview
         with st.expander("📊 Data Preview", expanded=False):
             st.dataframe(merged_data.head(10))
             st.write(f"Shape: {merged_data.shape}")
+            
+            # Show column information
+            st.write("**Columns (Years/Periods):**", list(merged_data.columns))
+            st.write("**Sample Metrics:**", list(merged_data.index[:5]))
         
         # Process and validate
-        with performance_monitor.measure("data_processing"):
-            processed_data, validation = self.components['processor'].process(merged_data)
-        
-        if validation.is_valid:
-            # Store in session state
-            self.set_state('analysis_data', processed_data)
-            self.set_state('company_name', files[0].name.split('.')[0])
-            self.set_state('data_source', self._detect_file_source(files[0].name))
-            st.success("✅ Files processed successfully!")
+        try:
+            with performance_monitor.measure("data_processing"):
+                processed_data, validation = self.components['processor'].process(merged_data)
             
-            # Show corrections if any
-            if validation.corrections:
-                with st.expander("📝 Data Corrections Applied"):
-                    for correction in validation.corrections:
-                        st.write(f"• {correction}")
+            if validation.is_valid:
+                # Store in session state
+                self.set_state('analysis_data', processed_data)
+                self.set_state('company_name', files[0].name.split('.')[0])
+                self.set_state('data_source', self._detect_file_source(files[0].name))
+                st.success("✅ Files processed successfully!")
+                
+                # Show corrections if any
+                if validation.corrections:
+                    with st.expander("📝 Data Corrections Applied"):
+                        for correction in validation.corrections:
+                            st.write(f"• {correction}")
+                
+                # Auto-map if AI is enabled
+                if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
+                    self._perform_ai_mapping(processed_data)
+                
+            else:
+                st.error("Validation failed:")
+                for error in validation.errors[:5]:  # Show max 5 errors
+                    st.error(f"• {error}")
+                if len(validation.errors) > 5:
+                    st.error(f"... and {len(validation.errors) - 5} more errors")
+                    
+                for warning in validation.warnings[:3]:  # Show max 3 warnings
+                    st.warning(f"• {warning}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error processing merged data: {e}")
+            st.error(f"Error processing data: {str(e)}")
             
-            # Auto-map if AI is enabled
-            if self.config.get('ai.enabled', True) and self.config.get('app.display_mode') != Configuration.DisplayMode.MINIMAL:
-                self._perform_ai_mapping(processed_data)
-            
-        else:
-            st.error("Validation failed:")
-            for error in validation.errors:
-                st.error(f"• {error}")
-            for warning in validation.warnings:
-                st.warning(f"• {warning}")
+            # Show data structure for debugging
+            with st.expander("Debug Information"):
+                st.write("**Data Shape:**", merged_data.shape)
+                st.write("**Data Types:**")
+                st.write(merged_data.dtypes)
+                st.write("**Sample Data:**")
+                st.write(merged_data.head())
     
     def _show_no_data_message(self):
         """Show message when no valid data is found"""

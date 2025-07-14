@@ -1991,13 +1991,16 @@ class FinancialAnalysisEngine(Component):
                     
                     if first_value > 0 and last_value > 0:
                         years_diff = len(series) - 1
-                        cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+                        if years_diff > 0:  # Add this check
+                            cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+                        else:
+                            cagr = 0  # Instead of None
                     else:
-                        cagr = None
+                        cagr = 0  # Instead of None
                         
                 except Exception as e:
                     self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
-                    cagr = None
+                    cagr = 0  # Instead of None
                 
                 # Volatility
                 try:
@@ -5982,30 +5985,34 @@ class FinancialAnalyticsPlatform:
         
         for metric, trend in trends.items():
             if isinstance(trend, dict):
+                # Get CAGR value safely
+                cagr = trend.get('cagr')
+                
                 # Strong growth pattern
-                if trend.get('cagr', 0) > 15:
+                if cagr is not None and cagr > 15:
                     patterns.append({
                         'type': 'Strong Growth',
                         'metric': metric,
-                        'value': f"{trend['cagr']:.1f}% CAGR",
+                        'value': f"{cagr:.1f}% CAGR",
                         'confidence': trend.get('r_squared', 0)
                     })
                 
                 # Declining pattern
-                elif trend.get('cagr', 0) < -5:
+                elif cagr is not None and cagr < -5:
                     patterns.append({
                         'type': 'Declining Trend',
                         'metric': metric,
-                        'value': f"{trend['cagr']:.1f}% CAGR",
+                        'value': f"{cagr:.1f}% CAGR",
                         'confidence': trend.get('r_squared', 0)
                     })
                 
                 # High volatility pattern
-                if trend.get('volatility', 0) > 30:
+                volatility = trend.get('volatility')
+                if volatility is not None and volatility > 30:
                     patterns.append({
                         'type': 'High Volatility',
                         'metric': metric,
-                        'value': f"{trend['volatility']:.1f}% volatility",
+                        'value': f"{volatility:.1f}% volatility",
                         'confidence': 0.8
                     })
         

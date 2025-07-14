@@ -52,8 +52,25 @@ import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
 
 import bleach
-from fuzzywuzzy import fuzz
 
+from fuzzywuzzy import fuzz
+import zipfile
+import tempfile
+import shutil
+from pathlib import Path
+
+# Optional import for 7z support
+try:
+    import py7zr
+    SEVEN_ZIP_AVAILABLE = True
+except ImportError:
+    SEVEN_ZIP_AVAILABLE = False
+    py7zr = None
+
+# Near the imports at the top
+if not SEVEN_ZIP_AVAILABLE:
+    print("Note: 7z support not available. Install with: pip install py7zr")
+    
 # Configure logging with rotation
 from logging.handlers import RotatingFileHandler
 
@@ -405,7 +422,7 @@ class Configuration:
             'debug': False,
             'display_mode': DisplayMode.LITE,
             'max_file_size_mb': 50,
-            'allowed_file_types': ['csv', 'html', 'htm', 'xls', 'xlsx'],
+            'allowed_file_types': ['csv', 'html', 'htm', 'xls', 'xlsx', 'zip', '7z'],  # Added zip and 7z
             'cache_ttl_seconds': 3600,
             'max_cache_size_mb': 100,
             'enable_telemetry': True,
@@ -1422,7 +1439,112 @@ class SecurityModule(Component):
         # Add current request
         self._rate_limiter[key].append(now)
         return True
-
+class CompressionHandler:
+    """Handle compressed file extraction"""
+    
+    def __init__(self, logger):
+        self.logger = logger
+        self.temp_dirs = []
+    
+    def __del__(self):
+        """Cleanup temporary directories"""
+        self.cleanup()
+    
+    def cleanup(self):
+        """Clean up temporary directories"""
+        for temp_dir in self.temp_dirs:
+            try:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except Exception as e:
+                self.logger.error(f"Error cleaning up temp dir: {e}")
+        self.temp_dirs.clear()
+    
+    def extract_compressed_file(self, file: UploadedFile) -> List[Tuple[str, bytes]]:
+        """Extract compressed file and return list of (filename, content) tuples"""
+        extracted_files = []
+        
+        # Create temporary directory
+        temp_dir = Path(tempfile.mkdtemp())
+        self.temp_dirs.append(temp_dir)
+        
+        try:
+            # Save uploaded file to temp location
+            temp_file = temp_dir / file.name
+            with open(temp_file, 'wb') as f:
+                f.write(file.getbuffer())
+            
+            # Extract based on file type
+            if file.name.lower().endswith('.zip'):
+                extracted_files = self._extract_zip(temp_file, temp_dir)
+            elif file.name.lower().endswith('.7z'):
+                if SEVEN_ZIP_AVAILABLE:
+                    extracted_files = self._extract_7z(temp_file, temp_dir)
+                else:
+                    st.error("7z support not available. Please install 'py7zr' package: pip install py7zr")
+                    return []
+            
+            self.logger.info(f"Extracted {len(extracted_files)} files from {file.name}")
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting {file.name}: {e}")
+            st.error(f"Error extracting compressed file: {str(e)}")
+        
+        return extracted_files
+    
+    def _extract_zip(self, zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
+        """Extract ZIP file"""
+        extracted = []
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_file:
+            # Get info about files in the archive
+            file_list = zip_file.namelist()
+            
+            # Filter for supported file types
+            supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
+            
+            for file_name in file_list:
+                # Skip directories and hidden files
+                if file_name.endswith('/') or file_name.startswith('.') or '/' in file_name and file_name.split('/')[-1].startswith('.'):
+                    continue
+                
+                # Check if file has supported extension
+                if any(file_name.lower().endswith(ext) for ext in supported_extensions):
+                    try:
+                        content = zip_file.read(file_name)
+                        # Use only the filename, not the full path
+                        clean_name = Path(file_name).name
+                        extracted.append((clean_name, content))
+                        self.logger.info(f"Extracted: {clean_name}")
+                    except Exception as e:
+                        self.logger.error(f"Error extracting {file_name}: {e}")
+        
+        return extracted
+    
+    def _extract_7z(self, seven_zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
+        """Extract 7z file"""
+        extracted = []
+        
+        with py7zr.SevenZipFile(seven_zip_path, mode='r') as seven_zip:
+            # Extract all files
+            seven_zip.extractall(path=temp_dir)
+            
+            # Read extracted files
+            supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
+            
+            for extracted_file in temp_dir.rglob('*'):
+                if extracted_file.is_file() and not extracted_file.name.startswith('.'):
+                    if any(extracted_file.name.lower().endswith(ext) for ext in supported_extensions):
+                        try:
+                            with open(extracted_file, 'rb') as f:
+                                content = f.read()
+                            extracted.append((extracted_file.name, content))
+                            self.logger.info(f"Extracted: {extracted_file.name}")
+                        except Exception as e:
+                            self.logger.error(f"Error reading {extracted_file}: {e}")
+        
+        return extracted
+        
 # --- 15. Data Processing Pipeline ---
 class DataProcessor(Component):
     """Advanced data processing with pipeline architecture and batch support"""
@@ -4234,12 +4356,21 @@ class FinancialAnalyticsPlatform:
             f"Upload Financial Statements (Max {max_size}MB each)",
             type=allowed_types,
             accept_multiple_files=True,
-            key="file_uploader"
+            key="file_uploader",
+            help="You can upload compressed files (.zip, .7z) containing multiple financial statements"
         )
         
         if temp_files:
             st.session_state['uploaded_files'] = temp_files
-            st.sidebar.success(f"✅ {len(temp_files)} file(s) uploaded")
+            
+            # Count files and show info
+            regular_files = [f for f in temp_files if not f.name.lower().endswith(('.zip', '.7z'))]
+            compressed_files = [f for f in temp_files if f.name.lower().endswith(('.zip', '.7z'))]
+            
+            if compressed_files:
+                st.sidebar.info(f"📦 {len(compressed_files)} compressed file(s) uploaded")
+            if regular_files:
+                st.sidebar.info(f"📄 {len(regular_files)} regular file(s) uploaded")
         
         uploaded_files = st.session_state['uploaded_files']
         
@@ -4251,13 +4382,21 @@ class FinancialAnalyticsPlatform:
                 help="Try this if normal parsing fails"
             )
             
+            # Check for 7z files and py7zr availability
+            has_7z = any(f.name.lower().endswith('.7z') for f in uploaded_files)
+            if has_7z and not SEVEN_ZIP_AVAILABLE:
+                st.sidebar.warning("⚠️ 7z files detected but py7zr not installed")
+                st.sidebar.code("pip install py7zr")
+            
             # Validate files
             all_valid = True
             for file in uploaded_files:
-                result = self.components['security'].validate_file_upload(file)
-                if not result.is_valid:
-                    st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
-                    all_valid = False
+                # Skip validation for compressed files
+                if not file.name.lower().endswith(('.zip', '.7z')):
+                    result = self.components['security'].validate_file_upload(file)
+                    if not result.is_valid:
+                        st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
+                        all_valid = False
             
             if all_valid and st.sidebar.button("Process Files", type="primary"):
                 self._process_uploaded_files(uploaded_files)
@@ -4270,9 +4409,14 @@ class FinancialAnalyticsPlatform:
             1. **Capitaline Exports**: Both .xls (HTML) and true Excel formats
             2. **Moneycontrol/BSE/NSE**: HTML exports with .xls extension
             3. **Standard CSV/Excel**: With metrics in rows and years in columns
+            4. **Compressed Files**: 
+               - ZIP files (.zip) containing multiple statements
+               - 7Z files (.7z) for maximum compression
             
-            **💡 Pro Tip**: If you're downloading from Capitaline, both "Export to Excel" 
-            and "Download as Excel" options will work with this tool.
+            **💡 Pro Tips**: 
+            - Compress multiple files into a single ZIP/7Z for faster uploads
+            - 7Z typically provides 50-70% better compression than ZIP
+            - You can mix different file types in a single compressed file
             """)
     
     def _render_sample_data_loader(self):
@@ -6167,53 +6311,69 @@ class FinancialAnalyticsPlatform:
             except Exception as e:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
-    
+        
     @error_boundary()
     def _process_uploaded_files(self, files: List[UploadedFile]):
-        """Process uploaded files with enhanced parsing"""
+        """Process uploaded files with enhanced parsing and compression support"""
         try:
             all_data = []
+            compression_handler = CompressionHandler(self.logger)
             
-            for file in files:
-                self.logger.info(f"Processing file: {file.name}, size: {file.size} bytes")
+            # Separate compressed and regular files
+            compressed_files = [f for f in files if f.name.lower().endswith(('.zip', '.7z'))]
+            regular_files = [f for f in files if not f.name.lower().endswith(('.zip', '.7z'))]
+            
+            # Process compressed files first
+            if compressed_files:
+                st.info(f"📦 Extracting {len(compressed_files)} compressed file(s)...")
                 
-                # Detect file source
-                file_source = self._detect_file_source(file.name)
-                if file_source:
-                    st.info(f"📊 Detected source: {file_source}")
-                
-                try:
-                    if file.name.endswith('.csv'):
-                        df = self._process_csv_file(file)
-                    
-                    elif file.name.endswith(('.xls', '.xlsx')):
-                        df = self._process_excel_or_html_file(file, file_source)
-                    
-                    elif file.name.endswith(('.html', '.htm')):
-                        df = self._process_html_file(file, file_source)
-                    
-                    else:
-                        st.warning(f"Unsupported file type: {file.name}")
-                        df = None
-                    
-                    # Post-processing
-                    if df is not None and file_source:
-                        df = self._apply_source_specific_cleaning(df, file_source)
-                    
-                    # Validation
-                    if df is not None:
-                        df = self._validate_and_clean_dataframe(df, file.name)
-                        if df is not None:
-                            # Apply security sanitization
-                            df = self.components['security'].sanitize_dataframe(df)
-                            all_data.append(df)
-                            st.success(f"✅ Successfully parsed {file.name}")
+                for comp_file in compressed_files:
+                    with st.spinner(f"Extracting {comp_file.name}..."):
+                        extracted = compression_handler.extract_compressed_file(comp_file)
+                        
+                        if extracted:
+                            st.success(f"✅ Extracted {len(extracted)} file(s) from {comp_file.name}")
                             
-                except Exception as e:
-                    self.logger.error(f"Error processing {file.name}: {e}")
-                    st.error(f"Error processing {file.name}: {str(e)}")
-                    if self.config.get('app.debug', False):
-                        st.exception(e)
+                            # Process each extracted file
+                            for filename, content in extracted:
+                                # Create a file-like object
+                                file_like = io.BytesIO(content)
+                                
+                                # Create an UploadedFile-like object
+                                class ExtractedFile:
+                                    def __init__(self, name, content):
+                                        self.name = name
+                                        self.size = len(content)
+                                        self._content = content
+                                        self._buffer = io.BytesIO(content)
+                                    
+                                    def read(self, size=-1):
+                                        return self._buffer.read(size)
+                                    
+                                    def seek(self, offset, whence=0):
+                                        return self._buffer.seek(offset, whence)
+                                    
+                                    def getbuffer(self):
+                                        return self._content
+                                
+                                extracted_file = ExtractedFile(filename, content)
+                                
+                                # Process the extracted file
+                                st.info(f"Processing extracted file: {filename}")
+                                df = self._process_single_file(extracted_file)
+                                
+                                if df is not None:
+                                    all_data.append(df)
+                                    st.success(f"✅ Successfully parsed {filename}")
+            
+            # Process regular files
+            for file in regular_files:
+                df = self._process_single_file(file)
+                if df is not None:
+                    all_data.append(df)
+            
+            # Cleanup compressed file handler
+            compression_handler.cleanup()
             
             # Merge and finalize data
             if all_data:
@@ -6224,6 +6384,52 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error processing files: {e}", exc_info=True)
             st.error(f"Error processing files: {str(e)}")
+    
+    def _process_single_file(self, file: Union[UploadedFile, Any]) -> Optional[pd.DataFrame]:
+        """Process a single file"""
+        try:
+            self.logger.info(f"Processing file: {file.name}, size: {file.size} bytes")
+            
+            # Detect file source
+            file_source = self._detect_file_source(file.name)
+            if file_source:
+                st.info(f"📊 Detected source: {file_source}")
+            
+            df = None
+            
+            if file.name.endswith('.csv'):
+                df = self._process_csv_file(file)
+            
+            elif file.name.endswith(('.xls', '.xlsx')):
+                df = self._process_excel_or_html_file(file, file_source)
+            
+            elif file.name.endswith(('.html', '.htm')):
+                df = self._process_html_file(file, file_source)
+            
+            else:
+                st.warning(f"Unsupported file type: {file.name}")
+                return None
+            
+            # Post-processing
+            if df is not None and file_source:
+                df = self._apply_source_specific_cleaning(df, file_source)
+            
+            # Validation
+            if df is not None:
+                df = self._validate_and_clean_dataframe(df, file.name)
+                if df is not None:
+                    # Apply security sanitization
+                    df = self.components['security'].sanitize_dataframe(df)
+                    return df
+            
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error processing {file.name}: {e}")
+            st.error(f"Error processing {file.name}: {str(e)}")
+            if self.config.get('app.debug', False):
+                st.exception(e)
+            return None
     
     def _detect_file_source(self, filename: str) -> Optional[str]:
         """Detect the source of the file based on naming patterns"""

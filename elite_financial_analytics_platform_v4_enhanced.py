@@ -452,11 +452,11 @@ class Configuration:
             'batch_size': 32,
             'max_sequence_length': 512,
             'similarity_threshold': 0.6,
-            'confidence_levels': {
+            'confidence_levels':{
                 'high': 0.8,
                 'medium': 0.6,
                 'low': 0.4
-            }
+            },
              # NEW: Kaggle/ngrok integration
             'use_kaggle_api': False,  # Toggle to enable remote processing
             'kaggle_api_url': 'https://911a90009b42.ngrok-free.app',     # Paste ngrok URL here (e.g., https://xxxx.ngrok-free.app)

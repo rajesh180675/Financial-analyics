@@ -1,5 +1,5 @@
-# elite_financial_analytics_platform_v4_enhanced.py
-# Enterprise-Grade Financial Analytics Platform - Enhanced Version with All Optimizations
+# elite_financial_analytics_platform_v4_debugged.py
+# Enterprise-Grade Financial Analytics Platform - Debugged and Enhanced Version
 
 # --- 1. Core Imports and Setup ---
 import asyncio
@@ -7,12 +7,14 @@ import concurrent.futures
 import functools
 import hashlib
 import importlib
+import inspect
 import io
 import json
 import logging
 import os
 import pickle
 import re
+import resource
 import sys
 import threading
 import time
@@ -58,29 +60,53 @@ from logging.handlers import RotatingFileHandler
 # Set up warnings
 warnings.filterwarnings('ignore')
 
-# --- Lazy Loading System ---
+# --- Enhanced Lazy Loading System ---
 class LazyLoader:
-    """Lazy loading for heavy modules"""
+    """Lazy loading for heavy modules with caching"""
+    _cache = {}
+    _lock = threading.Lock()
+    
     def __init__(self, module_name: str):
         self.module_name = module_name
         self._module = None
     
     def __getattr__(self, attr):
         if self._module is None:
-            self._module = importlib.import_module(self.module_name)
+            with self._lock:
+                if self._module is None:
+                    try:
+                        if self.module_name not in self._cache:
+                            self._cache[self.module_name] = importlib.import_module(self.module_name)
+                        self._module = self._cache[self.module_name]
+                    except ImportError:
+                        raise ImportError(f"Optional module '{self.module_name}' not installed")
         return getattr(self._module, attr)
 
-# Lazy load heavy optional dependencies
-sentence_transformers = LazyLoader('sentence_transformers')
-bs4 = LazyLoader('bs4')
-psutil = LazyLoader('psutil')
+# Check module availability
+def check_module_available(module_name: str) -> bool:
+    """Check if a module is available"""
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ImportError:
+        return False
 
-# Try to import optional dependencies
-try:
-    from sentence_transformers import SentenceTransformer
-    SENTENCE_TRANSFORMER_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMER_AVAILABLE = False
+# Lazy load optional dependencies
+sentence_transformers = LazyLoader('sentence_transformers')
+psutil = LazyLoader('psutil')
+bs4 = LazyLoader('bs4')
+
+# Check availability
+SENTENCE_TRANSFORMER_AVAILABLE = check_module_available('sentence_transformers')
+BEAUTIFULSOUP_AVAILABLE = check_module_available('bs4')
+PSUTIL_AVAILABLE = check_module_available('psutil')
+
+# Try to import sentence transformers for type checking
+if SENTENCE_TRANSFORMER_AVAILABLE:
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        SentenceTransformer = None
 
 # --- Import Core Components (with fallback) ---
 try:
@@ -108,15 +134,76 @@ except ImportError:
     CORE_YEAR_REGEX = re.compile(r'(20\d{2}|19\d{2}|FY\s?20\d{2}|FY\s?19\d{2})')
     CORE_MAX_FILE_SIZE = 10
     CORE_ALLOWED_TYPES = ['csv', 'html', 'htm', 'xls', 'xlsx']
+    CorePenmanNissim = None
 
-# --- 2. Performance Monitoring System ---
+# --- 2. Thread-Safe State Management ---
+class ThreadSafeState:
+    """Thread-safe state management for Streamlit"""
+    _lock = threading.RLock()
+    _state_locks = {}
+    
+    @classmethod
+    @contextmanager
+    def lock(cls, key: Optional[str] = None):
+        """Context manager for thread-safe state access"""
+        if key:
+            if key not in cls._state_locks:
+                with cls._lock:
+                    if key not in cls._state_locks:
+                        cls._state_locks[key] = threading.RLock()
+            lock = cls._state_locks[key]
+        else:
+            lock = cls._lock
+        
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+    
+    @staticmethod
+    def get(key: str, default: Any = None) -> Any:
+        """Thread-safe get from session state"""
+        with ThreadSafeState.lock(key):
+            return st.session_state.get(key, default)
+    
+    @staticmethod
+    def set(key: str, value: Any):
+        """Thread-safe set in session state"""
+        with ThreadSafeState.lock(key):
+            st.session_state[key] = value
+    
+    @staticmethod
+    def update(updates: Dict[str, Any]):
+        """Thread-safe batch update"""
+        with ThreadSafeState.lock():
+            for key, value in updates.items():
+                st.session_state[key] = value
+    
+    @staticmethod
+    def delete(key: str):
+        """Thread-safe delete from session state"""
+        with ThreadSafeState.lock(key):
+            if key in st.session_state:
+                del st.session_state[key]
+
+# Use ThreadSafeState as SimpleState
+SimpleState = ThreadSafeState
+
+# --- 3. Performance Monitoring System ---
 class PerformanceMonitor:
     """Monitor and track performance metrics"""
     
     def __init__(self):
         self.metrics = defaultdict(list)
         self._lock = threading.Lock()
-        self.logger = LoggerFactory.get_logger('PerformanceMonitor')
+        self.logger = None  # Will be initialized later
+    
+    def _get_logger(self):
+        """Lazy initialize logger"""
+        if self.logger is None:
+            self.logger = LoggerFactory.get_logger('PerformanceMonitor')
+        return self.logger
     
     @contextmanager
     def measure(self, operation: str):
@@ -138,15 +225,17 @@ class PerformanceMonitor:
                 })
             
             if elapsed_time > 1.0:  # Log slow operations
-                self.logger.warning(f"Slow operation '{operation}': {elapsed_time:.2f}s")
+                self._get_logger().warning(f"Slow operation '{operation}': {elapsed_time:.2f}s")
     
     def _get_memory_usage(self) -> int:
         """Get current memory usage in bytes"""
-        try:
-            import psutil
-            return psutil.Process().memory_info().rss
-        except:
-            return 0
+        if PSUTIL_AVAILABLE:
+            try:
+                import psutil
+                return psutil.Process().memory_info().rss
+            except Exception:
+                return 0
+        return 0
     
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get performance summary for optimization"""
@@ -172,30 +261,42 @@ class PerformanceMonitor:
 # Global performance monitor instance
 performance_monitor = PerformanceMonitor()
 
-# --- 3. Enhanced Logging Configuration ---
+# --- 4. Enhanced Logging Configuration ---
 class LoggerFactory:
     """Factory for creating configured loggers with context"""
     
     _loggers = {}
     _lock = threading.Lock()
+    _log_dir = Path("logs")
+    _initialized = False
+    
+    @classmethod
+    def _initialize(cls):
+        """Initialize logging system"""
+        if not cls._initialized:
+            cls._log_dir.mkdir(exist_ok=True)
+            cls._initialized = True
     
     @classmethod
     def get_logger(cls, name: str, level: int = logging.INFO) -> logging.Logger:
         """Get or create a logger with proper configuration"""
+        cls._initialize()
+        
         with cls._lock:
             if name not in cls._loggers:
                 logger = logging.getLogger(name)
                 logger.setLevel(level)
+                
+                # Remove existing handlers to avoid duplicates
+                logger.handlers.clear()
                 
                 # Console handler
                 console_handler = logging.StreamHandler()
                 console_handler.setLevel(level)
                 
                 # File handler with rotation
-                log_dir = Path("logs")
-                log_dir.mkdir(exist_ok=True)
                 file_handler = RotatingFileHandler(
-                    log_dir / f"{name}.log",
+                    cls._log_dir / f"{name}.log",
                     maxBytes=10485760,  # 10MB
                     backupCount=5
                 )
@@ -215,7 +316,7 @@ class LoggerFactory:
             
             return cls._loggers[name]
 
-# --- 4. Enhanced Error Handling ---
+# --- 5. Error Context with Recovery ---
 class ErrorContext:
     """Context manager for error handling with recovery"""
     
@@ -255,7 +356,28 @@ class ErrorContext:
             
         return False
 
-# --- 5. Enhanced Configuration Management ---
+# --- 6. Error Boundary Decorator ---
+def error_boundary(fallback_return=None):
+    """Decorator to add error boundary to functions"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                logger = LoggerFactory.get_logger(func.__module__)
+                logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
+                
+                # Show user-friendly error in Streamlit
+                st.error(f"An error occurred in {func.__name__}. Please try again or contact support.")
+                
+                if fallback_return is not None:
+                    return fallback_return
+                return None
+        return wrapper
+    return decorator
+
+# --- 7. Configuration Management ---
 class ConfigurationError(Exception):
     """Custom exception for configuration errors"""
     pass
@@ -280,7 +402,7 @@ class Configuration:
             'name': 'Elite Financial Analytics Platform',
             'debug': False,
             'display_mode': DisplayMode.LITE,
-            'max_file_size_mb': 10,
+            'max_file_size_mb': 50,
             'allowed_file_types': ['csv', 'html', 'htm', 'xls', 'xlsx'],
             'cache_ttl_seconds': 3600,
             'max_cache_size_mb': 100,
@@ -409,7 +531,42 @@ class Configuration:
             for path, value in original.items():
                 self.set(path, value)
 
-# --- 6. Enhanced Caching System with Compression ---
+# --- 8. Number Formatting Functions ---
+def format_indian_number(value: float) -> str:
+    """Format number in Indian numbering system"""
+    if pd.isna(value) or value is None:
+        return "-"
+    
+    abs_value = abs(value)
+    sign = "-" if value < 0 else ""
+    
+    if abs_value >= 10000000:  # Crores
+        return f"{sign}₹ {abs_value/10000000:.2f} Cr"
+    elif abs_value >= 100000:  # Lakhs
+        return f"{sign}₹ {abs_value/100000:.2f} L"
+    elif abs_value >= 1000:  # Thousands
+        return f"{sign}₹ {abs_value/1000:.1f} K"
+    else:
+        return f"{sign}₹ {abs_value:.0f}"
+
+def format_international_number(value: float) -> str:
+    """Format number in international system"""
+    if pd.isna(value) or value is None:
+        return "-"
+    
+    abs_value = abs(value)
+    sign = "-" if value < 0 else ""
+    
+    if abs_value >= 1000000000:  # Billions
+        return f"{sign}${abs_value/1000000000:.2f}B"
+    elif abs_value >= 1000000:  # Millions
+        return f"{sign}${abs_value/1000000:.2f}M"
+    elif abs_value >= 1000:  # Thousands
+        return f"{sign}${abs_value/1000:.1f}K"
+    else:
+        return f"{sign}${abs_value:.0f}"
+
+# --- 9. Enhanced Caching System ---
 class CacheEntry:
     """Cache entry with metadata and compression support"""
     
@@ -545,7 +702,7 @@ class AdvancedCache:
                 **self._stats
             }
 
-# --- 7. Resource Management with Batch Processing ---
+# --- 10. Resource Management ---
 class ResourceManager:
     """Manage computational resources and prevent overload"""
     
@@ -559,6 +716,11 @@ class ResourceManager:
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=config.get('processing.max_workers', 4)
         )
+    
+    def __del__(self):
+        """Cleanup resources"""
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
     
     @contextmanager
     def acquire_worker(self, task_name: str):
@@ -616,13 +778,23 @@ class ResourceManager:
     
     def check_memory_available(self, estimated_size: int) -> bool:
         """Check if enough memory is available"""
-        try:
-            import psutil
-            available = psutil.virtual_memory().available
-            return available > estimated_size + self._memory_limit
-        except ImportError:
-            # Fallback if psutil not available
-            return True
+        if PSUTIL_AVAILABLE:
+            try:
+                import psutil
+                available = psutil.virtual_memory().available
+                return available > estimated_size + self._memory_limit
+            except Exception as e:
+                self._logger.warning(f"Memory check failed: {e}")
+                return True
+        else:
+            # Conservative estimate if psutil not available
+            try:
+                import resource
+                soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+                # Assume we can use 50% of available memory
+                return soft == resource.RLIM_INFINITY or estimated_size < soft * 0.5
+            except:
+                return True
     
     def get_active_tasks(self) -> List[str]:
         """Get list of active tasks"""
@@ -631,9 +803,10 @@ class ResourceManager:
     
     def shutdown(self):
         """Shutdown the executor"""
-        self._executor.shutdown(wait=True)
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=True)
 
-# --- 8. Enhanced Data Validation with Auto-Correction ---
+# --- 11. Data Validation ---
 class ValidationResult:
     """Result of validation with detailed information"""
     
@@ -679,6 +852,7 @@ class DataValidator:
         self._logger = LoggerFactory.get_logger('DataValidator')
         self.enable_auto_correction = config.get('analysis.enable_auto_correction', True)
     
+    @error_boundary()
     def validate_and_correct(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Validate and auto-correct dataframe"""
         result = self.validate_dataframe(df, context)
@@ -870,7 +1044,7 @@ class DataValidator:
         
         return result
 
-# --- 9. Advanced Pattern Matching System ---
+# --- 12. Pattern Matching System ---
 class PatternMatcher:
     """Advanced pattern matching for financial metrics"""
     
@@ -987,6 +1161,11 @@ class PatternMatcher:
                 re.compile(r'\bpat\b', re.IGNORECASE),
                 re.compile(r'\bprofit\s+for\s+the\s+(?:year|period)\b', re.IGNORECASE),
             ],
+            'interest_expense': [
+                re.compile(r'\binterest\s+expense\b', re.IGNORECASE),
+                re.compile(r'\bfinance\s+cost\b', re.IGNORECASE),
+                re.compile(r'\binterest\s+cost\b', re.IGNORECASE),
+            ],
         }
     
     def find_matches(self, text: str, metric_type: str) -> List[Tuple[str, float]]:
@@ -1034,33 +1213,7 @@ class PatternMatcher:
         
         return dict(classifications)
 
-# --- 10. Simplified State Management ---
-class SimpleState:
-    """Simple state wrapper for session state"""
-    
-    @staticmethod
-    def get(key: str, default: Any = None) -> Any:
-        """Get value from session state"""
-        return st.session_state.get(key, default)
-    
-    @staticmethod
-    def set(key: str, value: Any):
-        """Set value in session state"""
-        st.session_state[key] = value
-    
-    @staticmethod
-    def update(updates: Dict[str, Any]):
-        """Batch update session state"""
-        for key, value in updates.items():
-            st.session_state[key] = value
-    
-    @staticmethod
-    def delete(key: str):
-        """Delete key from session state"""
-        if key in st.session_state:
-            del st.session_state[key]
-
-# --- 11. Base Components with Dependency Injection ---
+# --- 13. Base Component Class ---
 class Component(ABC):
     """Base component with lifecycle management"""
     
@@ -1093,7 +1246,7 @@ class Component(ABC):
         """Actual cleanup logic"""
         pass
 
-# --- 12. Enhanced Security Module ---
+# --- 14. Security Module ---
 class SecurityModule(Component):
     """Enhanced security with comprehensive validation"""
     
@@ -1112,6 +1265,7 @@ class SecurityModule(Component):
             'table': ['border', 'cellpadding', 'cellspacing'],
         }
     
+    @error_boundary()
     def sanitize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Deep sanitization of dataframe content"""
         sanitized = df.copy()
@@ -1254,7 +1408,7 @@ class SecurityModule(Component):
         self._rate_limiter[key].append(now)
         return True
 
-# --- 13. Enhanced Data Processing Pipeline with Batch Support ---
+# --- 15. Data Processing Pipeline ---
 class DataProcessor(Component):
     """Advanced data processing with pipeline architecture and batch support"""
     
@@ -1269,6 +1423,11 @@ class DataProcessor(Component):
         """Initialize processor"""
         self.resource_manager = ResourceManager(self.config)
         self._setup_pipeline()
+    
+    def _do_cleanup(self):
+        """Cleanup processor resources"""
+        if self.resource_manager:
+            self.resource_manager.shutdown()
     
     def _setup_pipeline(self):
         """Setup processing pipeline"""
@@ -1287,6 +1446,7 @@ class DataProcessor(Component):
             validator.validate_financial_data,
         ]
     
+    @error_boundary()
     def process(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Process dataframe through pipeline"""
         with performance_monitor.measure(f"process_{context}"):
@@ -1434,7 +1594,7 @@ class DataProcessor(Component):
         
         return df_clean
 
-# --- 14. Enhanced Financial Analysis Engine ---
+# --- 16. Financial Analysis Engine ---
 class FinancialAnalysisEngine(Component):
     """Core financial analysis engine with advanced features"""
     
@@ -1448,6 +1608,7 @@ class FinancialAnalysisEngine(Component):
         # Load any required models or data
         pass
     
+    @error_boundary({})
     def analyze_financial_statements(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Comprehensive financial statement analysis"""
         with performance_monitor.measure("analyze_financial_statements"):
@@ -1575,43 +1736,74 @@ class FinancialAnalysisEngine(Component):
         return metrics
     
     def _calculate_ratios(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-        """Calculate financial ratios with error handling"""
+        """Calculate financial ratios with proper error handling"""
         ratios = {}
         
         # Extract key metrics using pattern matching
         metrics = self._extract_key_metrics(df)
         
-        # Helper function to check if value exists and ensure it's 1-dimensional
-        def get_clean_metric(metric):
-            if metric is None:
+        # Initialize all variables
+        metric_values = {}
+        metric_keys = [
+            'current_assets', 'current_liabilities', 'total_assets', 'total_liabilities',
+            'total_equity', 'inventory', 'cash', 'net_income', 'revenue',
+            'cost_of_goods_sold', 'ebit', 'interest_expense', 'receivables'
+        ]
+        
+        # Get all metrics first
+        for metric_key in metric_keys:
+            metric_value = self._get_metric_value(df, metrics, metric_key)
+            if metric_value is not None:
+                # Ensure it's a Series
+                if isinstance(metric_value, pd.DataFrame):
+                    metric_value = metric_value.iloc[0]
+                metric_values[metric_key] = metric_value
+            else:
+                metric_values[metric_key] = None
+        
+        # Helper function with null checking
+        def safe_divide(numerator_key, denominator_key, multiplier=1):
+            """Safely divide two metrics"""
+            numerator = metric_values.get(numerator_key)
+            denominator = metric_values.get(denominator_key)
+            
+            if numerator is None or denominator is None:
                 return None
-            if isinstance(metric, pd.DataFrame):
-                # If DataFrame, take first row
-                metric = metric.iloc[0]
-            if isinstance(metric, pd.Series) and metric.empty:
+            
+            try:
+                # Handle both Series and scalar values
+                if hasattr(denominator, 'replace'):
+                    safe_denom = denominator.replace(0, np.nan)
+                else:
+                    safe_denom = denominator if denominator != 0 else np.nan
+                
+                result = (numerator / safe_denom) * multiplier
+                return result
+            except Exception as e:
+                self._logger.warning(f"Division error: {e}")
                 return None
-            return metric
         
         # Liquidity Ratios
         try:
             liquidity_data = {}
             
             # Current Ratio
-            current_assets = get_clean_metric(self._get_metric_value(df, metrics, 'current_assets'))
-            current_liabilities = get_clean_metric(self._get_metric_value(df, metrics, 'current_liabilities'))
-            
-            if current_assets is not None and current_liabilities is not None:
-                liquidity_data['Current Ratio'] = current_assets / current_liabilities.replace(0, np.nan)
+            current_ratio = safe_divide('current_assets', 'current_liabilities')
+            if current_ratio is not None:
+                liquidity_data['Current Ratio'] = current_ratio
             
             # Quick Ratio
-            inventory = get_clean_metric(self._get_metric_value(df, metrics, 'inventory'))
-            if current_assets is not None and inventory is not None and current_liabilities is not None:
-                liquidity_data['Quick Ratio'] = (current_assets - inventory) / current_liabilities.replace(0, np.nan)
+            if metric_values['current_assets'] is not None and metric_values['inventory'] is not None:
+                quick_assets = metric_values['current_assets'] - metric_values['inventory']
+                quick_ratio = safe_divide(None, 'current_liabilities')
+                if metric_values['current_liabilities'] is not None:
+                    quick_ratio = quick_assets / metric_values['current_liabilities'].replace(0, np.nan)
+                    liquidity_data['Quick Ratio'] = quick_ratio
             
             # Cash Ratio
-            cash = get_clean_metric(self._get_metric_value(df, metrics, 'cash'))
-            if cash is not None and current_liabilities is not None:
-                liquidity_data['Cash Ratio'] = cash / current_liabilities.replace(0, np.nan)
+            cash_ratio = safe_divide('cash', 'current_liabilities')
+            if cash_ratio is not None:
+                liquidity_data['Cash Ratio'] = cash_ratio
             
             if liquidity_data:
                 liquidity_df = pd.DataFrame(liquidity_data)
@@ -1625,33 +1817,31 @@ class FinancialAnalysisEngine(Component):
             profitability_data = {}
             
             # Net Profit Margin
-            net_income = get_clean_metric(self._get_metric_value(df, metrics, 'net_income'))
-            revenue = get_clean_metric(self._get_metric_value(df, metrics, 'revenue'))
-            
-            if net_income is not None and revenue is not None:
-                profitability_data['Net Profit Margin %'] = (net_income / revenue.replace(0, np.nan)) * 100
+            npm = safe_divide('net_income', 'revenue', 100)
+            if npm is not None:
+                profitability_data['Net Profit Margin %'] = npm
             
             # Gross Profit Margin
-            cogs = get_clean_metric(self._get_metric_value(df, metrics, 'cost_of_goods_sold'))
-            if revenue is not None and cogs is not None:
-                gross_profit = revenue - cogs
-                profitability_data['Gross Profit Margin %'] = (gross_profit / revenue.replace(0, np.nan)) * 100
+            if metric_values['revenue'] is not None and metric_values['cost_of_goods_sold'] is not None:
+                gross_profit = metric_values['revenue'] - metric_values['cost_of_goods_sold']
+                gpm = (gross_profit / metric_values['revenue'].replace(0, np.nan)) * 100
+                profitability_data['Gross Profit Margin %'] = gpm
             
             # ROA
-            total_assets = get_clean_metric(self._get_metric_value(df, metrics, 'total_assets'))
-            if net_income is not None and total_assets is not None:
-                profitability_data['Return on Assets %'] = (net_income / total_assets.replace(0, np.nan)) * 100
+            roa = safe_divide('net_income', 'total_assets', 100)
+            if roa is not None:
+                profitability_data['Return on Assets %'] = roa
             
             # ROE
-            total_equity = get_clean_metric(self._get_metric_value(df, metrics, 'total_equity'))
-            if net_income is not None and total_equity is not None:
-                profitability_data['Return on Equity %'] = (net_income / total_equity.replace(0, np.nan)) * 100
+            roe = safe_divide('net_income', 'total_equity', 100)
+            if roe is not None:
+                profitability_data['Return on Equity %'] = roe
             
             # ROCE
-            ebit = get_clean_metric(self._get_metric_value(df, metrics, 'ebit'))
-            if ebit is not None and total_assets is not None and current_liabilities is not None:
-                capital_employed = total_assets - current_liabilities
-                profitability_data['ROCE %'] = (ebit / capital_employed.replace(0, np.nan)) * 100
+            if metric_values['ebit'] is not None and metric_values['total_assets'] is not None and metric_values['current_liabilities'] is not None:
+                capital_employed = metric_values['total_assets'] - metric_values['current_liabilities']
+                roce = (metric_values['ebit'] / capital_employed.replace(0, np.nan)) * 100
+                profitability_data['ROCE %'] = roce
             
             if profitability_data:
                 profitability_df = pd.DataFrame(profitability_data)
@@ -1665,18 +1855,19 @@ class FinancialAnalysisEngine(Component):
             leverage_data = {}
             
             # Debt to Equity
-            total_liabilities = get_clean_metric(self._get_metric_value(df, metrics, 'total_liabilities'))
-            if total_liabilities is not None and total_equity is not None:
-                leverage_data['Debt to Equity'] = total_liabilities / total_equity.replace(0, np.nan)
+            de_ratio = safe_divide('total_liabilities', 'total_equity')
+            if de_ratio is not None:
+                leverage_data['Debt to Equity'] = de_ratio
             
             # Debt Ratio
-            if total_liabilities is not None and total_assets is not None:
-                leverage_data['Debt Ratio'] = total_liabilities / total_assets.replace(0, np.nan)
+            debt_ratio = safe_divide('total_liabilities', 'total_assets')
+            if debt_ratio is not None:
+                leverage_data['Debt Ratio'] = debt_ratio
             
             # Interest Coverage Ratio
-            interest_expense = get_clean_metric(self._get_metric_value(df, metrics, 'interest_expense'))
-            if ebit is not None and interest_expense is not None:
-                leverage_data['Interest Coverage'] = ebit / interest_expense.replace(0, np.nan)
+            icr = safe_divide('ebit', 'interest_expense')
+            if icr is not None:
+                leverage_data['Interest Coverage'] = icr
             
             if leverage_data:
                 leverage_df = pd.DataFrame(leverage_data)
@@ -1690,18 +1881,20 @@ class FinancialAnalysisEngine(Component):
             efficiency_data = {}
             
             # Asset Turnover
-            if revenue is not None and total_assets is not None:
-                efficiency_data['Asset Turnover'] = revenue / total_assets.replace(0, np.nan)
+            asset_turnover = safe_divide('revenue', 'total_assets')
+            if asset_turnover is not None:
+                efficiency_data['Asset Turnover'] = asset_turnover
             
             # Inventory Turnover
-            if cogs is not None and inventory is not None:
-                efficiency_data['Inventory Turnover'] = cogs / inventory.replace(0, np.nan)
+            inv_turnover = safe_divide('cost_of_goods_sold', 'inventory')
+            if inv_turnover is not None:
+                efficiency_data['Inventory Turnover'] = inv_turnover
             
             # Receivables Turnover
-            receivables = get_clean_metric(self._get_metric_value(df, metrics, 'receivables'))
-            if revenue is not None and receivables is not None:
-                efficiency_data['Receivables Turnover'] = revenue / receivables.replace(0, np.nan)
-                efficiency_data['Days Sales Outstanding'] = 365 / (revenue / receivables.replace(0, np.nan))
+            rec_turnover = safe_divide('revenue', 'receivables')
+            if rec_turnover is not None:
+                efficiency_data['Receivables Turnover'] = rec_turnover
+                efficiency_data['Days Sales Outstanding'] = 365 / rec_turnover.replace(0, np.nan)
             
             if efficiency_data:
                 efficiency_df = pd.DataFrame(efficiency_data)
@@ -1998,7 +2191,8 @@ class FinancialAnalysisEngine(Component):
         
         return insights
 
-# --- 15. Enhanced AI Mapping System with Confidence Levels ---
+# Continue in next message due to length...
+# --- 17. AI Mapping System ---
 class AIMapper(Component):
     """AI-powered mapping with fallback mechanisms and confidence levels"""
     
@@ -2018,6 +2212,7 @@ class AIMapper(Component):
             # Only try to load if available
             if SENTENCE_TRANSFORMER_AVAILABLE:
                 model_name = self.config.get('ai.model_name', 'all-MiniLM-L6-v2')
+                from sentence_transformers import SentenceTransformer
                 self.model = SentenceTransformer(model_name)
                 self._logger.info(f"Loaded AI model: {model_name}")
                 
@@ -2088,6 +2283,7 @@ class AIMapper(Component):
             self._logger.error(f"Error computing embedding: {e}")
             return None
     
+    @error_boundary({})
     def map_metrics_with_confidence_levels(self, source_metrics: List[str], 
                                          target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
         """Enhanced mapping with multiple confidence levels"""
@@ -2255,7 +2451,7 @@ class AIMapper(Component):
             'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
 
-# --- 16. Fuzzy Mapping Fallback ---
+# --- 18. Fuzzy Mapping Fallback ---
 class FuzzyMapper(Component):
     """Fuzzy string matching for metric mapping"""
     
@@ -2323,10 +2519,7 @@ class FuzzyMapper(Component):
             'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
 
-# --- Continue in next message due to length limit ---
-# --- Continuing the enhanced code ---
-
-# --- 17. Enhanced Penman-Nissim Analyzer ---
+# --- 19. Penman-Nissim Analyzer ---
 class EnhancedPenmanNissimAnalyzer:
     """Enhanced Penman-Nissim analyzer with flexible initialization"""
     
@@ -2340,36 +2533,40 @@ class EnhancedPenmanNissimAnalyzer:
     
     def _initialize_core_analyzer(self):
         """Initialize core analyzer with proper error handling"""
-        if CORE_COMPONENTS_AVAILABLE:
+        if CORE_COMPONENTS_AVAILABLE and CorePenmanNissim is not None:
             try:
-                # Try different initialization patterns
-                try:
-                    # First try with both parameters
+                # Use inspect to check constructor signature
+                sig = inspect.signature(CorePenmanNissim.__init__)
+                params = list(sig.parameters.keys())[1:]  # Skip 'self'
+                
+                if len(params) >= 2:
+                    # Expects both df and mappings
                     self.core_analyzer = CorePenmanNissim(self.df, self.mappings)
                     self.logger.info("Initialized CorePenmanNissim with df and mappings")
-                except TypeError:
-                    try:
-                        # Try with just df
-                        self.core_analyzer = CorePenmanNissim(self.df)
-                        if hasattr(self.core_analyzer, 'set_mappings'):
-                            self.core_analyzer.set_mappings(self.mappings)
-                        elif hasattr(self.core_analyzer, 'mappings'):
-                            self.core_analyzer.mappings = self.mappings
-                        self.logger.info("Initialized CorePenmanNissim with df only")
-                    except TypeError:
-                        # Try with no parameters
-                        self.core_analyzer = CorePenmanNissim()
-                        if hasattr(self.core_analyzer, 'df'):
-                            self.core_analyzer.df = self.df
-                        if hasattr(self.core_analyzer, 'mappings'):
-                            self.core_analyzer.mappings = self.mappings
-                        self.logger.info("Initialized CorePenmanNissim with no parameters")
+                elif len(params) == 1:
+                    # Only expects df
+                    self.core_analyzer = CorePenmanNissim(self.df)
+                    if hasattr(self.core_analyzer, 'set_mappings'):
+                        self.core_analyzer.set_mappings(self.mappings)
+                    elif hasattr(self.core_analyzer, 'mappings'):
+                        self.core_analyzer.mappings = self.mappings
+                    self.logger.info("Initialized CorePenmanNissim with df only")
+                else:
+                    # No parameters expected
+                    self.core_analyzer = CorePenmanNissim()
+                    if hasattr(self.core_analyzer, 'df'):
+                        self.core_analyzer.df = self.df
+                    if hasattr(self.core_analyzer, 'mappings'):
+                        self.core_analyzer.mappings = self.mappings
+                    self.logger.info("Initialized CorePenmanNissim with no parameters")
+                        
             except Exception as e:
                 self.logger.warning(f"Could not initialize CorePenmanNissim: {e}")
                 self.core_analyzer = None
         else:
             self.core_analyzer = None
     
+    @error_boundary({'error': 'Penman-Nissim analysis failed'})
     def calculate_all(self):
         """Calculate all Penman-Nissim metrics"""
         if self.core_analyzer and hasattr(self.core_analyzer, 'calculate_all'):
@@ -2551,7 +2748,7 @@ class EnhancedPenmanNissimAnalyzer:
         
         return drivers
 
-# --- 18. Manual Mapping Interface Component ---
+# --- 20. Manual Mapping Interface ---
 class ManualMappingInterface:
     """Manual mapping interface for metric mapping"""
     
@@ -2634,7 +2831,7 @@ class ManualMappingInterface:
                             f"{target}:",
                             ['(Not mapped)'] + self.source_metrics,
                             index=default_idx,
-                            key=f"map_{statement_type}_{target}",
+                            key=f"map_{statement_type}_{target}_{i}_{j}",  # Unique key
                             help=f"Common names: {', '.join(suggestions[:3])}"
                         )
                         
@@ -2649,17 +2846,17 @@ class ManualMappingInterface:
                 custom_source = st.selectbox(
                     "Source Metric:",
                     [m for m in self.source_metrics if m not in mappings],
-                    key="custom_source"
+                    key="custom_source_mapping"
                 )
             
             with col2:
                 custom_target = st.selectbox(
                     "Target Metric:",
                     self.target_metrics,
-                    key="custom_target"
+                    key="custom_target_mapping"
                 )
             
-            if st.button("Add Mapping", key="add_custom_mapping"):
+            if st.button("Add Mapping", key="add_custom_mapping_btn"):
                 if custom_source and custom_target:
                     mappings[custom_source] = custom_target
                     st.success(f"Added: {custom_source} → {custom_target}")
@@ -2675,7 +2872,7 @@ class ManualMappingInterface:
         
         return mappings
 
-# --- 19. Machine Learning Forecasting Module ---
+# --- 21. Machine Learning Forecasting Module ---
 class MLForecaster:
     """Machine learning based financial forecasting"""
     
@@ -2689,6 +2886,7 @@ class MLForecaster:
             'auto': self._train_auto
         }
     
+    @error_boundary({'error': 'Forecasting failed'})
     def forecast_metrics(self, df: pd.DataFrame, periods: int = 3, 
                         model_type: str = 'auto', metrics: Optional[List[str]] = None) -> Dict[str, Any]:
         """Forecast financial metrics using ML"""
@@ -2872,7 +3070,7 @@ class MLForecaster:
         
         return intervals
 
-# --- 20. Natural Language Query Interface ---
+# --- 22. Natural Language Query Processor ---
 class NLQueryProcessor:
     """Process natural language queries about financial data"""
     
@@ -2887,6 +3085,7 @@ class NLQueryProcessor:
             'summary': ['summary', 'overview', 'key', 'main', 'important']
         }
     
+    @error_boundary({'type': 'error', 'message': 'Query processing failed'})
     def process_query(self, query: str, data: pd.DataFrame, 
                      analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Process natural language query and return results"""
@@ -2984,7 +3183,7 @@ class NLQueryProcessor:
         # Implementation for comparison queries
         return {
             'type': 'comparison',
-            'message': 'Comparison analysis not yet implemented'
+            'message': 'Comparison analysis feature coming soon'
         }
     
     def _handle_ratio_query(self, entities: Dict, data: pd.DataFrame, 
@@ -3041,7 +3240,7 @@ class NLQueryProcessor:
             ]
         }
 
-# --- 21. Collaboration Manager ---
+# --- 23. Collaboration Manager ---
 class CollaborationManager:
     """Manage collaborative analysis sessions"""
     
@@ -3163,7 +3362,7 @@ class CollaborationManager:
             
             return None
 
-# --- 22. Tutorial System ---
+# --- 24. Tutorial System ---
 class TutorialSystem:
     """Interactive tutorial system for new users"""
     
@@ -3266,7 +3465,7 @@ class TutorialSystem:
         SimpleState.set('tutorial_completed', True)
         st.success("Tutorial completed! You're ready to use the platform.")
 
-# --- 23. Export Manager ---
+# --- 25. Export Manager ---
 class ExportManager:
     """Handle various export formats for analysis results"""
     
@@ -3274,38 +3473,51 @@ class ExportManager:
         self.config = config
         self.logger = LoggerFactory.get_logger('ExportManager')
     
+    @error_boundary(b"Export failed")
     def export_to_excel(self, analysis: Dict[str, Any], filename: str = "analysis.xlsx") -> bytes:
         """Export analysis to Excel format"""
         output = io.BytesIO()
         
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            # Summary sheet
-            summary_df = pd.DataFrame([analysis['summary']])
-            summary_df.to_excel(writer, sheet_name='Summary', index=False)
-            
-            # Ratios sheets
-            if 'ratios' in analysis:
-                for category, ratio_df in analysis['ratios'].items():
-                    if isinstance(ratio_df, pd.DataFrame):
-                        ratio_df.to_excel(writer, sheet_name=f'Ratios_{category}')
-            
-            # Trends sheet
-            if 'trends' in analysis:
-                trends_data = []
-                for metric, trend in analysis['trends'].items():
-                    if isinstance(trend, dict):
-                        trend_row = {'Metric': metric}
-                        trend_row.update(trend)
-                        trends_data.append(trend_row)
+        try:
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # Summary sheet
+                if 'summary' in analysis:
+                    summary_df = pd.DataFrame([analysis['summary']])
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
                 
-                if trends_data:
-                    trends_df = pd.DataFrame(trends_data)
-                    trends_df.to_excel(writer, sheet_name='Trends', index=False)
-            
-            # Insights sheet
-            if 'insights' in analysis:
-                insights_df = pd.DataFrame({'Insights': analysis['insights']})
-                insights_df.to_excel(writer, sheet_name='Insights', index=False)
+                # Ratios sheets
+                if 'ratios' in analysis:
+                    for category, ratio_df in analysis['ratios'].items():
+                        if isinstance(ratio_df, pd.DataFrame):
+                            # Ensure sheet name is valid (Excel limit is 31 chars)
+                            sheet_name = f'Ratios_{category}'[:31]
+                            ratio_df.to_excel(writer, sheet_name=sheet_name)
+                
+                # Trends sheet
+                if 'trends' in analysis:
+                    trends_data = []
+                    for metric, trend in analysis['trends'].items():
+                        if isinstance(trend, dict):
+                            trend_row = {'Metric': metric}
+                            trend_row.update(trend)
+                            trends_data.append(trend_row)
+                    
+                    if trends_data:
+                        trends_df = pd.DataFrame(trends_data)
+                        trends_df.to_excel(writer, sheet_name='Trends', index=False)
+                
+                # Insights sheet
+                if 'insights' in analysis:
+                    insights_df = pd.DataFrame({'Insights': analysis['insights']})
+                    insights_df.to_excel(writer, sheet_name='Insights', index=False)
+                
+                # Filtered data if present
+                if 'filtered_data' in analysis:
+                    analysis['filtered_data'].to_excel(writer, sheet_name='Data')
+        
+        except Exception as e:
+            self.logger.error(f"Excel export error: {e}")
+            raise
         
         output.seek(0)
         return output.read()
@@ -3315,32 +3527,40 @@ class ExportManager:
         # This would require libraries like reportlab or weasyprint
         # For now, return a placeholder
         self.logger.info("PDF export requested - placeholder implementation")
-        return b"PDF export not yet implemented"
+        return b"PDF export not yet implemented. Please use Excel or Markdown export."
     
     def export_to_powerpoint(self, analysis: Dict[str, Any], template: str = 'default') -> bytes:
         """Export analysis to PowerPoint format (placeholder - requires python-pptx)"""
         # This would require python-pptx library
         # For now, return a placeholder
         self.logger.info("PowerPoint export requested - placeholder implementation")
-        return b"PowerPoint export not yet implemented"
+        return b"PowerPoint export not yet implemented. Please use Excel or Markdown export."
     
     def export_to_markdown(self, analysis: Dict[str, Any]) -> str:
         """Export analysis to Markdown format"""
         lines = [
             f"# Financial Analysis Report",
             f"\n**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\n**Company:** {analysis.get('company_name', 'Financial Analysis')}",
             "\n---\n"
         ]
         
         # Summary section
-        lines.extend([
-            "## Executive Summary\n",
-            f"- **Total Metrics Analyzed:** {analysis['summary']['total_metrics']}",
-            f"- **Period Covered:** {analysis['summary']['year_range']}",
-            f"- **Data Quality Score:** {analysis['quality_score']:.1f}%",
-            f"- **Data Completeness:** {analysis['summary']['completeness']:.1f}%",
-            "\n"
-        ])
+        if 'summary' in analysis:
+            summary = analysis['summary']
+            lines.extend([
+                "## Executive Summary\n",
+                f"- **Total Metrics Analyzed:** {summary.get('total_metrics', 'N/A')}",
+                f"- **Period Covered:** {summary.get('year_range', 'N/A')}",
+            ])
+            
+            if 'quality_score' in analysis:
+                lines.append(f"- **Data Quality Score:** {analysis['quality_score']:.1f}%")
+            
+            if 'completeness' in summary:
+                lines.append(f"- **Data Completeness:** {summary['completeness']:.1f}%")
+            
+            lines.append("\n")
         
         # Key Insights
         if 'insights' in analysis and analysis['insights']:
@@ -3375,7 +3595,7 @@ class ExportManager:
                     significant_trends.append({
                         'Metric': metric,
                         'Direction': trend['direction'],
-                        'CAGR %': f"{trend['cagr']:.1f}",
+                        'CAGR %': f"{trend['cagr']:.1f}" if trend['cagr'] is not None else 'N/A',
                         'R-squared': f"{trend.get('r_squared', 0):.3f}"
                     })
             
@@ -3386,7 +3606,7 @@ class ExportManager:
         
         return "\n".join(lines)
 
-# --- 24. UI Components Factory ---
+# --- 26. UI Components Factory ---
 class UIComponentFactory:
     """Factory for creating UI components with consistent styling"""
     
@@ -3471,29 +3691,14 @@ class UIComponentFactory:
             for _ in range(3):
                 st.container().markdown(
                     """
-                    <div style="background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-                    background-size: 200% 100%; animation: loading 1.5s infinite; height: 20px; 
-                    margin: 10px 0; border-radius: 4px;"></div>
+                    <div class="skeleton"></div>
                     """,
                     unsafe_allow_html=True
                 )
-            
-            # CSS for animation
-            st.markdown(
-                """
-                <style>
-                @keyframes loading {
-                    0% { background-position: 200% 0; }
-                    100% { background-position: -200% 0; }
-                }
-                </style>
-                """,
-                unsafe_allow_html=True
-            )
         else:
             render_func()
 
-# --- 25. Sample Data Generator ---
+# --- 27. Sample Data Generator ---
 class SampleDataGenerator:
     """Generate sample financial data for demonstration"""
     
@@ -3647,7 +3852,8 @@ class SampleDataGenerator:
         df = pd.DataFrame(data, index=list(data.keys()), columns=years)
         return df
 
-# --- 26. Main Application Class ---
+# Continue in next message with the main application class...
+# --- 28. Main Application Class ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture and all integrations"""
     
@@ -3671,6 +3877,7 @@ class FinancialAnalyticsPlatform:
             st.session_state.tutorial_step = 0
             st.session_state.collaboration_session = None
             st.session_state.query_history = []
+            st.session_state.ml_forecast_results = None
             
         # Initialize configuration with session state overrides
         self.config = Configuration(st.session_state.get('config_overrides', {}))
@@ -3715,12 +3922,13 @@ class FinancialAnalyticsPlatform:
     # State helper methods
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get value from session state"""
-        return st.session_state.get(key, default)
+        return SimpleState.get(key, default)
     
     def set_state(self, key: str, value: Any):
         """Set value in session state"""
-        st.session_state[key] = value
+        SimpleState.set(key, value)
     
+    @error_boundary()
     def run(self):
         """Main application entry point"""
         try:
@@ -4284,6 +4492,7 @@ class FinancialAnalyticsPlatform:
         with tabs[7]:
             self._render_ml_insights_tab(data)
     
+    @error_boundary()
     def _render_overview_tab(self, data: pd.DataFrame):
         """Render overview tab with key metrics and insights"""
         st.header("Financial Overview")
@@ -4394,6 +4603,12 @@ class FinancialAnalyticsPlatform:
             years = list(values.keys())
             amounts = list(values.values())
             
+            # Get formatter based on preference
+            if self.get_state('number_format_value') == 'Indian':
+                formatter = format_indian_number
+            else:
+                formatter = format_international_number
+            
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=years,
@@ -4401,7 +4616,8 @@ class FinancialAnalyticsPlatform:
                 mode='lines+markers',
                 name=metric_data.get('name', 'Value'),
                 line=dict(width=3),
-                marker=dict(size=8)
+                marker=dict(size=8),
+                hovertemplate='%{x}: %{y:,.0f}<extra></extra>'
             ))
             
             # Add trend line
@@ -4428,175 +4644,7 @@ class FinancialAnalyticsPlatform:
             
             st.plotly_chart(fig, use_container_width=True)
     
-    def _render_ml_insights_tab(self, data: pd.DataFrame):
-        """Render ML insights tab with forecasting and advanced analytics"""
-        st.header("🤖 Machine Learning Insights")
-        
-        if not self.config.get('app.enable_ml_features', True):
-            st.warning("ML features are disabled. Enable them in settings to use this feature.")
-            return
-        
-        # Forecasting section
-        st.subheader("📈 Financial Forecasting")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            forecast_periods = st.number_input(
-                "Forecast Periods",
-                min_value=1,
-                max_value=10,
-                value=3,
-                help="Number of periods to forecast"
-            )
-        
-        with col2:
-            model_type = st.selectbox(
-                "Model Type",
-                ["auto", "linear", "polynomial", "exponential"],
-                help="Forecasting model to use"
-            )
-        
-        with col3:
-            if st.button("Generate Forecast", type="primary"):
-                with st.spinner("Generating forecasts..."):
-                    forecast_results = self.ml_forecaster.forecast_metrics(
-                        data,
-                        periods=forecast_periods,
-                        model_type=model_type
-                    )
-                    
-                    self.set_state('ml_forecast_results', forecast_results)
-        
-        # Display forecast results
-        forecast_results = self.get_state('ml_forecast_results')
-        
-        if forecast_results and 'forecasts' in forecast_results:
-            st.subheader("Forecast Results")
-            
-            for metric, forecast in forecast_results['forecasts'].items():
-                with st.expander(f"📊 {metric}", expanded=True):
-                    # Create forecast visualization
-                    fig = go.Figure()
-                    
-                    # Historical data
-                    historical_values = data.loc[metric].dropna()
-                    
-                    # Add historical line
-                    fig.add_trace(go.Scatter(
-                        x=list(historical_values.index),
-                        y=list(historical_values.values),
-                        mode='lines+markers',
-                        name='Historical',
-                        line=dict(width=3)
-                    ))
-                    
-                    # Add forecast line
-                    forecast_x = forecast['periods']
-                    forecast_y = forecast['values']
-                    
-                    # Connect to last historical point
-                    forecast_x = [historical_values.index[-1]] + forecast_x
-                    forecast_y = [historical_values.iloc[-1]] + forecast_y
-                    
-                    fig.add_trace(go.Scatter(
-                        x=forecast_x,
-                        y=forecast_y,
-                        mode='lines+markers',
-                        name='Forecast',
-                        line=dict(dash='dash', width=3)
-                    ))
-                    
-                    # Add confidence intervals if available
-                    if 'confidence_intervals' in forecast_results:
-                        ci = forecast_results['confidence_intervals'].get(metric, {})
-                        if 'lower' in ci and 'upper' in ci:
-                            ci_x = forecast['periods']
-                            
-                            fig.add_trace(go.Scatter(
-                                x=ci_x + ci_x[::-1],
-                                y=ci['upper'] + ci['lower'][::-1],
-                                fill='toself',
-                                fillcolor='rgba(0,100,200,0.2)',
-                                line=dict(color='rgba(255,255,255,0)'),
-                                name='95% CI',
-                                showlegend=True
-                            ))
-                    
-                    fig.update_layout(
-                        title=f"{metric} Forecast",
-                        xaxis_title="Period",
-                        yaxis_title="Value",
-                        hovermode='x unified',
-                        height=400
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # Show accuracy metrics
-                    if metric in forecast_results.get('accuracy_metrics', {}):
-                        accuracy = forecast_results['accuracy_metrics'][metric]
-                        
-                        col1, col2, col3 = st.columns(3)
-                        
-                        with col1:
-                            st.metric("RMSE", f"{accuracy.get('rmse', 0):.2f}")
-                        
-                        with col2:
-                            if accuracy.get('mape') is not None:
-                                st.metric("MAPE", f"{accuracy['mape']:.1f}%")
-                        
-                        with col3:
-                            st.metric("MAE", f"{accuracy.get('mae', 0):.2f}")
-        
-        # Pattern Recognition
-        st.subheader("🔍 Pattern Recognition")
-        
-        analysis = self.components['analyzer'].analyze_financial_statements(data)
-        trends = analysis.get('trends', {})
-        
-        # Identify significant patterns
-        patterns = []
-        
-        for metric, trend in trends.items():
-            if isinstance(trend, dict):
-                # Strong growth pattern
-                if trend.get('cagr', 0) > 15:
-                    patterns.append({
-                        'type': 'Strong Growth',
-                        'metric': metric,
-                        'value': f"{trend['cagr']:.1f}% CAGR",
-                        'confidence': trend.get('r_squared', 0)
-                    })
-                
-                # Declining pattern
-                elif trend.get('cagr', 0) < -5:
-                    patterns.append({
-                        'type': 'Declining Trend',
-                        'metric': metric,
-                        'value': f"{trend['cagr']:.1f}% CAGR",
-                        'confidence': trend.get('r_squared', 0)
-                    })
-                
-                # High volatility pattern
-                if trend.get('volatility', 0) > 30:
-                    patterns.append({
-                        'type': 'High Volatility',
-                        'metric': metric,
-                        'value': f"{trend['volatility']:.1f}% volatility",
-                        'confidence': 0.8
-                    })
-        
-        if patterns:
-            pattern_df = pd.DataFrame(patterns)
-            st.dataframe(
-                pattern_df.style.background_gradient(subset=['confidence'], cmap='Greens'),
-                use_container_width=True
-            )
-        else:
-            st.info("No significant patterns detected in the data")
-    
-    # Continue with other render methods...
+    @error_boundary()
     def _render_ratios_tab(self, data: pd.DataFrame):
         """Render financial ratios tab with manual mapping support"""
         st.header("📈 Financial Ratio Analysis")
@@ -4644,16 +4692,19 @@ class FinancialAnalyticsPlatform:
                 self.set_state('metric_mappings', None)
             return
         
+        # Get formatter
+        if self.get_state('number_format_value') == 'Indian':
+            formatter = format_indian_number
+        else:
+            formatter = format_international_number
+        
         # Display ratios by category
         for category, ratio_df in ratios.items():
             if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
                 st.subheader(f"{category} Ratios")
                 
                 # Format based on number format preference
-                if self.get_state('number_format_value') == 'Indian':
-                    format_str = "{:,.2f}"
-                else:
-                    format_str = "{:,.2f}"
+                format_str = "{:,.2f}"
                 
                 try:
                     st.dataframe(
@@ -4704,6 +4755,7 @@ class FinancialAnalyticsPlatform:
                         
                         st.plotly_chart(fig, use_container_width=True)
     
+    @error_boundary()
     def _render_trends_tab(self, data: pd.DataFrame):
         """Render trends and analysis tab"""
         st.header("📉 Trend Analysis")
@@ -4873,6 +4925,7 @@ class FinancialAnalyticsPlatform:
                 
                 st.plotly_chart(fig_corr, use_container_width=True)
     
+    @error_boundary()
     def _render_penman_nissim_tab(self, data: pd.DataFrame):
         """Render Penman-Nissim analysis tab"""
         st.header("🎯 Penman-Nissim Analysis")
@@ -4890,87 +4943,47 @@ class FinancialAnalyticsPlatform:
                 
                 mappings = {}
                 
-                with col1:
-                    st.markdown("**Balance Sheet Items**")
-                    mappings['Total Assets'] = st.selectbox(
-                        "Total Assets", 
-                        available_metrics,
-                        key="pn_total_assets"
-                    )
-                    mappings['Total Liabilities'] = st.selectbox(
-                        "Total Liabilities",
-                        available_metrics,
-                        key="pn_total_liabilities"
-                    )
-                    mappings['Total Equity'] = st.selectbox(
-                        "Total Equity",
-                        available_metrics,
-                        key="pn_total_equity"
-                    )
-                    mappings['Current Assets'] = st.selectbox(
-                        "Current Assets",
-                        available_metrics,
-                        key="pn_current_assets"
-                    )
-                    mappings['Current Liabilities'] = st.selectbox(
-                        "Current Liabilities",
-                        available_metrics,
-                        key="pn_current_liabilities"
-                    )
+                # Define mapping fields
+                mapping_fields = {
+                    'Balance Sheet': [
+                        ('Total Assets', 'pn_total_assets'),
+                        ('Total Liabilities', 'pn_total_liabilities'),
+                        ('Total Equity', 'pn_total_equity'),
+                        ('Current Assets', 'pn_current_assets'),
+                        ('Current Liabilities', 'pn_current_liabilities'),
+                    ],
+                    'Income Statement': [
+                        ('Revenue', 'pn_revenue'),
+                        ('Operating Income/EBIT', 'pn_operating_income'),
+                        ('Net Income', 'pn_net_income'),
+                        ('Interest Expense', 'pn_interest'),
+                        ('Tax Expense', 'pn_tax'),
+                    ],
+                    'Cash Flow': [
+                        ('Operating Cash Flow', 'pn_ocf'),
+                        ('Capital Expenditure', 'pn_capex'),
+                        ('Depreciation', 'pn_depreciation'),
+                        ('Income Before Tax', 'pn_ibt'),
+                    ]
+                }
                 
-                with col2:
-                    st.markdown("**Income Statement Items**")
-                    mappings['Revenue'] = st.selectbox(
-                        "Revenue",
-                        available_metrics,
-                        key="pn_revenue"
-                    )
-                    mappings['Operating Income'] = st.selectbox(
-                        "Operating Income/EBIT",
-                        available_metrics,
-                        key="pn_operating_income"
-                    )
-                    mappings['Net Income'] = st.selectbox(
-                        "Net Income",
-                        available_metrics,
-                        key="pn_net_income"
-                    )
-                    mappings['Interest Expense'] = st.selectbox(
-                        "Interest Expense",
-                        available_metrics,
-                        key="pn_interest"
-                    )
-                    mappings['Tax Expense'] = st.selectbox(
-                        "Tax Expense",
-                        available_metrics,
-                        key="pn_tax"
-                    )
+                # Create columns for each category
+                cols = [col1, col2, col3]
                 
-                with col3:
-                    st.markdown("**Cash Flow Items**")
-                    mappings['Operating Cash Flow'] = st.selectbox(
-                        "Operating Cash Flow",
-                        available_metrics,
-                        key="pn_ocf"
-                    )
-                    mappings['Capital Expenditure'] = st.selectbox(
-                        "Capital Expenditure",
-                        available_metrics,
-                        key="pn_capex"
-                    )
-                    mappings['Depreciation'] = st.selectbox(
-                        "Depreciation",
-                        available_metrics,
-                        key="pn_depreciation"
-                    )
-                    mappings['Income Before Tax'] = st.selectbox(
-                        "Income Before Tax",
-                        available_metrics,
-                        key="pn_ibt"
-                    )
+                for i, (category, fields) in enumerate(mapping_fields.items()):
+                    with cols[i]:
+                        st.markdown(f"**{category} Items**")
+                        for field_name, field_key in fields:
+                            selected = st.selectbox(
+                                field_name,
+                                available_metrics,
+                                key=field_key
+                            )
+                            if selected:
+                                mappings[selected] = field_name
                 
                 # Remove empty mappings
-                mappings = {k: v for k, v in mappings.items() if v}
+                mappings = {k: v for k, v in mappings.items() if k}
                 
                 if st.button("Apply P-N Mappings", type="primary"):
                     if len(mappings) >= 8:
@@ -5050,10 +5063,13 @@ class FinancialAnalyticsPlatform:
                     ref_bs = results['reformulated_balance_sheet']
                     
                     # Format numbers
-                    format_func = self._get_number_formatter()
+                    if self.get_state('number_format_value') == 'Indian':
+                        formatter = format_indian_number
+                    else:
+                        formatter = format_international_number
                     
                     st.dataframe(
-                        ref_bs.style.format(format_func),
+                        ref_bs.style.format("{:,.0f}"),
                         use_container_width=True
                     )
             
@@ -5063,7 +5079,7 @@ class FinancialAnalyticsPlatform:
                     ref_is = results['reformulated_income_statement']
                     
                     st.dataframe(
-                        ref_is.style.format(self._get_number_formatter()),
+                        ref_is.style.format("{:,.0f}"),
                         use_container_width=True
                     )
             
@@ -5164,13 +5180,7 @@ class FinancialAnalyticsPlatform:
         }
         return help_texts.get(ratio, "Financial ratio")
     
-    def _get_number_formatter(self) -> str:
-        """Get number formatter based on user preference"""
-        if self.get_state('number_format_value') == 'Indian':
-            return "{:,.0f}"  # Could enhance with lakhs/crores formatting
-        else:
-            return "{:,.0f}"
-    
+    @error_boundary()
     def _render_industry_tab(self, data: pd.DataFrame):
         """Render industry comparison tab"""
         st.header("🏭 Industry Comparison")
@@ -5253,6 +5263,20 @@ class FinancialAnalyticsPlatform:
             }
         }
         
+        # Add remaining industries with default values
+        for industry in industries:
+            if industry not in industry_benchmarks:
+                industry_benchmarks[industry] = {
+                    'Current Ratio': 1.5,
+                    'Quick Ratio': 1.2,
+                    'ROE %': 15.0,
+                    'ROA %': 8.0,
+                    'Net Profit Margin %': 10.0,
+                    'Debt to Equity': 0.8,
+                    'Asset Turnover': 1.0,
+                    'Revenue Growth %': 10.0
+                }
+        
         # Get company's ratios
         company_ratios = {}
         
@@ -5266,7 +5290,10 @@ class FinancialAnalyticsPlatform:
             for category, ratio_df in analysis.get('ratios', {}).items():
                 if isinstance(ratio_df, pd.DataFrame) and comparison_year in ratio_df.columns:
                     for ratio in ratio_df.index:
-                        company_ratios[ratio] = ratio_df.loc[ratio, comparison_year]
+                        # Standardize ratio names for comparison
+                        ratio_name = ratio.replace('Return on Equity %', 'ROE %')\
+                                          .replace('Return on Assets %', 'ROA %')
+                        company_ratios[ratio_name] = ratio_df.loc[ratio, comparison_year]
             
             # Add growth metrics
             trends = analysis.get('trends', {})
@@ -5452,6 +5479,7 @@ class FinancialAnalyticsPlatform:
                 use_container_width=True
             )
     
+    @error_boundary()
     def _render_data_explorer_tab(self, data: pd.DataFrame):
         """Render data explorer tab"""
         st.header("🔍 Data Explorer")
@@ -5570,7 +5598,9 @@ class FinancialAnalyticsPlatform:
             
             with col2:
                 # Excel export
-                excel_buffer = self.export_manager.export_to_excel({'filtered_data': filtered_df})
+                # Store filtered data in analysis for export
+                analysis_with_data = {'filtered_data': filtered_df}
+                excel_buffer = self.export_manager.export_to_excel(analysis_with_data)
                 st.download_button(
                     label="Download Excel",
                     data=excel_buffer,
@@ -5659,6 +5689,7 @@ class FinancialAnalyticsPlatform:
                 use_container_width=True
             )
     
+    @error_boundary()
     def _render_reports_tab(self, data: pd.DataFrame):
         """Render reports tab"""
         st.header("📄 Financial Reports")
@@ -5799,6 +5830,193 @@ class FinancialAnalyticsPlatform:
                     st.success(f"Report scheduled: {frequency} delivery to {email}")
                     st.info("Note: Email functionality requires server configuration")
     
+    @error_boundary()
+    def _render_ml_insights_tab(self, data: pd.DataFrame):
+        """Render ML insights tab with forecasting and advanced analytics"""
+        st.header("🤖 Machine Learning Insights")
+        
+        if not self.config.get('app.enable_ml_features', True):
+            st.warning("ML features are disabled. Enable them in settings to use this feature.")
+            return
+        
+        # Forecasting section
+        st.subheader("📈 Financial Forecasting")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            forecast_periods = st.number_input(
+                "Forecast Periods",
+                min_value=1,
+                max_value=10,
+                value=3,
+                help="Number of periods to forecast"
+            )
+        
+        with col2:
+            model_type = st.selectbox(
+                "Model Type",
+                ["auto", "linear", "polynomial", "exponential"],
+                help="Forecasting model to use"
+            )
+        
+        with col3:
+            if st.button("Generate Forecast", type="primary"):
+                with st.spinner("Generating forecasts..."):
+                    forecast_results = self.ml_forecaster.forecast_metrics(
+                        data,
+                        periods=forecast_periods,
+                        model_type=model_type
+                    )
+                    
+                    self.set_state('ml_forecast_results', forecast_results)
+        
+        # Display forecast results
+        forecast_results = self.get_state('ml_forecast_results')
+        
+        if forecast_results and 'forecasts' in forecast_results:
+            st.subheader("Forecast Results")
+            
+            for metric, forecast in forecast_results['forecasts'].items():
+                with st.expander(f"📊 {metric}", expanded=True):
+                    # Create forecast visualization
+                    fig = go.Figure()
+                    
+                    # Historical data
+                    historical_values = data.loc[metric].dropna()
+                    
+                    # Add historical line
+                    fig.add_trace(go.Scatter(
+                        x=list(historical_values.index),
+                        y=list(historical_values.values),
+                        mode='lines+markers',
+                        name='Historical',
+                        line=dict(width=3)
+                    ))
+                    
+                    # Add forecast line
+                    forecast_x = forecast['periods']
+                    forecast_y = forecast['values']
+                    
+                    # Connect to last historical point
+                    forecast_x = [historical_values.index[-1]] + forecast_x
+                    forecast_y = [historical_values.iloc[-1]] + forecast_y
+                    
+                    fig.add_trace(go.Scatter(
+                        x=forecast_x,
+                        y=forecast_y,
+                        mode='lines+markers',
+                        name='Forecast',
+                        line=dict(dash='dash', width=3)
+                    ))
+                    
+                    # Add confidence intervals if available
+                    if 'confidence_intervals' in forecast_results:
+                        ci = forecast_results['confidence_intervals'].get(metric, {})
+                        if 'lower' in ci and 'upper' in ci:
+                            ci_x = forecast['periods']
+                            
+                            fig.add_trace(go.Scatter(
+                                x=ci_x + ci_x[::-1],
+                                y=ci['upper'] + ci['lower'][::-1],
+                                fill='toself',
+                                fillcolor='rgba(0,100,200,0.2)',
+                                line=dict(color='rgba(255,255,255,0)'),
+                                name='95% CI',
+                                showlegend=True
+                            ))
+                    
+                    fig.update_layout(
+                        title=f"{metric} Forecast",
+                        xaxis_title="Period",
+                        yaxis_title="Value",
+                        hovermode='x unified',
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show accuracy metrics
+                    if metric in forecast_results.get('accuracy_metrics', {}):
+                        accuracy = forecast_results['accuracy_metrics'][metric]
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            st.metric("RMSE", f"{accuracy.get('rmse', 0):.2f}")
+                        
+                        with col2:
+                            if accuracy.get('mape') is not None:
+                                st.metric("MAPE", f"{accuracy['mape']:.1f}%")
+                        
+                        with col3:
+                            st.metric("MAE", f"{accuracy.get('mae', 0):.2f}")
+        
+        # Pattern Recognition
+        st.subheader("🔍 Pattern Recognition")
+        
+        analysis = self.components['analyzer'].analyze_financial_statements(data)
+        trends = analysis.get('trends', {})
+        
+        # Identify significant patterns
+        patterns = []
+        
+        for metric, trend in trends.items():
+            if isinstance(trend, dict):
+                # Strong growth pattern
+                if trend.get('cagr', 0) > 15:
+                    patterns.append({
+                        'type': 'Strong Growth',
+                        'metric': metric,
+                        'value': f"{trend['cagr']:.1f}% CAGR",
+                        'confidence': trend.get('r_squared', 0)
+                    })
+                
+                # Declining pattern
+                elif trend.get('cagr', 0) < -5:
+                    patterns.append({
+                        'type': 'Declining Trend',
+                        'metric': metric,
+                        'value': f"{trend['cagr']:.1f}% CAGR",
+                        'confidence': trend.get('r_squared', 0)
+                    })
+                
+                # High volatility pattern
+                if trend.get('volatility', 0) > 30:
+                    patterns.append({
+                        'type': 'High Volatility',
+                        'metric': metric,
+                        'value': f"{trend['volatility']:.1f}% volatility",
+                        'confidence': 0.8
+                    })
+        
+        if patterns:
+            pattern_df = pd.DataFrame(patterns)
+            st.dataframe(
+                pattern_df.style.background_gradient(subset=['confidence'], cmap='Greens'),
+                use_container_width=True
+            )
+        else:
+            st.info("No significant patterns detected in the data")
+        
+        # Anomaly Detection Results
+        if 'anomalies' in analysis:
+            st.subheader("🚨 Anomaly Detection")
+            
+            anomalies = analysis['anomalies']
+            
+            # Create anomaly visualization
+            if anomalies['value_anomalies']:
+                st.write("**Value Anomalies Detected:**")
+                
+                anomaly_df = pd.DataFrame(anomalies['value_anomalies'])
+                fig = px.scatter(anomaly_df, x='year', y='value', color='z_score',
+                               hover_data=['metric'], 
+                               title="Detected Value Anomalies",
+                               color_continuous_scale='Reds')
+                
+                st.plotly_chart(fig, use_container_width=True)
+    
     def _render_debug_footer(self):
         """Render debug information in footer"""
         with st.expander("🐛 Debug Information"):
@@ -5837,6 +6055,7 @@ class FinancialAnalyticsPlatform:
             }
             st.json(component_status)
     
+    @error_boundary()
     def _perform_ai_mapping(self, data: pd.DataFrame):
         """Perform AI mapping for the data"""
         source_metrics = data.index.tolist()
@@ -5923,6 +6142,7 @@ class FinancialAnalyticsPlatform:
                 self.logger.error(f"AI mapping failed: {e}")
                 st.error("AI mapping failed. Please use manual mapping instead.")
     
+    @error_boundary()
     def _process_uploaded_files(self, files: List[UploadedFile]):
         """Process uploaded files with enhanced parsing"""
         try:
@@ -6381,6 +6601,7 @@ class FinancialAnalyticsPlatform:
         
         st.dataframe(example_df)
     
+    @error_boundary()
     def _load_sample_data(self, sample_name: str):
         """Load sample data"""
         try:
@@ -6459,6 +6680,7 @@ class FinancialAnalyticsPlatform:
         st.session_state.tutorial_step = 0
         st.session_state.collaboration_session = None
         st.session_state.query_history = []
+        st.session_state.ml_forecast_results = None
         
         self.logger.info("Configuration reset to defaults")
         st.success("Configuration reset successfully!")
@@ -6491,7 +6713,7 @@ class FinancialAnalyticsPlatform:
             self.logger.error(f"Error exporting logs: {e}")
             st.error(f"Error exporting logs: {str(e)}")
 
-# --- 27. Application Entry Point ---
+# --- 29. Application Entry Point ---
 def main():
     """Main application entry point"""
     try:

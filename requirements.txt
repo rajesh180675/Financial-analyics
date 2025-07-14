@@ -1,38 +1,22 @@
-# Core Dependencies
 streamlit
 pandas
 numpy
-scipy
+matplotlib
+seaborn
+yfinance
+beautifulsoup4
+requests
+lxml
+streamlit-aggrid
 plotly
-scikit-learn
-
-# Excel Processing
 xlrd
-openpyxl
-
-# Data Processing & Analysis
-bleach
+openpyxl 
+xlsxwriter
+scipy
+kaleido
+scikit-learn
 fuzzywuzzy
-python-Levenshtein==0.25.0  # Speeds up fuzzywuzzy
-
-# Optional but Recommended Dependencies
-#sentence-transformers==2.3.1  # For AI-powered metric mapping
-psutil==5.9.8  # For system resource monitoring
-beautifulsoup4==4.12.3  # For HTML parsing
-lxml==5.1.0  # Parser for beautifulsoup4
-
-# Compression Support
-py7zr==0.21.0  # For 7z file support
-
-# Additional Dependencies for Enhanced Features
-#torch>=2.1.0  # Required by sentence-transformers
-#transformers>=4.36.0  # Required by sentence-transformers
-#huggingface-hub>=0.20.0  # For downloading models
-
-# Visualization and Export
-matplotlib==3.8.2  # Additional plotting support
-seaborn==0.13.2  # Statistical visualizations
-XlsxWriter==3.1.9  # Better Excel export support
-
-# Development and Debugging (Optional)
-python-dotenv==1.0.1  # Environment variable management
+python-levenshtein
+sentence_transformers
+bleach
+py7zr

@@ -1,5 +1,5 @@
-# elite_financial_analytics_platform_combined.py
-# Enterprise-Grade Financial Analytics Platform - Combined Version with All Fixes
+# elite_financial_analytics_platform_enhanced.py
+# Enterprise-Grade Financial Analytics Platform - Enhanced Version with Kaggle GPU Integration
 
 # --- 1. Core Imports and Setup ---
 import requests
@@ -2194,8 +2194,6 @@ class FinancialAnalysisEngine(Component):
         
         return insights
 
-# Continue in the next message...
-
 # --- 17. Enhanced API Client ---
 class EnhancedAPIClient:
     """Enhanced API client with retry logic, connection pooling, and monitoring"""
@@ -2309,7 +2307,7 @@ class EnhancedAPIClient:
         if self._session:
             self._session.close()
 
-# --- 18. AI Mapping System with Kaggle Integration ---
+# --- 18. ENHANCED AI Mapping System with Kaggle Integration ---
 class AIMapper(Component):
     """AI-powered mapping with Kaggle GPU support and comprehensive error handling"""
     
@@ -2326,6 +2324,10 @@ class AIMapper(Component):
         self._batch_queue = queue.Queue()
         self._batch_processor = None
         self._session = None
+        self._gpu_stats = {}
+        self._fallback_reasons = []
+        self._connection_retries = 0
+        self._max_retries = 3
     
     def _do_initialize(self):
         """Initialize AI components"""
@@ -2352,54 +2354,311 @@ class AIMapper(Component):
         if self._kaggle_available:
             self._start_batch_processor()
     
-    def _do_cleanup(self):
-        """Cleanup resources"""
-        if self._api_client:
-            self._api_client.close()
-        
-        if self._session:
-            self._session.close()
-        
-        if self._batch_processor and self._batch_processor.is_alive():
-            # Signal shutdown
-            self._batch_queue.put(None)
-    
     def _initialize_kaggle_api(self):
-        """Initialize Kaggle API connection"""
+        """Initialize Kaggle API connection with validation"""
         try:
             api_url = self.config.get('ai.kaggle_api_url')
+            api_key = self.config.get('ai.kaggle_api_key', '')
             timeout = self.config.get('ai.kaggle_api_timeout', 30)
             max_retries = self.config.get('ai.kaggle_max_retries', 3)
             
             self._api_client = EnhancedAPIClient(api_url, timeout, max_retries)
             
-            if self._test_kaggle_connection():
+            # Set API key if provided
+            if api_key:
+                self._api_client._session.headers.update({
+                    'Authorization': f'Bearer {api_key}'
+                })
+            
+            if self._validate_kaggle_connection():
                 self._kaggle_available = True
                 self._logger.info(f"Successfully connected to Kaggle API at {api_url}")
+                self._start_gpu_monitoring()
             else:
-                self._logger.warning("Kaggle API test failed, will use fallback")
+                self._logger.warning("Kaggle API validation failed, will use fallback")
+                self._fallback_reasons.append("API validation failed")
                 
         except Exception as e:
             self._logger.error(f"Failed to initialize Kaggle API: {e}")
             self._kaggle_available = False
+            self._fallback_reasons.append(f"Initialization error: {str(e)}")
     
-    def _test_kaggle_connection(self) -> bool:
-        """Test Kaggle API connection - FIXED return type"""
+    def _validate_kaggle_connection(self) -> bool:
+        """Comprehensive Kaggle API connection validation"""
         try:
-            response = self._api_client.make_request('GET', '/health')
+            # Test basic connectivity
+            response = self._api_client.make_request('GET', '/health', timeout=10)
             
-            if response:
-                self._kaggle_info = response
-                self._last_health_check = time.time()
-                
-                required_fields = ['status', 'model']
-                if all(field in response for field in required_fields):
-                    return response.get('status') == 'healthy'
-                    
+            if not response:
+                self._fallback_reasons.append("No response from health endpoint")
+                return False
+            
+            # Validate required fields
+            required_fields = ['status', 'model']
+            if not all(field in response for field in required_fields):
+                self._fallback_reasons.append("Missing required fields in health response")
+                return False
+            
+            if response.get('status') != 'healthy':
+                self._fallback_reasons.append(f"API status: {response.get('status')}")
+                return False
+            
+            # Test embedding endpoint
+            test_response = self._api_client.make_request(
+                'POST', 
+                '/embed',
+                {'texts': ['test']},
+                timeout=15
+            )
+            
+            if not test_response or 'embeddings' not in test_response:
+                self._fallback_reasons.append("Embedding endpoint test failed")
+                return False
+            
+            # Store API info
+            self._kaggle_info = response
+            self._last_health_check = time.time()
+            self._connection_retries = 0
+            
+            self._logger.info("Kaggle API validation successful")
+            return True
+            
+        except ConnectionError:
+            self._fallback_reasons.append("Connection error")
             return False
-            
+        except TimeoutError:
+            self._fallback_reasons.append("Connection timeout")
+            return False
         except Exception as e:
-            self._logger.error(f"Kaggle connection test failed: {e}")
+            self._fallback_reasons.append(f"Validation error: {str(e)}")
+            return False
+    
+    def _start_gpu_monitoring(self):
+        """Start real-time GPU monitoring"""
+        def monitor_gpu():
+            while self._kaggle_available:
+                try:
+                    stats = self._api_client.make_request('GET', '/gpu_stats', timeout=5)
+                    if stats:
+                        self._gpu_stats = {
+                            'gpu_utilization': stats.get('gpu_util', 0),
+                            'memory_used': stats.get('memory_used', 0),
+                            'memory_total': stats.get('memory_total', 0),
+                            'temperature': stats.get('temperature', 0),
+                            'last_updated': time.time()
+                        }
+                except Exception as e:
+                    self._logger.debug(f"GPU monitoring error: {e}")
+                
+                time.sleep(30)  # Update every 30 seconds
+        
+        monitoring_thread = threading.Thread(target=monitor_gpu, daemon=True)
+        monitoring_thread.start()
+    
+    def _smart_fallback_decision(self, operation: str, data_size: int = 0) -> str:
+        """Intelligent fallback decision based on multiple factors"""
+        # Check Kaggle availability
+        if not self._kaggle_available:
+            return 'local_model' if self.model else 'fuzzy'
+        
+        # Check recent performance
+        api_stats = self._api_client.get_stats()
+        if api_stats['error_rate'] > 0.2:  # High error rate
+            return 'local_model' if self.model else 'fuzzy'
+        
+        # Check response time
+        if api_stats['avg_response_time'] > 10:  # Slow responses
+            return 'local_model' if self.model else 'fuzzy'
+        
+        # Check data size
+        if data_size > 1000:  # Large dataset
+            return 'kaggle_gpu'  # GPU can handle better
+        elif data_size < 10:  # Small dataset
+            return 'local_model' if self.model else 'fuzzy'
+        
+        return 'kaggle_gpu'
+    
+    def map_metrics_with_confidence_levels(self, source_metrics: List[str], 
+                                         target_metrics: Optional[List[str]] = None,
+                                         progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+        """Enhanced mapping with HTTP API integration and progress tracking"""
+        
+        if progress_callback:
+            progress_callback(0.1, "Initializing mapping...")
+        
+        # Smart fallback decision
+        fallback_strategy = self._smart_fallback_decision('mapping', len(source_metrics))
+        
+        if progress_callback:
+            progress_callback(0.2, f"Using {fallback_strategy} for processing...")
+        
+        # Try Kaggle API first if available
+        if fallback_strategy == 'kaggle_gpu' and self._check_kaggle_health():
+            try:
+                if progress_callback:
+                    progress_callback(0.3, "Sending request to Kaggle GPU...")
+                
+                response = self._api_client.make_request(
+                    'POST',
+                    '/map_metrics_with_confidence',
+                    {
+                        'source_metrics': source_metrics,
+                        'target_metrics': target_metrics,
+                        'confidence_threshold': self.config.get('ai.similarity_threshold', 0.6)
+                    },
+                    timeout=self.config.get('ai.kaggle_api_timeout', 30)
+                )
+                
+                if progress_callback:
+                    progress_callback(0.9, "Processing Kaggle GPU response...")
+                
+                if response and 'high_confidence' in response:
+                    response['method'] = 'kaggle_gpu'
+                    response['fallback_reasons'] = []
+                    
+                    if progress_callback:
+                        progress_callback(1.0, "Kaggle GPU mapping completed!")
+                    
+                    return response
+                else:
+                    raise Exception("Invalid response format from Kaggle API")
+                    
+            except ConnectionError as e:
+                self._logger.warning(f"Kaggle connection error: {e}")
+                self._fallback_reasons.append("Connection lost during mapping")
+                self._kaggle_available = False
+                
+            except TimeoutError as e:
+                self._logger.warning(f"Kaggle timeout: {e}")
+                self._fallback_reasons.append("Request timeout")
+                
+            except Exception as e:
+                self._logger.error(f"Kaggle API error: {e}")
+                self._fallback_reasons.append(f"API error: {str(e)}")
+        
+        # Fallback to local processing
+        if progress_callback:
+            progress_callback(0.4, f"Falling back to {fallback_strategy}...")
+        
+        if fallback_strategy == 'local_model' and self.model:
+            try:
+                if progress_callback:
+                    progress_callback(0.6, "Processing with local AI model...")
+                
+                result = self._local_mapping_with_confidence(source_metrics, target_metrics)
+                result['method'] = 'local_ai'
+                result['fallback_reasons'] = self._fallback_reasons.copy()
+                
+                if progress_callback:
+                    progress_callback(1.0, "Local AI mapping completed!")
+                
+                return result
+                
+            except Exception as e:
+                self._logger.error(f"Local model error: {e}")
+                self._fallback_reasons.append(f"Local model error: {str(e)}")
+        
+        # Final fallback to fuzzy matching
+        if progress_callback:
+            progress_callback(0.7, "Using fuzzy matching fallback...")
+        
+        result = self.fallback_mapper.map_metrics(source_metrics, target_metrics)
+        
+        # Convert to confidence level format
+        confidence_result = self._convert_to_confidence_format(result)
+        confidence_result['method'] = 'fuzzy'
+        confidence_result['fallback_reasons'] = self._fallback_reasons.copy()
+        
+        if progress_callback:
+            progress_callback(1.0, "Fuzzy matching completed!")
+        
+        return confidence_result
+    
+    def _local_mapping_with_confidence(self, source_metrics: List[str], 
+                                     target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Local AI mapping with confidence levels"""
+        base_result = self.map_metrics(source_metrics, target_metrics)
+        return self._convert_to_confidence_format(base_result)
+    
+    def _convert_to_confidence_format(self, base_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert basic mapping result to confidence level format"""
+        confidence_thresholds = self.config.get('ai.confidence_levels', {
+            'high': 0.8,
+            'medium': 0.6,
+            'low': 0.4
+        })
+        
+        result = {
+            'high_confidence': {},
+            'medium_confidence': {},
+            'low_confidence': {},
+            'requires_manual': [],
+            'suggestions': base_result.get('suggestions', {}),
+            'method': base_result.get('method', 'unknown')
+        }
+        
+        mappings = base_result.get('mappings', {})
+        confidence_scores = base_result.get('confidence_scores', {})
+        
+        for source in mappings:
+            confidence = confidence_scores.get(source, 0)
+            target = mappings[source]
+            
+            if confidence >= confidence_thresholds['high']:
+                result['high_confidence'][source] = {
+                    'target': target,
+                    'confidence': confidence
+                }
+            elif confidence >= confidence_thresholds['medium']:
+                result['medium_confidence'][source] = {
+                    'target': target,
+                    'confidence': confidence
+                }
+            elif confidence >= confidence_thresholds['low']:
+                result['low_confidence'][source] = {
+                    'target': target,
+                    'confidence': confidence
+                }
+            else:
+                result['requires_manual'].append(source)
+        
+        # Add unmapped metrics
+        result['requires_manual'].extend(base_result.get('unmapped_metrics', []))
+        
+        return result
+    
+    def _check_kaggle_health(self) -> bool:
+        """Enhanced health check with retry logic"""
+        with self._health_check_lock:
+            current_time = time.time()
+            check_interval = self.config.get('ai.kaggle_health_check_interval', 60)
+            
+            # Skip if recently checked
+            if (self._last_health_check and 
+                current_time - self._last_health_check < check_interval):
+                return self._kaggle_available
+            
+            # Perform health check with retries
+            for attempt in range(self._max_retries):
+                try:
+                    response = self._api_client.make_request('GET', '/health', timeout=10)
+                    
+                    if response and response.get('status') == 'healthy':
+                        self._kaggle_available = True
+                        self._last_health_check = current_time
+                        self._connection_retries = 0
+                        return True
+                        
+                except Exception as e:
+                    self._logger.debug(f"Health check attempt {attempt + 1} failed: {e}")
+                    
+                time.sleep(2 ** attempt)  # Exponential backoff
+            
+            # All retries failed
+            self._kaggle_available = False
+            self._connection_retries += 1
+            self._fallback_reasons.append(f"Health check failed after {self._max_retries} attempts")
+            
             return False
     
     def _initialize_local_model(self):
@@ -2447,67 +2706,6 @@ class AIMapper(Component):
             if embedding is not None:
                 SimpleState.set(f"standard_embedding_{metric}", embedding)
     
-    def _start_batch_processor(self):
-        """Start background thread for batch processing"""
-        self._batch_processor = threading.Thread(target=self._process_batch_queue, daemon=True)
-        self._batch_processor.start()
-    
-    def _process_batch_queue(self):
-        """Process batched embedding requests"""
-        while True:
-            try:
-                batch = []
-                deadline = time.time() + 0.1
-                
-                while time.time() < deadline and len(batch) < self.config.get('ai.kaggle_batch_size', 50):
-                    try:
-                        item = self._batch_queue.get(timeout=0.01)
-                        if item is None:  # Shutdown signal
-                            return
-                        batch.append(item)
-                    except queue.Empty:
-                        break
-                
-                if batch:
-                    self._process_embedding_batch(batch)
-                    
-            except Exception as e:
-                self._logger.error(f"Batch processor error: {e}")
-                time.sleep(1)
-    
-    def _process_embedding_batch(self, batch: List[Dict]):
-        """Process a batch of embedding requests"""
-        texts = [item['text'] for item in batch]
-        futures = [item['future'] for item in batch]
-        
-        try:
-            embeddings = self._get_embeddings_kaggle_batch(texts)
-            
-            if embeddings:
-                for future, embedding in zip(futures, embeddings):
-                    future.set_result(embedding)
-            else:
-                for i, (text, future) in enumerate(zip(texts, futures)):
-                    embedding = self._get_embedding_local(text)
-                    future.set_result(embedding)
-                    
-        except Exception as e:
-            for future in futures:
-                future.set_exception(e)
-    
-    def _check_kaggle_health(self) -> bool:
-        """Periodic health check for Kaggle API"""
-        with self._health_check_lock:
-            current_time = time.time()
-            check_interval = self.config.get('ai.kaggle_health_check_interval', 60)
-            
-            if (self._last_health_check is None or 
-                current_time - self._last_health_check > check_interval):
-                
-                self._kaggle_available = self._test_kaggle_connection()
-                
-        return self._kaggle_available
-    
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
         """Get embedding with caching"""
         if not self.model:
@@ -2533,85 +2731,10 @@ class AIMapper(Component):
             self._logger.error(f"Error computing embedding: {e}")
             return None
     
-    def _get_embedding_local(self, text: str) -> Optional[np.ndarray]:
-        """Get embedding using local model"""
-        if self.model is None:
-            return None
-            
-        try:
-            return self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
-        except Exception as e:
-            self._logger.error(f"Local embedding error: {e}")
-            return None
-    
-    def _get_embeddings_kaggle_batch(self, texts: List[str]) -> Optional[List[np.ndarray]]:
-        """Get batch embeddings from Kaggle API"""
-        try:
-            response = self._api_client.make_request('POST', '/embed', {
-                'texts': texts,
-                'batch_size': len(texts)
-            })
-            
-            if response and 'embeddings' in response:
-                return [np.array(emb) for emb in response['embeddings']]
-                
-        except Exception as e:
-            self._logger.error(f"Kaggle batch embedding error: {e}")
-            
-        return None
-    
-    @error_boundary({})
-    def map_metrics_with_confidence_levels(self, source_metrics: List[str], 
-                                         target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Enhanced mapping with multiple confidence levels"""
-        confidence_thresholds = self.config.get('ai.confidence_levels', {
-            'high': 0.8,
-            'medium': 0.6,
-            'low': 0.4
-        })
-        
-        base_result = self.map_metrics(source_metrics, target_metrics)
-        
-        results = {
-            'high_confidence': {},
-            'medium_confidence': {},
-            'low_confidence': {},
-            'requires_manual': [],
-            'suggestions': base_result.get('suggestions', {}),
-            'method': base_result.get('method', 'unknown')
-        }
-        
-        for source in source_metrics:
-            if source in base_result['mappings']:
-                confidence = base_result['confidence_scores'].get(source, 0)
-                target = base_result['mappings'][source]
-                
-                if confidence >= confidence_thresholds['high']:
-                    results['high_confidence'][source] = {
-                        'target': target,
-                        'confidence': confidence
-                    }
-                elif confidence >= confidence_thresholds['medium']:
-                    results['medium_confidence'][source] = {
-                        'target': target,
-                        'confidence': confidence
-                    }
-                elif confidence >= confidence_thresholds['low']:
-                    results['low_confidence'][source] = {
-                        'target': target,
-                        'confidence': confidence
-                    }
-                else:
-                    results['requires_manual'].append(source)
-            else:
-                results['requires_manual'].append(source)
-        
-        return results
-    
     def map_metrics(self, source_metrics: List[str], 
                    target_metrics: Optional[List[str]] = None,
                    confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
-        """Map source metrics to target metrics"""
+        """Map source metrics to target metrics using semantic similarity"""
         
         if not self.model:
             return self.fallback_mapper.map_metrics(source_metrics, target_metrics)
@@ -2702,8 +2825,8 @@ class AIMapper(Component):
             'unmapped_metrics': unmapped,
             'method': 'ai' if self.model else 'fuzzy'
         }
-    
-    def _get_standard_metrics(self) -> List[str]:
+                       
+     def _get_standard_metrics(self) -> List[str]:
         """Get list of standard financial metrics"""
         return [
             'Total Assets', 'Current Assets', 'Non-current Assets',
@@ -2719,17 +2842,120 @@ class AIMapper(Component):
         ]
     
     def get_api_status(self) -> Dict[str, Any]:
-        """Get comprehensive API status"""
-        status = {
+        """Get comprehensive API status with GPU monitoring"""
+        base_status = {
             'kaggle_configured': bool(self.config.get('ai.kaggle_api_url')),
             'kaggle_available': self._kaggle_available,
             'local_model_available': self.model is not None,
             'cache_size': len(self.embeddings_cache._cache),
             'api_info': self._kaggle_info,
-            'api_stats': self._api_client.get_stats() if self._api_client else None
+            'api_stats': self._api_client.get_stats() if self._api_client else None,
+            'fallback_reasons': self._fallback_reasons,
+            'connection_retries': self._connection_retries
         }
         
-        return status
+        # Add GPU stats if available
+        if self._gpu_stats:
+            base_status['gpu_stats'] = self._gpu_stats.copy()
+            
+            # Calculate GPU utilization percentage
+            if self._gpu_stats.get('memory_total', 0) > 0:
+                memory_usage_pct = (self._gpu_stats.get('memory_used', 0) / 
+                                   self._gpu_stats.get('memory_total', 1)) * 100
+                base_status['gpu_stats']['memory_usage_pct'] = memory_usage_pct
+        
+        return base_status
+    
+    def clear_fallback_reasons(self):
+        """Clear accumulated fallback reasons"""
+        self._fallback_reasons.clear()
+    
+    def _start_batch_processor(self):
+        """Start background thread for batch processing"""
+        self._batch_processor = threading.Thread(target=self._process_batch_queue, daemon=True)
+        self._batch_processor.start()
+    
+    def _process_batch_queue(self):
+        """Process batched embedding requests"""
+        while True:
+            try:
+                batch = []
+                deadline = time.time() + 0.1
+                
+                while time.time() < deadline and len(batch) < self.config.get('ai.kaggle_batch_size', 50):
+                    try:
+                        item = self._batch_queue.get(timeout=0.01)
+                        if item is None:  # Shutdown signal
+                            return
+                        batch.append(item)
+                    except queue.Empty:
+                        break
+                
+                if batch:
+                    self._process_embedding_batch(batch)
+                    
+            except Exception as e:
+                self._logger.error(f"Batch processor error: {e}")
+                time.sleep(1)
+    
+    def _process_embedding_batch(self, batch: List[Dict]):
+        """Process a batch of embedding requests"""
+        texts = [item['text'] for item in batch]
+        futures = [item['future'] for item in batch]
+        
+        try:
+            embeddings = self._get_embeddings_kaggle_batch(texts)
+            
+            if embeddings:
+                for future, embedding in zip(futures, embeddings):
+                    future.set_result(embedding)
+            else:
+                for i, (text, future) in enumerate(zip(texts, futures)):
+                    embedding = self._get_embedding_local(text)
+                    future.set_result(embedding)
+                    
+        except Exception as e:
+            for future in futures:
+                future.set_exception(e)
+    
+    def _get_embedding_local(self, text: str) -> Optional[np.ndarray]:
+        """Get embedding using local model"""
+        if self.model is None:
+            return None
+            
+        try:
+            return self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+        except Exception as e:
+            self._logger.error(f"Local embedding error: {e}")
+            return None
+    
+    def _get_embeddings_kaggle_batch(self, texts: List[str]) -> Optional[List[np.ndarray]]:
+        """Get batch embeddings from Kaggle API"""
+        try:
+            response = self._api_client.make_request('POST', '/embed', {
+                'texts': texts,
+                'batch_size': len(texts)
+            })
+            
+            if response and 'embeddings' in response:
+                return [np.array(emb) for emb in response['embeddings']]
+                
+        except Exception as e:
+            self._logger.error(f"Kaggle batch embedding error: {e}")
+            
+        return None
+    
+    def _do_cleanup(self):
+        """Cleanup resources"""
+        if self._api_client:
+            self._api_client.close()
+        
+        if self._session:
+            self._session.close()
+        
+        if self._batch_processor and self._batch_processor.is_alive():
+            # Signal shutdown
+            self._batch_queue.put(None)
 
 # --- 19. Fuzzy Mapping Fallback ---
 class FuzzyMapper(Component):
@@ -3287,3641 +3513,5 @@ class MLForecaster:
             'last_actual': series.iloc[-1]
         }
     
-    def _calculate_accuracy(self, model: Any, series: pd.Series) -> Dict[str, float]:
-        """Calculate model accuracy metrics"""
-        X = np.arange(len(series)).reshape(-1, 1)
-        y = series.values
-        y_pred = model.predict(X)
-        
-        mse = np.mean((y - y_pred) ** 2)
-        mae = np.mean(np.abs(y - y_pred))
-        mape = np.mean(np.abs((y - y_pred) / y)) * 100 if not (y == 0).any() else None
-        
-        return {
-            'mse': mse,
-            'mae': mae,
-            'mape': mape,
-            'rmse': np.sqrt(mse)
-        }
+    def _calculate_accuracy(self, model: Any, series: pd.Series) -> Dict[str,
     
-    def _calculate_confidence_intervals(self, forecasts: Dict[str, Any], 
-                                      confidence: float = 0.95) -> Dict[str, Any]:
-        """Calculate confidence intervals for forecasts"""
-        intervals = {}
-        
-        for metric, forecast in forecasts.items():
-            values = np.array(forecast['values'])
-            std = values.std() if len(values) > 1 else values[0] * 0.1
-            
-            z_score = stats.norm.ppf((1 + confidence) / 2)
-            margin = z_score * std
-            
-            intervals[metric] = {
-                'lower': (values - margin).tolist(),
-                'upper': (values + margin).tolist()
-            }
-        
-        return intervals
-
-# --- 23. Natural Language Query Processor ---
-class NLQueryProcessor:
-    """Process natural language queries about financial data"""
-    
-    def __init__(self, config: Configuration):
-        self.config = config
-        self.logger = LoggerFactory.get_logger('NLQueryProcessor')
-        self.intents = {
-            'growth_rate': ['growth', 'increase', 'decrease', 'change', 'trend'],
-            'comparison': ['compare', 'versus', 'vs', 'difference', 'better', 'worse'],
-            'ratio': ['ratio', 'margin', 'return', 'turnover'],
-            'forecast': ['forecast', 'predict', 'future', 'will', 'expect'],
-            'summary': ['summary', 'overview', 'key', 'main', 'important']
-        }
-    
-    @error_boundary({'type': 'error', 'message': 'Query processing failed'})
-    def process_query(self, query: str, data: pd.DataFrame, 
-                     analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Process natural language query and return results"""
-        query_lower = query.lower()
-        
-        # Classify intent
-        intent = self._classify_intent(query_lower)
-        entities = self._extract_entities(query_lower, data)
-        
-        self.logger.info(f"Query: {query}, Intent: {intent}, Entities: {entities}")
-        
-        # Process based on intent
-        if intent == 'growth_rate':
-            return self._handle_growth_query(entities, data, analysis)
-        elif intent == 'comparison':
-            return self._handle_comparison_query(entities, data, analysis)
-        elif intent == 'ratio':
-            return self._handle_ratio_query(entities, data, analysis)
-        elif intent == 'forecast':
-            return self._handle_forecast_query(entities, data)
-        elif intent == 'summary':
-            return self._handle_summary_query(entities, analysis)
-        else:
-            return self._handle_general_query(query, data, analysis)
-    
-    def _classify_intent(self, query: str) -> str:
-        """Classify query intent"""
-        for intent, keywords in self.intents.items():
-            if any(keyword in query for keyword in keywords):
-                return intent
-        return 'general'
-    
-    def _extract_entities(self, query: str, data: pd.DataFrame) -> Dict[str, Any]:
-        """Extract entities from query"""
-        entities = {
-            'metrics': [],
-            'years': [],
-            'periods': []
-        }
-        
-        # Extract metrics
-        for metric in data.index:
-            if str(metric).lower() in query:
-                entities['metrics'].append(metric)
-        
-        # Extract years
-        for col in data.columns:
-            if str(col) in query:
-                entities['years'].append(col)
-        
-        # Extract time periods
-        if 'last year' in query:
-            entities['periods'].append('last_year')
-        elif 'this year' in query:
-            entities['periods'].append('current_year')
-        
-        return entities
-    
-    def _handle_growth_query(self, entities: Dict, data: pd.DataFrame, 
-                           analysis: Dict) -> Dict[str, Any]:
-        """Handle growth rate queries"""
-        results = {
-            'type': 'growth_analysis',
-            'data': []
-        }
-        
-        metrics = entities.get('metrics', [])
-        if not metrics:
-            # Default to revenue if no metric specified
-            revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
-            metrics = revenue_metrics[:1] if revenue_metrics else []
-        
-        for metric in metrics:
-            if metric in data.index:
-                series = data.loc[metric].dropna()
-                if len(series) > 1:
-                    # Calculate growth
-                    growth_rate = ((series.iloc[-1] / series.iloc[0]) ** (1/(len(series)-1)) - 1) * 100
-                    yoy_change = ((series.iloc[-1] / series.iloc[-2]) - 1) * 100 if len(series) > 1 else 0
-                    
-                    results['data'].append({
-                        'metric': str(metric),
-                        'cagr': growth_rate,
-                        'yoy_change': yoy_change,
-                        'first_value': series.iloc[0],
-                        'last_value': series.iloc[-1],
-                        'period': f"{series.index[0]} to {series.index[-1]}"
-                    })
-        
-        return results
-    
-    def _handle_comparison_query(self, entities: Dict, data: pd.DataFrame, 
-                               analysis: Dict) -> Dict[str, Any]:
-        """Handle comparison queries"""
-        return {
-            'type': 'comparison',
-            'message': 'Comparison analysis feature coming soon'
-        }
-    
-    def _handle_ratio_query(self, entities: Dict, data: pd.DataFrame, 
-                          analysis: Dict) -> Dict[str, Any]:
-        """Handle ratio queries"""
-        ratios = analysis.get('ratios', {})
-        results = {
-            'type': 'ratio_analysis',
-            'data': {}
-        }
-        
-        # Return all ratios or filtered based on query
-        for category, ratio_df in ratios.items():
-            if isinstance(ratio_df, pd.DataFrame):
-                results['data'][category] = ratio_df.to_dict()
-        
-        return results
-    
-    def _handle_forecast_query(self, entities: Dict, data: pd.DataFrame) -> Dict[str, Any]:
-        """Handle forecast queries"""
-        # Use ML forecaster
-        forecaster = MLForecaster(self.config)
-        metrics = entities.get('metrics', None)
-        
-        forecast_results = forecaster.forecast_metrics(data, periods=3, metrics=metrics)
-        
-        return {
-            'type': 'forecast',
-            'data': forecast_results
-        }
-    
-    def _handle_summary_query(self, entities: Dict, analysis: Dict) -> Dict[str, Any]:
-        """Handle summary queries"""
-        return {
-            'type': 'summary',
-            'data': {
-                'summary': analysis.get('summary', {}),
-                'insights': analysis.get('insights', [])[:5],
-                'quality_score': analysis.get('quality_score', 0)
-            }
-        }
-    
-    def _handle_general_query(self, query: str, data: pd.DataFrame, 
-                            analysis: Dict) -> Dict[str, Any]:
-        """Handle general queries"""
-        return {
-            'type': 'general',
-            'message': f"I understood your query: '{query}', but I need more specific information to help you.",
-            'suggestions': [
-                "What was the revenue growth last year?",
-                "Show me the profitability ratios",
-                "Forecast revenue for next 3 years",
-                "Give me a summary of the financial performance"
-            ]
-        }
-
-# --- 24. Collaboration Manager ---
-class CollaborationManager:
-    """Manage collaborative analysis sessions with cleanup"""
-    
-    def __init__(self):
-        self.active_sessions = {}
-        self.shared_analyses = {}
-        self.user_presence = defaultdict(dict)
-        self._lock = threading.Lock()
-        self.logger = LoggerFactory.get_logger('CollaborationManager')
-        self._cleanup_thread = None
-        self._start_cleanup_thread()
-    
-    def __del__(self):
-        """Cleanup on destruction"""
-        self._stop_cleanup_thread()
-    
-    def _start_cleanup_thread(self):
-        """Start background thread for session cleanup"""
-        self._cleanup_thread = threading.Thread(target=self._cleanup_expired_sessions, daemon=True)
-        self._cleanup_thread.start()
-    
-    def _stop_cleanup_thread(self):
-        """Stop cleanup thread"""
-        # Implement proper shutdown mechanism if needed
-        pass
-    
-    def _cleanup_expired_sessions(self):
-        """Periodically clean up expired sessions"""
-        while True:
-            try:
-                time.sleep(300)  # Check every 5 minutes
-                
-                with self._lock:
-                    current_time = datetime.now()
-                    expired_sessions = []
-                    
-                    for session_id, session in self.active_sessions.items():
-                        # Remove sessions inactive for more than 1 hour
-                        if (current_time - session['last_activity']).seconds > 3600:
-                            expired_sessions.append(session_id)
-                    
-                    for session_id in expired_sessions:
-                        del self.active_sessions[session_id]
-                        if session_id in self.user_presence:
-                            del self.user_presence[session_id]
-                        self.logger.info(f"Cleaned up expired session: {session_id}")
-                        
-            except Exception as e:
-                self.logger.error(f"Error in cleanup thread: {e}")
-    
-    def create_session(self, analysis_id: str, owner_id: str) -> str:
-        """Create a new collaborative session"""
-        with self._lock:
-            session_id = hashlib.md5(f"{analysis_id}_{owner_id}_{time.time()}".encode()).hexdigest()[:8]
-            
-            self.active_sessions[session_id] = {
-                'analysis_id': analysis_id,
-                'owner': owner_id,
-                'participants': [owner_id],
-                'created_at': datetime.now(),
-                'last_activity': datetime.now(),
-                'chat_history': [],
-                'annotations': {}
-            }
-            
-            self.logger.info(f"Created session {session_id} for analysis {analysis_id}")
-            return session_id
-    
-    def join_session(self, session_id: str, user_id: str) -> bool:
-        """Join an existing session"""
-        with self._lock:
-            if session_id in self.active_sessions:
-                session = self.active_sessions[session_id]
-                if user_id not in session['participants']:
-                    session['participants'].append(user_id)
-                
-                session['last_activity'] = datetime.now()
-                
-                self.user_presence[session_id][user_id] = {
-                    'joined_at': datetime.now(),
-                    'last_seen': datetime.now(),
-                    'cursor_position': None
-                }
-                
-                self.logger.info(f"User {user_id} joined session {session_id}")
-                return True
-            
-            return False
-    
-    def share_analysis(self, analysis_data: Dict[str, Any], owner_id: str, 
-                      permissions: List[str] = None) -> str:
-        """Share analysis with other users"""
-        if permissions is None:
-            permissions = ['view', 'comment']
-        
-        share_token = hashlib.md5(f"{owner_id}_{time.time()}".encode()).hexdigest()[:12]
-        
-        with self._lock:
-            self.shared_analyses[share_token] = {
-                'data': analysis_data,
-                'owner': owner_id,
-                'permissions': permissions,
-                'created_at': datetime.now(),
-                'access_log': []
-            }
-        
-        return share_token
-    
-    def get_shared_analysis(self, share_token: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get shared analysis by token"""
-        with self._lock:
-            if share_token in self.shared_analyses:
-                analysis = self.shared_analyses[share_token]
-                
-                # Log access
-                analysis['access_log'].append({
-                    'user': user_id,
-                    'timestamp': datetime.now()
-                })
-                
-                return analysis
-            
-            return None
-    
-    def add_annotation(self, session_id: str, user_id: str, 
-                      annotation: Dict[str, Any]) -> bool:
-        """Add annotation to collaborative session"""
-        with self._lock:
-            if session_id in self.active_sessions:
-                session = self.active_sessions[session_id]
-                
-                annotation_id = f"{user_id}_{time.time()}"
-                session['annotations'][annotation_id] = {
-                    'user': user_id,
-                    'timestamp': datetime.now(),
-                    'type': annotation.get('type', 'comment'),
-                    'content': annotation.get('content', ''),
-                    'position': annotation.get('position', None)
-                }
-                
-                session['last_activity'] = datetime.now()
-                
-                return True
-            
-            return False
-    
-    def get_session_activity(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Get session activity and participants"""
-        with self._lock:
-            if session_id in self.active_sessions:
-                session = self.active_sessions[session_id]
-                presence = self.user_presence.get(session_id, {})
-                
-                return {
-                    'participants': session['participants'],
-                    'active_users': [
-                        uid for uid, data in presence.items()
-                        if (datetime.now() - data['last_seen']).seconds < 300  # 5 minutes
-                    ],
-                    'annotations': session['annotations'],
-                    'chat_history': session['chat_history'][-50:]  # Last 50 messages
-                }
-            
-            return None
-
-# --- 25. Tutorial System ---
-class TutorialSystem:
-    """Interactive tutorial system for new users"""
-    
-    def __init__(self):
-        self.steps = [
-            {
-                'id': 'welcome',
-                'title': 'Welcome to Elite Financial Analytics',
-                'content': 'This tutorial will guide you through the platform features.',
-                'location': 'main',
-                'action': None
-            },
-            {
-                'id': 'upload',
-                'title': 'Upload Financial Data',
-                'content': 'Start by uploading your financial statements using the sidebar.',
-                'location': 'sidebar',
-                'action': 'highlight_upload'
-            },
-            {
-                'id': 'mapping',
-                'title': 'Map Your Metrics',
-                'content': 'Our AI will automatically map your metrics, or you can do it manually.',
-                'location': 'main',
-                'action': 'show_mapping'
-            },
-            {
-                'id': 'analysis',
-                'title': 'Explore Analysis',
-                'content': 'Navigate through different analysis tabs to explore ratios, trends, and insights.',
-                'location': 'tabs',
-                'action': 'highlight_tabs'
-            },
-            {
-                'id': 'export',
-                'title': 'Export Results',
-                'content': 'Generate and download comprehensive reports in various formats.',
-                'location': 'reports',
-                'action': 'show_export'
-            }
-        ]
-        
-        self.completed_steps = set()
-    
-    def render(self):
-        """Render tutorial interface"""
-        if not SimpleState.get('show_tutorial', True):
-            return
-        
-        current_step = SimpleState.get('tutorial_step', 0)
-        
-        if current_step >= len(self.steps):
-            self._complete_tutorial()
-            return
-        
-        step = self.steps[current_step]
-        
-        # Tutorial overlay
-        with st.container():
-            col1, col2, col3 = st.columns([1, 3, 1])
-            
-            with col2:
-                st.info(f"""
-                ### Tutorial Step {current_step + 1}/{len(self.steps)}: {step['title']}
-                
-                {step['content']}
-                """)
-                
-                col_prev, col_next, col_skip = st.columns(3)
-                
-                with col_prev:
-                    if current_step > 0:
-                        if st.button("← Previous", key="tutorial_prev"):
-                            SimpleState.set('tutorial_step', current_step - 1)
-                
-                with col_next:
-                    if st.button("Next →", key="tutorial_next", type="primary"):
-                        self.completed_steps.add(step['id'])
-                        SimpleState.set('tutorial_step', current_step + 1)
-                
-                with col_skip:
-                    if st.button("Skip Tutorial", key="tutorial_skip"):
-                        self._complete_tutorial()
-        
-        # Execute step action
-        if step['action']:
-            self._execute_action(step['action'])
-    
-    def _execute_action(self, action: str):
-        """Execute tutorial action"""
-        if action == 'highlight_upload':
-            st.sidebar.markdown("⬆️ **Upload your files here**")
-        elif action == 'highlight_tabs':
-            st.markdown("⬆️ **Explore different analysis tabs above**")
-        # Add more actions as needed
-    
-    def _complete_tutorial(self):
-        """Mark tutorial as completed"""
-        SimpleState.set('show_tutorial', False)
-        SimpleState.set('tutorial_completed', True)
-        st.success("Tutorial completed! You're ready to use the platform.")
-
-# --- 26. Export Manager ---
-class ExportManager:
-    """Handle various export formats for analysis results"""
-    
-    def __init__(self, config: Configuration):
-        self.config = config
-        self.logger = LoggerFactory.get_logger('ExportManager')
-    
-    @error_boundary(b"Export failed")
-    def export_to_excel(self, analysis: Dict[str, Any], filename: str = "analysis.xlsx") -> bytes:
-        """Export analysis to Excel format"""
-        output = io.BytesIO()
-        
-        try:
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # Summary sheet
-                if 'summary' in analysis:
-                    summary_df = pd.DataFrame([analysis['summary']])
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                
-                # Ratios sheets
-                if 'ratios' in analysis:
-                    for category, ratio_df in analysis['ratios'].items():
-                        if isinstance(ratio_df, pd.DataFrame):
-                            sheet_name = f'Ratios_{category}'[:31]
-                            ratio_df.to_excel(writer, sheet_name=sheet_name)
-                
-                # Trends sheet
-                if 'trends' in analysis:
-                    trends_data = []
-                    for metric, trend in analysis['trends'].items():
-                        if isinstance(trend, dict):
-                            trend_row = {'Metric': metric}
-                            trend_row.update(trend)
-                            trends_data.append(trend_row)
-                    
-                    if trends_data:
-                        trends_df = pd.DataFrame(trends_data)
-                        trends_df.to_excel(writer, sheet_name='Trends', index=False)
-                
-                # Insights sheet
-                if 'insights' in analysis:
-                    insights_df = pd.DataFrame({'Insights': analysis['insights']})
-                    insights_df.to_excel(writer, sheet_name='Insights', index=False)
-                
-                # Filtered data if present
-                if 'filtered_data' in analysis:
-                    analysis['filtered_data'].to_excel(writer, sheet_name='Data')
-        
-        except Exception as e:
-            self.logger.error(f"Excel export error: {e}")
-            raise
-        
-        output.seek(0)
-        return output.read()
-    
-    def export_to_pdf(self, analysis: Dict[str, Any], charts: List[Any] = None) -> bytes:
-        """Export analysis to PDF format (placeholder)"""
-        self.logger.info("PDF export requested - placeholder implementation")
-        return b"PDF export not yet implemented. Please use Excel or Markdown export."
-    
-    def export_to_powerpoint(self, analysis: Dict[str, Any], template: str = 'default') -> bytes:
-        """Export analysis to PowerPoint format (placeholder)"""
-        self.logger.info("PowerPoint export requested - placeholder implementation")
-        return b"PowerPoint export not yet implemented. Please use Excel or Markdown export."
-    
-    def export_to_markdown(self, analysis: Dict[str, Any]) -> str:
-        """Export analysis to Markdown format"""
-        lines = [
-            f"# Financial Analysis Report",
-            f"\n**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            f"\n**Company:** {analysis.get('company_name', 'Financial Analysis')}",
-            "\n---\n"
-        ]
-        
-        # Summary section
-        if 'summary' in analysis:
-            summary = analysis['summary']
-            lines.extend([
-                "## Executive Summary\n",
-                f"- **Total Metrics Analyzed:** {summary.get('total_metrics', 'N/A')}",
-                f"- **Period Covered:** {summary.get('year_range', 'N/A')}",
-            ])
-            
-            if 'quality_score' in analysis:
-                lines.append(f"- **Data Quality Score:** {analysis['quality_score']:.1f}%")
-            
-            if 'completeness' in summary:
-                lines.append(f"- **Data Completeness:** {summary['completeness']:.1f}%")
-            
-            lines.append("\n")
-        
-        # Key Insights
-        if 'insights' in analysis and analysis['insights']:
-            lines.extend([
-                "## Key Insights\n"
-            ])
-            for insight in analysis['insights']:
-                lines.append(f"- {insight}")
-            lines.append("\n")
-        
-        # Financial Ratios
-        if 'ratios' in analysis:
-            lines.extend([
-                "## Financial Ratios\n"
-            ])
-            
-            for category, ratio_df in analysis['ratios'].items():
-                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-                    lines.append(f"\n### {category} Ratios\n")
-                    lines.append(ratio_df.to_markdown())
-                    lines.append("\n")
-        
-        # Trends
-        if 'trends' in analysis:
-            lines.extend([
-                "## Trend Analysis\n"
-            ])
-            
-            significant_trends = []
-            for metric, trend in analysis['trends'].items():
-                if isinstance(trend, dict) and trend.get('cagr') is not None:
-                    significant_trends.append({
-                        'Metric': metric,
-                        'Direction': trend['direction'],
-                        'CAGR %': f"{trend['cagr']:.1f}" if trend['cagr'] is not None else 'N/A',
-                        'R-squared': f"{trend.get('r_squared', 0):.3f}"
-                    })
-            
-            if significant_trends:
-                trend_df = pd.DataFrame(significant_trends)
-                lines.append(trend_df.to_markdown(index=False))
-                lines.append("\n")
-        
-        return "\n".join(lines)
-
-# --- 27. UI Components Factory ---
-class UIComponentFactory:
-    """Factory for creating UI components with consistent styling"""
-    
-    @staticmethod
-    def create_metric_card(title: str, value: Any, delta: Optional[float] = None, 
-                          help: Optional[str] = None, delta_color: str = "normal") -> None:
-        """Create a metric card with optional delta"""
-        if help:
-            st.metric(title, value, delta, delta_color=delta_color, help=help)
-        else:
-            st.metric(title, value, delta, delta_color=delta_color)
-    
-    @staticmethod
-    def create_progress_indicator(progress: float, text: str = "") -> None:
-        """Create animated progress indicator"""
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        # Animate progress
-        for i in range(int(progress * 100)):
-            progress_bar.progress(i / 100)
-            if text:
-                status_text.text(f"{text} ({i}%)")
-            time.sleep(0.01)
-        
-        progress_bar.progress(progress)
-        if text:
-            status_text.text(f"{text} ({int(progress * 100)}%)")
-    
-    @staticmethod
-    def create_data_quality_badge(score: float) -> None:
-        """Create data quality badge"""
-        if score >= 80:
-            color = "green"
-            label = "High Quality"
-        elif score >= 60:
-            color = "orange"
-            label = "Medium Quality"
-        else:
-            color = "red"
-            label = "Low Quality"
-        
-        st.markdown(
-            f'<span style="background-color: {color}; color: white; '
-            f'padding: 5px 10px; border-radius: 5px; font-weight: bold;">'
-            f'{label} ({score:.0f}%)</span>',
-            unsafe_allow_html=True
-        )
-    
-    @staticmethod
-    def create_insight_card(insight: str, insight_type: str = "info") -> None:
-        """Create insight card with appropriate styling"""
-        icons = {
-            'success': '✅',
-            'warning': '⚠️',
-            'error': '❌',
-            'info': '💡'
-        }
-        
-        colors = {
-            'success': '#d4edda',
-            'warning': '#fff3cd',
-            'error': '#f8d7da',
-            'info': '#d1ecf1'
-        }
-        
-        icon = icons.get(insight_type, '💡')
-        color = colors.get(insight_type, '#d1ecf1')
-        
-        st.markdown(
-            f'<div style="background-color: {color}; padding: 10px; '
-            f'border-radius: 5px; margin: 5px 0; border-left: 4px solid;">'
-            f'{icon} {insight}</div>',
-            unsafe_allow_html=True
-        )
-    
-    @staticmethod
-    def render_with_skeleton(render_func: Callable, loading_key: str):
-        """Render with skeleton loading state"""
-        if SimpleState.get(f'{loading_key}_loading', False):
-            for _ in range(3):
-                st.container().markdown(
-                    """
-                    <div class="skeleton"></div>
-                    """,
-                    unsafe_allow_html=True
-                )
-        else:
-            render_func()
-
-# --- 28. Sample Data Generator ---
-class SampleDataGenerator:
-    """Generate sample financial data for demonstration"""
-    
-    @staticmethod
-    def generate_indian_tech_company() -> pd.DataFrame:
-        """Generate sample data for Indian tech company"""
-        years = ['2019', '2020', '2021', '2022', '2023']
-        
-        data = {
-            # Balance Sheet Items (in ₹ Crores)
-            'Total Assets': [450, 520, 610, 720, 850],
-            'Current Assets': [280, 320, 380, 450, 530],
-            'Non-current Assets': [170, 200, 230, 270, 320],
-            'Cash and Cash Equivalents': [120, 140, 170, 210, 250],
-            'Inventory': [20, 23, 27, 32, 38],
-            'Trade Receivables': [80, 92, 108, 127, 150],
-            'Property Plant and Equipment': [100, 120, 140, 165, 195],
-            
-            'Total Liabilities': [180, 200, 225, 255, 290],
-            'Current Liabilities': [100, 110, 125, 140, 160],
-            'Non-current Liabilities': [80, 90, 100, 115, 130],
-            'Short-term Borrowings': [30, 33, 37, 42, 48],
-            'Long-term Debt': [60, 66, 73, 82, 92],
-            'Trade Payables': [40, 44, 49, 55, 62],
-            
-            'Total Equity': [270, 320, 385, 465, 560],
-            'Share Capital': [100, 100, 100, 100, 100],
-            'Reserves and Surplus': [170, 220, 285, 365, 460],
-            
-            # Income Statement Items
-            'Revenue': [350, 380, 450, 540, 650],
-            'Cost of Goods Sold': [210, 220, 252, 297, 351],
-            'Gross Profit': [140, 160, 198, 243, 299],
-            'Operating Expenses': [80, 88, 103, 121.5, 143],
-            'Operating Income': [60, 72, 95, 121.5, 156],
-            'EBIT': [60, 72, 95, 121.5, 156],
-            'Interest Expense': [8, 8.8, 9.7, 10.9, 12.2],
-            'Income Before Tax': [52, 63.2, 85.3, 110.6, 143.8],
-            'Tax Expense': [15.6, 18.96, 25.59, 33.18, 43.14],
-            'Net Income': [36.4, 44.24, 59.71, 77.42, 100.66],
-            
-            # Cash Flow Items
-            'Operating Cash Flow': [55, 66, 88, 110, 140],
-            'Investing Cash Flow': [-30, -35, -42, -50, -60],
-            'Financing Cash Flow': [-15, -18, -22, -27, -33],
-            'Capital Expenditure': [28, 32, 38, 45, 53],
-            'Free Cash Flow': [27, 34, 50, 65, 87],
-            'Depreciation': [15, 18, 21, 25, 30],
-        }
-        
-        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
-        return df
-    
-    @staticmethod
-    def generate_us_manufacturing() -> pd.DataFrame:
-        """Generate sample data for US manufacturing company"""
-        years = ['2019', '2020', '2021', '2022', '2023']
-        
-        data = {
-            # Balance Sheet Items (in millions USD)
-            'Total Assets': [1200, 1150, 1250, 1350, 1450],
-            'Current Assets': [450, 430, 480, 520, 560],
-            'Non-current Assets': [750, 720, 770, 830, 890],
-            'Cash and Cash Equivalents': [80, 75, 90, 105, 120],
-            'Inventory': [180, 170, 190, 210, 230],
-            'Trade Receivables': [150, 145, 160, 175, 190],
-            'Property Plant and Equipment': [600, 580, 620, 660, 700],
-            
-            'Total Liabilities': [720, 690, 740, 790, 840],
-            'Current Liabilities': [300, 280, 310, 330, 350],
-            'Non-current Liabilities': [420, 410, 430, 460, 490],
-            'Short-term Borrowings': [100, 90, 105, 115, 125],
-            'Long-term Debt': [350, 340, 355, 380, 405],
-            'Trade Payables': [120, 115, 125, 135, 145],
-            
-            'Total Equity': [480, 460, 510, 560, 610],
-            'Share Capital': [200, 200, 200, 200, 200],
-            'Retained Earnings': [280, 260, 310, 360, 410],
-            
-            # Income Statement Items
-            'Revenue': [950, 880, 1020, 1150, 1280],
-            'Cost of Goods Sold': [680, 640, 720, 800, 880],
-            'Gross Profit': [270, 240, 300, 350, 400],
-            'Operating Expenses': [180, 170, 190, 210, 230],
-            'Operating Income': [90, 70, 110, 140, 170],
-            'EBIT': [90, 70, 110, 140, 170],
-            'Interest Expense': [28, 27, 28.5, 30.5, 32.5],
-            'Income Before Tax': [62, 43, 81.5, 109.5, 137.5],
-            'Tax Expense': [15.5, 10.75, 20.38, 27.38, 34.38],
-            'Net Income': [46.5, 32.25, 61.12, 82.12, 103.12],
-            
-            # Cash Flow Items
-            'Operating Cash Flow': [110, 90, 130, 160, 195],
-            'Investing Cash Flow': [-80, -60, -90, -110, -130],
-            'Financing Cash Flow': [-20, -25, -30, -35, -40],
-            'Capital Expenditure': [75, 55, 85, 105, 125],
-            'Free Cash Flow': [35, 35, 45, 55, 70],
-            'Depreciation': [45, 48, 52, 58, 65],
-        }
-        
-        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
-        return df
-    
-    @staticmethod
-    def generate_european_retail() -> pd.DataFrame:
-        """Generate sample data for European retail company"""
-        years = ['2019', '2020', '2021', '2022', '2023']
-        
-        data = {
-            # Balance Sheet Items (in millions EUR)
-            'Total Assets': [800, 750, 820, 880, 950],
-            'Current Assets': [400, 380, 420, 450, 490],
-            'Non-current Assets': [400, 370, 400, 430, 460],
-            'Cash and Cash Equivalents': [60, 55, 70, 85, 100],
-            'Inventory': [200, 190, 210, 225, 245],
-            'Trade Receivables': [80, 75, 85, 90, 95],
-            'Property Plant and Equipment': [350, 325, 350, 375, 400],
-            
-            'Total Liabilities': [480, 450, 490, 520, 560],
-            'Current Liabilities': [250, 235, 260, 275, 295],
-            'Non-current Liabilities': [230, 215, 230, 245, 265],
-            'Short-term Borrowings': [80, 75, 85, 90, 95],
-            'Long-term Debt': [180, 170, 180, 190, 205],
-            'Trade Payables': [130, 125, 135, 145, 155],
-            
-            'Total Equity': [320, 300, 330, 360, 390],
-            'Share Capital': [150, 150, 150, 150, 150],
-            'Retained Earnings': [170, 150, 180, 210, 240],
-            
-            # Income Statement Items
-            'Revenue': [1200, 1050, 1300, 1450, 1600],
-            'Cost of Goods Sold': [840, 750, 900, 1000, 1100],
-            'Gross Profit': [360, 300, 400, 450, 500],
-            'Operating Expenses': [280, 260, 300, 330, 360],
-            'Operating Income': [80, 40, 100, 120, 140],
-            'EBIT': [80, 40, 100, 120, 140],
-            'Interest Expense': [18, 17, 18, 19, 20.5],
-            'Income Before Tax': [62, 23, 82, 101, 119.5],
-            'Tax Expense': [18.6, 6.9, 24.6, 30.3, 35.85],
-            'Net Income': [43.4, 16.1, 57.4, 70.7, 83.65],
-            
-            # Cash Flow Items
-            'Operating Cash Flow': [95, 60, 115, 135, 160],
-            'Investing Cash Flow': [-50, -30, -60, -70, -85],
-            'Financing Cash Flow': [-30, -25, -35, -40, -45],
-            'Capital Expenditure': [45, 25, 55, 65, 80],
-            'Free Cash Flow': [50, 35, 60, 70, 80],
-            'Depreciation': [25, 27, 30, 33, 36],
-        }
-        
-        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
-        return df
-
-# --- 29. Error Recovery Mechanisms ---
-class ErrorRecoveryManager:
-    """Manage error recovery and fallback strategies"""
-    
-    def __init__(self):
-        self.error_counts = defaultdict(int)
-        self.recovery_strategies = {
-            'kaggle_api_down': self._recover_kaggle_api,
-            'model_load_failed': self._recover_model_load,
-            'memory_exceeded': self._recover_memory
-        }
-    
-    def handle_error(self, error_type: str, context: Dict[str, Any]) -> bool:
-        """Handle error with appropriate recovery strategy"""
-        self.error_counts[error_type] += 1
-        
-        if error_type in self.recovery_strategies:
-            return self.recovery_strategies[error_type](context)
-        
-        return False
-    
-    def _recover_kaggle_api(self, context: Dict[str, Any]) -> bool:
-        """Recover from Kaggle API failure"""
-        wait_time = min(2 ** self.error_counts['kaggle_api_down'], 300)
-        time.sleep(wait_time)
-        
-        return context.get('mapper', {}).get('_test_kaggle_connection', lambda: False)()
-    
-    def _recover_model_load(self, context: Dict[str, Any]) -> bool:
-        """Recover from model loading failure"""
-        alternative_models = ['all-MiniLM-L6-v2', 'paraphrase-MiniLM-L3-v2', 'distilbert-base-nli-mean-tokens']
-        
-        for model in alternative_models:
-            try:
-                # Attempt to load alternative model
-                return True
-            except:
-                continue
-        
-        return False
-    
-    def _recover_memory(self, context: Dict[str, Any]) -> bool:
-        """Recover from memory issues"""
-        if 'mapper' in context:
-            context['mapper'].embeddings_cache.clear()
-        
-        gc.collect()
-        
-        return True
-
-# --- 30. Main Application Class ---
-class FinancialAnalyticsPlatform:
-    """Main application with advanced architecture and all integrations"""
-    
-    def __init__(self):
-        # Initialize session state for persistent data
-        if 'initialized' not in st.session_state:
-            self._initialize_session_state()
-        
-        # Initialize configuration with session state overrides
-        self.config = Configuration(st.session_state.get('config_overrides', {}))
-        
-        # Initialize logger
-        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
-        
-        # Initialize components only once
-        if 'components' not in st.session_state:
-            st.session_state.components = self._initialize_components()
-        
-        self.components = st.session_state.components
-        
-        # Initialize managers
-        self.ui_factory = UIComponentFactory()
-        self.sample_generator = SampleDataGenerator()
-        self.export_manager = ExportManager(self.config)
-        self.collaboration_manager = CollaborationManager()
-        self.tutorial_system = TutorialSystem()
-        self.nl_processor = NLQueryProcessor(self.config)
-        self.ml_forecaster = MLForecaster(self.config)
-        self.error_recovery = ErrorRecoveryManager()
-        
-        # Initialize compression handler
-        self.compression_handler = CompressionHandler(self.logger)
-    
-    def __del__(self):
-        """Cleanup resources"""
-        if hasattr(self, 'compression_handler'):
-            self.compression_handler.cleanup()
-    
-    def _initialize_session_state(self):
-        """Initialize all session state variables"""
-        defaults = {
-            'initialized': True,
-            'analysis_data': None,
-            'metric_mappings': None,
-            'pn_mappings': None,
-            'pn_results': None,
-            'ai_mapping_result': None,
-            'company_name': None,
-            'data_source': None,
-            'show_manual_mapping': False,
-            'config_overrides': {},
-            'uploaded_files': [],
-            'simple_parse_mode': False,
-            'number_format_value': 'Indian',
-            'show_tutorial': True,
-            'tutorial_step': 0,
-            'collaboration_session': None,
-            'query_history': [],
-            'ml_forecast_results': None,
-            'kaggle_api_url': '',
-            'kaggle_api_enabled': False,
-            'kaggle_status': {},
-            'show_kaggle_config': False,
-        }
-        
-        for key, value in defaults.items():
-            if key not in st.session_state:
-                st.session_state[key] = value
-    
-    def _initialize_components(self) -> Dict[str, Component]:
-        """Initialize all components with dependency injection"""
-        components = {
-            'security': SecurityModule(self.config),
-            'processor': DataProcessor(self.config),
-            'analyzer': FinancialAnalysisEngine(self.config),
-            'mapper': AIMapper(self.config),
-        }
-        
-        # Initialize all components
-        for name, component in components.items():
-            try:
-                component.initialize()
-                self.logger.info(f"Initialized component: {name}")
-            except Exception as e:
-                self.logger.error(f"Failed to initialize {name}: {e}")
-                # Try error recovery
-                self.error_recovery.handle_error(f"{name}_init_failed", {'component': component})
-        
-        return components
-    
-    # State helper methods
-    def get_state(self, key: str, default: Any = None) -> Any:
-        """Get value from session state"""
-        return SimpleState.get(key, default)
-    
-    def set_state(self, key: str, value: Any):
-        """Set value in session state"""
-        SimpleState.set(key, value)
-    
-    def _clear_all_caches(self):
-        """Clear all caches"""
-        if 'analyzer' in self.components:
-            self.components['analyzer'].cache.clear()
-        if 'mapper' in self.components:
-            self.components['mapper'].embeddings_cache.clear()
-        
-        # Clear performance monitor
-        performance_monitor.clear_metrics()
-        
-        # Force garbage collection
-        gc.collect()
-    
-    def _reset_configuration(self):
-        """Reset configuration to defaults"""
-        self.set_state('config_overrides', {})
-        self.config = Configuration()
-        st.success("Configuration reset to defaults!")
-    
-    def _export_logs(self):
-        """Export application logs"""
-        try:
-            log_dir = Path("logs")
-            if log_dir.exists():
-                # Create a zip file with all logs
-                import zipfile
-                zip_buffer = io.BytesIO()
-                
-                with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
-                    for log_file in log_dir.glob("*.log"):
-                        zip_file.write(log_file, log_file.name)
-                
-                zip_buffer.seek(0)
-                
-                st.download_button(
-                    label="Download Logs",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                    mime="application/zip"
-                )
-            else:
-                st.warning("No log files found")
-        except Exception as e:
-            st.error(f"Failed to export logs: {e}")
-    
-    @error_boundary()
-    def run(self):
-        """Main application entry point"""
-        try:
-            # Set page config
-            st.set_page_config(
-                page_title="Elite Financial Analytics Platform v5.0",
-                page_icon="💹",
-                layout="wide",
-                initial_sidebar_state="expanded"
-            )
-            
-            # Apply custom CSS
-            self._apply_custom_css()
-            
-            # Render tutorial if active
-            self.tutorial_system.render()
-            
-            # Render header
-            self._render_header()
-            
-            # Render sidebar
-            self._render_sidebar()
-            
-            # Render main content
-            self._render_main_content()
-            
-            # Show performance metrics in footer if debug mode
-            if self.config.get('app.debug', False):
-                self._render_debug_footer()
-            
-        except Exception as e:
-            self.logger.error(f"Application error: {e}")
-            st.error("An unexpected error occurred. Please refresh the page.")
-            
-            if self.config.get('app.debug', False):
-                st.exception(e)
-    
-    def _apply_custom_css(self):
-        """Apply custom CSS styling"""
-        st.markdown("""
-        <style>
-        .main-header {
-            font-size: 3rem;
-            font-weight: 800;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-align: center;
-            padding: 2rem 0;
-            margin-bottom: 2rem;
-        }
-        
-        .sidebar .sidebar-content {
-            background-color: #f8f9fa;
-        }
-        
-        .stMetric {
-            background-color: #ffffff;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        
-        .insight-card {
-            padding: 1rem;
-            margin: 0.5rem 0;
-            border-radius: 0.5rem;
-            border-left: 4px solid;
-        }
-        
-        .quality-badge {
-            display: inline-block;
-            padding: 0.25rem 0.75rem;
-            border-radius: 1rem;
-            font-weight: 600;
-            font-size: 0.875rem;
-        }
-        
-        .skeleton {
-            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-            background-size: 200% 100%;
-            animation: loading 1.5s infinite;
-            height: 20px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        
-        @keyframes loading {
-            0% { background-position: 200% 0; }
-            100% { background-position: -200% 0; }
-        }
-        
-        .collaboration-indicator {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background: #4CAF50;
-            color: white;
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-size: 12px;
-            z-index: 1000;
-        }
-        
-        .kaggle-status {
-            position: fixed;
-            top: 60px;
-            right: 20px;
-            background: white;
-            border: 2px solid #4CAF50;
-            border-radius: 10px;
-            padding: 10px 20px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            z-index: 1000;
-        }
-        
-        .kaggle-status.error {
-            border-color: #f44336;
-        }
-        
-        .kaggle-metric {
-            display: inline-block;
-            margin: 0 10px;
-            font-size: 14px;
-        }
-        
-        .api-health {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-            margin-right: 5px;
-        }
-        
-        .api-health.healthy {
-            background-color: #4CAF50;
-        }
-        
-        .api-health.unhealthy {
-            background-color: #f44336;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-    
-    def _render_header(self):
-        """Render application header"""
-        st.markdown(
-            '<h1 class="main-header">💹 Elite Financial Analytics Platform v5.0</h1>',
-            unsafe_allow_html=True
-        )
-        
-        # Collaboration indicator
-        if self.get_state('collaboration_session'):
-            session_id = self.get_state('collaboration_session')
-            activity = self.collaboration_manager.get_session_activity(session_id)
-            if activity:
-                st.markdown(
-                    f'<div class="collaboration-indicator">👥 {len(activity["active_users"])} users online</div>',
-                    unsafe_allow_html=True
-                )
-        
-        # Show Kaggle API status if enabled
-        if self.config.get('ui.show_kaggle_status', True) and self.get_state('kaggle_api_enabled'):
-            self._render_kaggle_status_badge()
-        
-        # Show system status
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            components_status = sum(1 for c in self.components.values() if c._initialized)
-            self.ui_factory.create_metric_card(
-                "Components", 
-                f"{components_status}/{len(self.components)}",
-                help="Active system components"
-            )
-        
-        with col2:
-            mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
-            self.ui_factory.create_metric_card(
-                "Mode", 
-                mode.name,
-                help="Current operating mode"
-            )
-        
-        with col3:
-            if 'mapper' in self.components:
-                cache_stats = self.components['mapper'].embeddings_cache.get_stats()
-                hit_rate = cache_stats.get('hit_rate', 0)
-                self.ui_factory.create_metric_card(
-                    "Cache Hit Rate", 
-                    f"{hit_rate:.1f}%",
-                    help="AI cache performance"
-                )
-        
-        with col4:
-            version = self.config.get('app.version', 'Unknown')
-            self.ui_factory.create_metric_card(
-                "Version", 
-                version,
-                help="Platform version"
-            )
-    
-    def _render_kaggle_status_badge(self):
-        """Render floating Kaggle API status badge"""
-        if 'mapper' in self.components:
-            status = self.components['mapper'].get_api_status()
-            
-            if status['kaggle_available']:
-                stats = status.get('api_stats', {})
-                
-                status_html = f"""
-                <div class="kaggle-status">
-                    <span class="api-health healthy"></span>
-                    <strong>Kaggle GPU Active</strong>
-                    <span class="kaggle-metric">📊 {stats.get('total_requests', 0)} requests</span>
-                    <span class="kaggle-metric">⚡ {stats.get('avg_response_time', 0):.2f}s avg</span>
-                    <span class="kaggle-metric">❌ {stats.get('error_rate', 0):.1%} errors</span>
-                </div>
-                """
-            else:
-                status_html = """
-                <div class="kaggle-status error">
-                    <span class="api-health unhealthy"></span>
-                    <strong>Kaggle GPU Offline</strong>
-                    <span class="kaggle-metric">Using local processing</span>
-                </div>
-                """
-            
-            st.markdown(status_html, unsafe_allow_html=True)
-    
-    def _render_sidebar(self):
-        """Render sidebar with configuration options"""
-        st.sidebar.title("⚙️ Configuration")
-        
-        # Kaggle GPU Configuration Section
-        st.sidebar.header("🖥️ Kaggle GPU Configuration")
-        
-        # Enable/Disable toggle
-        kaggle_enabled = st.sidebar.checkbox(
-            "Enable Kaggle GPU Acceleration",
-            value=self.get_state('kaggle_api_enabled', False),
-            help="Use remote GPU for faster processing"
-        )
-        
-        if kaggle_enabled:
-            # Show configuration options
-            with st.sidebar.expander("Kaggle API Settings", expanded=True):
-                # API URL input
-                api_url = st.text_input(
-                    "Ngrok URL",
-                    value=self.get_state('kaggle_api_url', ''),
-                    placeholder="https://xxxx.ngrok-free.app",
-                    help="Paste the ngrok URL from your Kaggle notebook"
-                )
-                
-                # Optional API key
-                api_key = st.text_input(
-                    "API Key (Optional)",
-                    type="password",
-                    help="Optional API key for authentication"
-                )
-                
-                # Advanced settings
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    timeout = st.number_input(
-                        "Timeout (seconds)",
-                        min_value=10,
-                        max_value=300,
-                        value=30,
-                        help="Request timeout"
-                    )
-                
-                with col2:
-                    batch_size = st.number_input(
-                        "Batch Size",
-                        min_value=1,
-                        max_value=100,
-                        value=50,
-                        help="Optimal batch size for GPU"
-                    )
-                
-                # Test connection button
-                if st.button("🔌 Test Connection", type="primary"):
-                    if api_url:
-                        # Update configuration
-                        self.config.set('ai.kaggle_api_url', api_url)
-                        self.config.set('ai.kaggle_api_key', api_key)
-                        self.config.set('ai.kaggle_api_timeout', timeout)
-                        self.config.set('ai.kaggle_batch_size', batch_size)
-                        self.config.set('ai.use_kaggle_api', True)
-                        
-                        # Reinitialize AI mapper
-                        with st.spinner("Testing Kaggle connection..."):
-                            try:
-                                self.components['mapper'].cleanup()
-                                self.components['mapper'] = AIMapper(self.config)
-                                self.components['mapper'].initialize()
-                                
-                                status = self.components['mapper'].get_api_status()
-                                
-                                if status['kaggle_available']:
-                                    st.success("✅ Successfully connected to Kaggle GPU!")
-                                    
-                                    # Show API info
-                                    if status['api_info']:
-                                        st.info(f"""
-                                        **GPU Info:**
-                                        - Model: {status['api_info'].get('model', 'Unknown')}
-                                        - GPU: {status['api_info'].get('gpu_name', 'Unknown')}
-                                        - Status: {status['api_info'].get('status', 'Unknown')}
-                                        """)
-                                    
-                                    # Save to session state
-                                    self.set_state('kaggle_api_url', api_url)
-                                    self.set_state('kaggle_api_enabled', True)
-                                    self.set_state('kaggle_status', status)
-                                    
-                                else:
-                                    st.error("❌ Connection failed. Please check your URL and try again.")
-                            except Exception as e:
-                                st.error(f"❌ Connection error: {str(e)}")
-                    else:
-                        st.warning("Please enter a valid ngrok URL")
-                
-                # Show connection guide
-                with st.expander("📚 Setup Guide"):
-                    st.markdown("""
-                    **How to connect to Kaggle GPU:**
-                    
-                    1. **Run the Kaggle notebook** with the API server code
-                    2. **Copy the ngrok URL** shown in the output
-                    3. **Paste it above** and click Test Connection
-                    
-                    **Benefits:**
-                    - 🚀 10-100x faster embedding generation
-                    - 💾 Larger model support (GPU memory)
-                    - 🔋 Reduced local CPU/memory usage
-                    - 📊 Better accuracy with larger models
-                    
-                    **Troubleshooting:**
-                    - Ensure the Kaggle notebook is running
-                    - Check that ngrok is not expired (8 hour limit)
-                    - Verify the URL includes https://
-                    """)
-        else:
-            # Disabled - clear settings
-            if self.get_state('kaggle_api_enabled'):
-                self.config.set('ai.use_kaggle_api', False)
-                self.set_state('kaggle_api_enabled', False)
-            
-            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
-        
-        # Show performance comparison
-        if 'mapper' in self.components:
-            status = self.components['mapper'].get_api_status()
-            
-            if status['kaggle_configured'] or status['local_model_available']:
-                st.sidebar.subheader("🎯 Processing Status")
-                
-                # Show what's available
-                processing_methods = []
-                if status['kaggle_available']:
-                    processing_methods.append("✅ Kaggle GPU")
-                if status['local_model_available']:
-                    processing_methods.append("✅ Local Model")
-                if not processing_methods:
-                    processing_methods.append("✅ Fuzzy Matching")
-                
-                for method in processing_methods:
-                    st.sidebar.text(method)
-                
-                # Cache statistics
-                st.sidebar.metric("Cache Size", status['cache_size'])
-        
-        # Data input section
-        st.sidebar.header("📥 Data Input")
-        
-        input_method = st.sidebar.radio(
-            "Input Method",
-            ["Upload Files", "Sample Data", "Manual Entry"],
-            key="input_method"
-        )
-        
-        if input_method == "Upload Files":
-            self._render_file_upload()
-        elif input_method == "Sample Data":
-            self._render_sample_data_loader()
-        else:
-            st.sidebar.info("Use the main area for manual data entry")
-        
-        # Settings section
-        st.sidebar.header("⚙️ Settings")
-        
-        # Performance mode
-        mode_options = [m.name for m in Configuration.DisplayMode]
-        current_mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
-        
-        selected_mode = st.sidebar.selectbox(
-            "Performance Mode",
-            mode_options,
-            index=mode_options.index(current_mode.name),
-            help="FULL: All features | LITE: Balanced | MINIMAL: Fast"
-        )
-        
-        if selected_mode != current_mode.name:
-            self.config.set('app.display_mode', Configuration.DisplayMode[selected_mode])
-            self.set_state('config_overrides', {'app': {'display_mode': Configuration.DisplayMode[selected_mode]}})
-        
-        # AI Settings
-        if selected_mode != "MINIMAL":
-            st.sidebar.subheader("🤖 AI Settings")
-            
-            ai_enabled = st.sidebar.checkbox(
-                "Enable AI Mapping",
-                value=self.config.get('ai.enabled', True),
-                help="Use AI for intelligent metric mapping"
-            )
-            
-            self.config.set('ai.enabled', ai_enabled)
-            
-            if ai_enabled:
-                confidence_threshold = st.sidebar.slider(
-                    "Confidence Threshold",
-                    0.0, 1.0,
-                    self.config.get('ai.similarity_threshold', 0.6),
-                    0.05,
-                    help="Minimum confidence for automatic mapping"
-                )
-                self.config.set('ai.similarity_threshold', confidence_threshold)
-        
-        # Collaboration Settings
-        if self.config.get('app.enable_collaboration', True):
-            st.sidebar.subheader("👥 Collaboration")
-            
-            if not self.get_state('collaboration_session'):
-                if st.sidebar.button("Start Collaborative Session"):
-                    session_id = self.collaboration_manager.create_session(
-                        self.get_state('analysis_data_id', 'default'),
-                        'current_user'
-                    )
-                    self.set_state('collaboration_session', session_id)
-                    st.sidebar.success(f"Session created: {session_id}")
-            else:
-                session_id = self.get_state('collaboration_session')
-                st.sidebar.info(f"Session: {session_id}")
-                
-                if st.sidebar.button("Leave Session"):
-                    self.set_state('collaboration_session', None)
-                    st.sidebar.info("Left collaborative session")
-        
-        # Number format
-        st.sidebar.subheader("🔢 Number Format")
-        
-        current_format = self.get_state('number_format_value', 'Indian')
-        
-        format_option = st.sidebar.radio(
-            "Display Format",
-            ["Indian (₹ Lakhs/Crores)", "International ($ Millions)"],
-            index=0 if current_format == 'Indian' else 1,
-            key="number_format_radio"
-        )
-        
-        self.set_state('number_format_value', 
-                      'Indian' if "Indian" in format_option else 'International')
-        
-        # Advanced options
-        with st.sidebar.expander("🔧 Advanced Options"):
-            debug_mode = st.sidebar.checkbox(
-                "Debug Mode",
-                value=self.config.get('app.debug', False),
-                help="Show detailed error information"
-            )
-            self.config.set('app.debug', debug_mode)
-            
-            if st.sidebar.button("Clear Cache"):
-                self._clear_all_caches()
-                st.success("Cache cleared!")
-            
-            if st.sidebar.button("Reset Configuration"):
-                self._reset_configuration()
-            
-            if st.sidebar.button("Export Logs"):
-                self._export_logs()
-    
-    def _render_file_upload(self):
-        """Render file upload interface"""
-        allowed_types = self.config.get('app.allowed_file_types', [])
-        max_size = self.config.get('security.max_upload_size_mb', 50)
-        
-        # File uploader
-        temp_files = st.sidebar.file_uploader(
-            f"Upload Financial Statements (Max {max_size}MB each)",
-            type=allowed_types,
-            accept_multiple_files=True,
-            key="file_uploader",
-            help="You can upload compressed files (.zip, .7z) containing multiple financial statements"
-        )
-        
-        if temp_files:
-            st.session_state['uploaded_files'] = temp_files
-            
-            # Count files and show info
-            regular_files = [f for f in temp_files if not f.name.lower().endswith(('.zip', '.7z'))]
-            compressed_files = [f for f in temp_files if f.name.lower().endswith(('.zip', '.7z'))]
-            
-            if compressed_files:
-                st.sidebar.info(f"📦 {len(compressed_files)} compressed file(s) uploaded")
-            if regular_files:
-                st.sidebar.info(f"📄 {len(regular_files)} regular file(s) uploaded")
-        
-        uploaded_files = st.session_state['uploaded_files']
-        
-        if uploaded_files:
-            # Simple parsing mode checkbox
-            st.session_state['simple_parse_mode'] = st.sidebar.checkbox(
-                "Use simple parsing mode", 
-                value=st.session_state['simple_parse_mode'],
-                help="Try this if normal parsing fails"
-            )
-            
-            # Check for 7z files and py7zr availability
-            has_7z = any(f.name.lower().endswith('.7z') for f in uploaded_files)
-            if has_7z and not SEVEN_ZIP_AVAILABLE:
-                st.sidebar.warning("⚠️ 7z files detected but py7zr not installed")
-                st.sidebar.code("pip install py7zr")
-            
-            # Validate files
-            all_valid = True
-            for file in uploaded_files:
-                # Skip validation for compressed files
-                if not file.name.lower().endswith(('.zip', '.7z')):
-                    result = self.components['security'].validate_file_upload(file)
-                    if not result.is_valid:
-                        st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
-                        all_valid = False
-            
-            if all_valid and st.sidebar.button("Process Files", type="primary"):
-                self._process_uploaded_files(uploaded_files)
-        
-        # Format guide
-        with st.sidebar.expander("📋 File Format Guide"):
-            st.info("""
-            **Supported Financial Data Formats:**
-            
-            1. **Capitaline Exports**: Both .xls (HTML) and true Excel formats
-            2. **Moneycontrol/BSE/NSE**: HTML exports with .xls extension
-            3. **Standard CSV/Excel**: With metrics in rows and years in columns
-            4. **Compressed Files**: 
-               - ZIP files (.zip) containing multiple statements
-               - 7Z files (.7z) for maximum compression
-            
-            **💡 Pro Tips**: 
-            - Compress multiple files into a single ZIP/7Z for faster uploads
-            - 7Z typically provides 50-70% better compression than ZIP
-            - You can mix different file types in a single compressed file
-            """)
-    
-    def _render_sample_data_loader(self):
-        """Render sample data loader"""
-        sample_options = [
-            "Indian Tech Company (IND-AS)",
-            "US Manufacturing (GAAP)",
-            "European Retail (IFRS)"
-        ]
-        
-        selected_sample = st.sidebar.selectbox(
-            "Select Sample Dataset",
-            sample_options
-        )
-        
-        if st.sidebar.button("Load Sample Data", type="primary"):
-            self._load_sample_data(selected_sample)
-    
-    def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
-        """Process uploaded files including compressed files"""
-        try:
-            all_dataframes = []
-            file_info = []
-            
-            with st.spinner("Processing uploaded files..."):
-                for file in uploaded_files:
-                    try:
-                        # Handle compressed files
-                        if file.name.lower().endswith(('.zip', '.7z')):
-                            extracted_files = self.compression_handler.extract_compressed_file(file)
-                            
-                            for extracted_name, extracted_content in extracted_files:
-                                # Create a temporary UploadedFile-like object
-                                temp_file = io.BytesIO(extracted_content)
-                                temp_file.name = extracted_name
-                                
-                                df = self._parse_single_file(temp_file)
-                                if df is not None and not df.empty:
-                                    all_dataframes.append(df)
-                                    file_info.append({
-                                        'name': extracted_name,
-                                        'source': f"{file.name} (compressed)",
-                                        'shape': df.shape
-                                    })
-                        else:
-                            # Handle regular files
-                            df = self._parse_single_file(file)
-                            if df is not None and not df.empty:
-                                all_dataframes.append(df)
-                                file_info.append({
-                                    'name': file.name,
-                                    'source': 'direct upload',
-                                    'shape': df.shape
-                                })
-                    except Exception as e:
-                        st.error(f"Error processing {file.name}: {str(e)}")
-                        continue
-            
-            if all_dataframes:
-                # Merge dataframes if multiple
-                if len(all_dataframes) == 1:
-                    final_df = all_dataframes[0]
-                else:
-                    final_df = self._merge_dataframes(all_dataframes)
-                
-                # Process and validate
-                processed_df, validation_result = self.components['processor'].process(final_df, "uploaded_data")
-                
-                # Store in session state
-                self.set_state('analysis_data', processed_df)
-                self.set_state('data_source', 'uploaded_files')
-                
-                # Show success message
-                st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)")
-                
-                # Show file info
-                if len(file_info) > 1:
-                    with st.expander("📁 Processed Files"):
-                        info_df = pd.DataFrame(file_info)
-                        st.dataframe(info_df, use_container_width=True)
-                
-                # Show validation results
-                if validation_result.warnings:
-                    for warning in validation_result.warnings[:3]:
-                        st.warning(warning)
-                
-                if validation_result.corrections:
-                    st.info(f"Applied {len(validation_result.corrections)} auto-corrections")
-                
-            else:
-                st.error("No valid financial data found in uploaded files")
-                
-        except Exception as e:
-            st.error(f"Error processing files: {str(e)}")
-        finally:
-            # Cleanup temporary files
-            self.compression_handler.cleanup()
-    
-    def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
-        """Parse a single file and return DataFrame"""
-        try:
-            file_ext = Path(file.name).suffix.lower()
-            
-            if file_ext == '.csv':
-                return pd.read_csv(file, index_col=0)
-            elif file_ext in ['.xls', '.xlsx']:
-                return pd.read_excel(file, index_col=0, engine='openpyxl')
-            elif file_ext in ['.html', '.htm']:
-                # Try to parse HTML tables
-                tables = pd.read_html(file)
-                if tables:
-                    # Use the largest table
-                    return max(tables, key=len).set_index(0)
-            
-            return None
-            
-        except Exception as e:
-            self.logger.error(f"Error parsing {file.name}: {e}")
-            return None
-    
-    def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
-        """Merge multiple dataframes intelligently"""
-        # Simple concatenation for now
-        # In production, would implement smarter merging logic
-        return pd.concat(dataframes, axis=0).dropna(how='all')
-    
-    def _load_sample_data(self, sample_name: str):
-        """Load sample data"""
-        try:
-            with st.spinner(f"Loading {sample_name}..."):
-                if "Indian Tech" in sample_name:
-                    df = self.sample_generator.generate_indian_tech_company()
-                    company_name = "TechCorp India Ltd."
-                elif "US Manufacturing" in sample_name:
-                    df = self.sample_generator.generate_us_manufacturing()
-                    company_name = "ManufactureCorp USA"
-                elif "European Retail" in sample_name:
-                    df = self.sample_generator.generate_european_retail()
-                    company_name = "RetailChain Europe"
-                else:
-                    st.error("Unknown sample dataset")
-                    return
-                
-                # Process data
-                processed_df, validation_result = self.components['processor'].process(df, "sample_data")
-                
-                # Store in session state
-                self.set_state('analysis_data', processed_df)
-                self.set_state('company_name', company_name)
-                self.set_state('data_source', 'sample_data')
-                
-                st.success(f"✅ Loaded sample data: {sample_name}")
-                
-        except Exception as e:
-            st.error(f"Error loading sample data: {str(e)}")
-    
-    def _render_main_content(self):
-        """Render main content area"""
-        # Natural Language Query Bar
-        if self.config.get('app.enable_ml_features', True):
-            self._render_query_bar()
-        
-        # Main content
-        if self.get_state('analysis_data') is not None:
-            self._render_analysis_interface()
-        else:
-            self._render_welcome_screen()
-    
-    def _render_query_bar(self):
-        """Render natural language query bar"""
-        col1, col2 = st.columns([5, 1])
-        
-        with col1:
-            query = st.text_input(
-                "🔍 Ask a question about your financial data",
-                placeholder="e.g., What was the revenue growth last year?",
-                key="nl_query"
-            )
-        
-        with col2:
-            if st.button("Ask", type="primary", key="ask_button"):
-                if query and self.get_state('analysis_data') is not None:
-                    with st.spinner("Processing query..."):
-                        analysis = self.components['analyzer'].analyze_financial_statements(
-                            self.get_state('analysis_data')
-                        )
-                        
-                        result = self.nl_processor.process_query(
-                            query,
-                            self.get_state('analysis_data'),
-                            analysis
-                        )
-                        
-                        # Store in history
-                        query_history = self.get_state('query_history', [])
-                        query_history.append({
-                            'query': query,
-                            'result': result,
-                            'timestamp': datetime.now()
-                        })
-                        self.set_state('query_history', query_history[-10:])
-                        
-                        # Display result
-                        self._display_query_result(result)
-    
-    def _display_query_result(self, result: Dict[str, Any]):
-        """Display natural language query result"""
-        if result['type'] == 'growth_analysis':
-            st.subheader("📈 Growth Analysis")
-            for item in result['data']:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric(item['metric'], f"{item['last_value']:,.0f}")
-                with col2:
-                    st.metric("CAGR", f"{item['cagr']:.1f}%")
-                with col3:
-                    st.metric("YoY Change", f"{item['yoy_change']:.1f}%")
-        
-        elif result['type'] == 'forecast':
-            st.subheader("🔮 Forecast Results")
-            forecasts = result['data'].get('forecasts', {})
-            for metric, forecast in forecasts.items():
-                st.write(f"**{metric}**")
-                
-                # Create forecast chart
-                fig = go.Figure()
-                
-                # Forecast
-                fig.add_trace(go.Scatter(
-                    x=forecast['periods'],
-                    y=forecast['values'],
-                    mode='lines+markers',
-                    name='Forecast',
-                    line=dict(dash='dash')
-                ))
-                
-                fig.update_layout(height=300)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        elif result['type'] == 'summary':
-            st.subheader("📊 Summary")
-            summary = result['data']
-            
-            # Display summary metrics
-            cols = st.columns(4)
-            summary_data = summary.get('summary', {})
-            
-            if 'total_metrics' in summary_data:
-                cols[0].metric("Total Metrics", summary_data['total_metrics'])
-            if 'year_range' in summary_data:
-                cols[1].metric("Period", summary_data['year_range'])
-            if 'quality_score' in summary:
-                cols[2].metric("Data Quality", f"{summary['quality_score']:.0f}%")
-            
-            # Display insights
-            if 'insights' in summary:
-                st.write("**Key Insights:**")
-                for insight in summary['insights']:
-                    st.write(f"- {insight}")
-        
-        else:
-            st.info(result.get('message', 'Query processed successfully'))
-    
-    def _render_welcome_screen(self):
-        """Render welcome screen"""
-        st.header("Welcome to Elite Financial Analytics Platform v5.0")
-        
-        # Feature cards
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.info("""
-            ### 📊 Advanced Analytics
-            - Comprehensive ratio analysis
-            - ML-powered forecasting
-            - Anomaly detection
-            - Natural language queries
-            """)
-        
-        with col2:
-            st.success("""
-            ### 🤖 AI-Powered Features
-            - Intelligent metric mapping
-            - Kaggle GPU acceleration
-            - Pattern recognition
-            - Automated insights
-            """)
-        
-        with col3:
-            st.warning("""
-            ### 👥 Collaboration
-            - Real-time collaboration
-            - Share analyses
-            - Export to multiple formats
-            - Interactive tutorials
-            """)
-        
-        # Quick start guide
-        with st.expander("🚀 Quick Start Guide", expanded=True):
-            st.markdown("""
-            1. **Upload Data**: Use the sidebar to upload financial statements
-            2. **Configure Kaggle GPU**: Optional - for faster AI processing
-            3. **AI Mapping**: Let AI automatically map your metrics or do it manually
-            4. **Analyze**: Explore comprehensive analysis with ratios, trends, and forecasts
-            5. **Query**: Ask questions in natural language about your data
-            6. **Collaborate**: Share your analysis with team members
-            7. **Export**: Generate professional reports in various formats
-            
-            **New in v5.0:**
-            - 🖥️ **Kaggle GPU Integration**: 10-100x faster processing
-            - 🚀 Enhanced ML-powered forecasting
-            - 💬 Improved natural language queries
-            - 👥 Real-time collaboration features
-            - 📈 Advanced performance monitoring
-            - 🔒 Enhanced security features
-            - 📦 Support for compressed files (ZIP/7Z)
-            """)
-        
-        # Sample data quick access
-        st.subheader("🎯 Try with Sample Data")
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("Indian Tech Company", key="sample_indian"):
-                self._load_sample_data("Indian Tech Company (IND-AS)")
-        
-        with col2:
-            if st.button("US Manufacturing", key="sample_us"):
-                self._load_sample_data("US Manufacturing (GAAP)")
-        
-        with col3:
-            if st.button("European Retail", key="sample_eu"):
-                self._load_sample_data("European Retail (IFRS)")
-    
-    def _render_analysis_interface(self):
-        """Render main analysis interface"""
-        data = self.get_state('analysis_data')
-        
-        if data is None:
-            self._render_welcome_screen()
-            return
-        
-        # Analysis tabs
-        tabs = st.tabs([
-            "📊 Overview",
-            "📈 Financial Ratios", 
-            "📉 Trends & Forecasting",
-            "🎯 Penman-Nissim",
-            "🏭 Industry Comparison",
-            "🔍 Data Explorer",
-            "📄 Reports",
-            "🤖 ML Insights"
-        ])
-        
-        with tabs[0]:
-            self._render_overview_tab(data)
-        
-        with tabs[1]:
-            self._render_ratios_tab(data)
-        
-        with tabs[2]:
-            self._render_trends_tab(data)
-        
-        with tabs[3]:
-            self._render_penman_nissim_tab(data)
-        
-        with tabs[4]:
-            self._render_industry_tab(data)
-        
-        with tabs[5]:
-            self._render_data_explorer_tab(data)
-        
-        with tabs[6]:
-            self._render_reports_tab(data)
-        
-        with tabs[7]:
-            self._render_ml_insights_tab(data)
-    
-    @error_boundary()
-    def _render_overview_tab(self, data: pd.DataFrame):
-        """Render overview tab with key metrics and insights"""
-        st.header("Financial Overview")
-        
-        # Analyze data
-        with performance_monitor.measure("overview_analysis"):
-            analysis = self.components['analyzer'].analyze_financial_statements(data)
-        
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            self.ui_factory.create_metric_card(
-                "Total Metrics",
-                analysis['summary']['total_metrics']
-            )
-        
-        with col2:
-            self.ui_factory.create_metric_card(
-                "Years Covered",
-                analysis['summary']['years_covered']
-            )
-        
-        with col3:
-            self.ui_factory.create_metric_card(
-                "Data Completeness",
-                f"{analysis['summary']['completeness']:.1f}%"
-            )
-        
-        with col4:
-            quality_score = analysis['quality_score']
-            self.ui_factory.create_data_quality_badge(quality_score)
-        
-        # Key insights
-        st.subheader("Key Insights")
-        
-        insights = analysis.get('insights', [])
-        if insights:
-            for i, insight in enumerate(insights[:8]):
-                if "⚠️" in insight:
-                    insight_type = "warning"
-                elif "📉" in insight:
-                    insight_type = "error"
-                elif "🚀" in insight or "📊" in insight:
-                    insight_type = "success"
-                else:
-                    insight_type = "info"
-                
-                self.ui_factory.create_insight_card(insight, insight_type)
-        else:
-            st.info("No specific insights available yet. Complete the analysis to see insights.")
-        
-        # Anomaly detection
-        if 'anomalies' in analysis:
-            anomalies = analysis['anomalies']
-            total_anomalies = sum(len(v) for v in anomalies.values())
-            
-            if total_anomalies > 0:
-                st.subheader("🔍 Anomaly Detection")
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Value Anomalies", len(anomalies.get('value_anomalies', [])))
-                
-                with col2:
-                    st.metric("Trend Anomalies", len(anomalies.get('trend_anomalies', [])))
-                
-                with col3:
-                    st.metric("Ratio Anomalies", len(anomalies.get('ratio_anomalies', [])))
-                
-                with st.expander("View Anomaly Details"):
-                    for anomaly_type, items in anomalies.items():
-                        if items:
-                            st.write(f"**{anomaly_type.replace('_', ' ').title()}:**")
-                            anomaly_df = pd.DataFrame(items)
-                            st.dataframe(anomaly_df, use_container_width=True)
-        
-        # Quick visualizations
-        st.subheader("Quick Visualizations")
-        
-        metrics = analysis.get('metrics', {})
-        
-        if metrics:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                revenue_data = metrics.get('revenue', [])
-                if revenue_data:
-                    self._render_metric_chart(revenue_data[0], "Revenue Trend")
-            
-            with col2:
-                profit_data = metrics.get('net_income', [])
-                if profit_data:
-                    self._render_metric_chart(profit_data[0], "Net Income Trend")
-    
-    def _render_metric_chart(self, metric_data: Dict, title: str):
-        """Render a simple metric chart"""
-        values = metric_data.get('values', {})
-        
-        if values:
-            years = list(values.keys())
-            amounts = list(values.values())
-            
-            formatter = get_number_formatter(self.get_state('number_format_value'))
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=years,
-                y=amounts,
-                mode='lines+markers',
-                name=metric_data.get('name', 'Value'),
-                line=dict(width=3),
-                marker=dict(size=8),
-                hovertemplate='%{x}: %{y:,.0f}<extra></extra>'
-            ))
-            
-            if len(years) > 2:
-                z = np.polyfit(range(len(years)), amounts, 1)
-                p = np.poly1d(z)
-                
-                fig.add_trace(go.Scatter(
-                    x=years,
-                    y=p(range(len(years))),
-                    mode='lines',
-                    name='Trend',
-                    line=dict(dash='dash', width=2),
-                    opacity=0.7
-                ))
-            
-            fig.update_layout(
-                title=title,
-                xaxis_title="Year",
-                yaxis_title="Amount",
-                hovermode='x unified',
-                height=400
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-    
-    @error_boundary()
-    def _render_ratios_tab(self, data: pd.DataFrame):
-        """Render financial ratios tab with manual mapping support"""
-        st.header("📈 Financial Ratio Analysis")
-        
-        if not self.get_state('metric_mappings'):
-            st.warning("Please map metrics first to calculate ratios")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if st.button("🤖 Auto-map with AI", type="primary", key="ai_map_ratios"):
-                    self._perform_ai_mapping(data)
-            
-            with col2:
-                if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
-                    self.set_state('show_manual_mapping', True)
-            
-            if self.get_state('show_manual_mapping', False):
-                manual_mapper = ManualMappingInterface(data)
-                mappings = manual_mapper.render()
-                
-                if st.button("✅ Apply Mappings", type="primary", key="apply_manual_mappings"):
-                    self.set_state('metric_mappings', mappings)
-                    st.success(f"Applied {len(mappings)} mappings!")
-                    self.set_state('show_manual_mapping', False)
-            
-            return
-        
-        mappings = self.get_state('metric_mappings')
-        mapped_df = data.rename(index=mappings)
-        
-        with st.spinner("Calculating ratios..."):
-            with performance_monitor.measure("ratio_calculation"):
-                analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
-                ratios = analysis.get('ratios', {})
-        
-        if not ratios:
-            st.error("Unable to calculate ratios. Please check your mappings.")
-            if st.button("🔄 Re-map Metrics"):
-                self.set_state('metric_mappings', None)
-            return
-        
-        formatter = get_number_formatter(self.get_state('number_format_value'))
-        
-        for category, ratio_df in ratios.items():
-            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-                st.subheader(f"{category} Ratios")
-                
-                format_str = "{:,.2f}"
-                
-                try:
-                    st.dataframe(
-                        ratio_df.style.format(format_str, na_rep="-")
-                        .background_gradient(cmap='RdYlGn', axis=1),
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error formatting ratios: {e}")
-                    st.dataframe(ratio_df, use_container_width=True)
-                
-                if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
-                    metrics_to_plot = st.multiselect(
-                        f"Select {category} metrics:",
-                        ratio_df.index.tolist(),
-                        default=ratio_df.index[:2].tolist() if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
-                        key=f"select_{category}"
-                    )
-                    
-                    if metrics_to_plot:
-                        fig = go.Figure()
-                        
-                        for metric in metrics_to_plot:
-                            fig.add_trace(go.Scatter(
-                                x=ratio_df.columns,
-                                y=ratio_df.loc[metric],
-                                mode='lines+markers',
-                                name=metric,
-                                line=dict(width=2),
-                                marker=dict(size=8)
-                            ))
-                        
-                        fig.update_layout(
-                            title=f"{category} Ratios Trend",
-                            xaxis_title="Year",
-                            yaxis_title="Value",
-                            hovermode='x unified',
-                            height=400,
-                            legend=dict(
-                                orientation="h",
-                                yanchor="bottom",
-                                y=1.02,
-                                xanchor="right",
-                                x=1
-                            )
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-    
-    def _perform_ai_mapping(self, data: pd.DataFrame):
-        """Perform AI mapping of metrics"""
-        try:
-            with st.spinner("AI is mapping your metrics..."):
-                source_metrics = [str(m) for m in data.index.tolist()]
-                
-                if 'mapper' in self.components:
-                    mapping_result = self.components['mapper'].map_metrics_with_confidence_levels(
-                        source_metrics
-                    )
-                    
-                    self.set_state('ai_mapping_result', mapping_result)
-                    
-                    # Auto-apply high confidence mappings
-                    auto_mappings = mapping_result.get('high_confidence', {})
-                    if auto_mappings:
-                        final_mappings = {source: data['target'] for source, data in auto_mappings.items()}
-                        self.set_state('metric_mappings', final_mappings)
-                        
-                        st.success(f"✅ AI mapped {len(final_mappings)} metrics with high confidence!")
-                        
-                        # Show medium and low confidence for review
-                        medium_conf = mapping_result.get('medium_confidence', {})
-                        low_conf = mapping_result.get('low_confidence', {})
-                        
-                        if medium_conf or low_conf:
-                            st.info(f"Review {len(medium_conf) + len(low_conf)} additional suggested mappings below")
-                    else:
-                        st.warning("No high-confidence mappings found. Please review suggestions or use manual mapping.")
-                        
-                else:
-                    st.error("AI mapper not available")
-                    
-        except Exception as e:
-            st.error(f"AI mapping failed: {str(e)}")
-    
-    @error_boundary()
-    def _render_trends_tab(self, data: pd.DataFrame):
-        """Render trends and analysis tab"""
-        st.header("📉 Trend Analysis & ML Forecasting")
-        
-        analysis = self.components['analyzer'].analyze_financial_statements(data)
-        trends = analysis.get('trends', {})
-        
-        if not trends or 'error' in trends:
-            st.error("Insufficient data for trend analysis. Need at least 2 years of data.")
-            return
-        
-        # Trend summary
-        st.subheader("Trend Summary")
-        
-        trend_data = []
-        for metric, trend_info in trends.items():
-            if isinstance(trend_info, dict) and 'direction' in trend_info:
-                trend_data.append({
-                    'Metric': metric,
-                    'Direction': trend_info['direction'],
-                    'CAGR %': trend_info.get('cagr', None),
-                    'Volatility %': trend_info.get('volatility', None),
-                    'R²': trend_info.get('r_squared', None),
-                    'Trend Strength': 'Strong' if trend_info.get('r_squared', 0) > 0.8 else 'Moderate' if trend_info.get('r_squared', 0) > 0.5 else 'Weak'
-                })
-        
-        if trend_data:
-            trend_df = pd.DataFrame(trend_data)
-            
-            st.dataframe(
-                trend_df.style.format({
-                    'CAGR %': '{:.1f}',
-                    'Volatility %': '{:.1f}',
-                    'R²': '{:.3f}'
-                }, na_rep='-')
-                .background_gradient(subset=['CAGR %'], cmap='RdYlGn')
-                .background_gradient(subset=['R²'], cmap='Blues'),
-                use_container_width=True
-            )
-        
-        # ML Forecasting Section
-        st.subheader("🤖 ML-Powered Forecasting")
-        
-        if self.config.get('app.enable_ml_features', True):
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                forecast_periods = st.selectbox(
-                    "Forecast Periods",
-                    [1, 2, 3, 4, 5],
-                    index=2,
-                    help="Number of future periods to forecast"
-                )
-            
-            with col2:
-                model_type = st.selectbox(
-                    "Model Type",
-                    ['auto', 'linear', 'polynomial', 'exponential'],
-                    index=0,
-                    help="ML model for forecasting"
-                )
-            
-            with col3:
-                if st.button("🚀 Generate Forecast", type="primary"):
-                    with st.spinner("Training ML models and generating forecasts..."):
-                        try:
-                            forecast_results = self.ml_forecaster.forecast_metrics(
-                                data, 
-                                periods=forecast_periods,
-                                model_type=model_type
-                            )
-                            
-                            self.set_state('ml_forecast_results', forecast_results)
-                            
-                            if 'error' not in forecast_results:
-                                st.success(f"✅ Forecast generated using {forecast_results['model_type']} model")
-                            else:
-                                st.error(f"Forecast failed: {forecast_results['error']}")
-                                
-                        except Exception as e:
-                            st.error(f"Forecasting error: {str(e)}")
-            
-            # Display forecast results
-            forecast_results = self.get_state('ml_forecast_results')
-            if forecast_results and 'error' not in forecast_results:
-                st.subheader("📈 Forecast Results")
-                
-                forecasts = forecast_results.get('forecasts', {})
-                confidence_intervals = forecast_results.get('confidence_intervals', {})
-                
-                for metric, forecast in forecasts.items():
-                    st.write(f"**{metric} Forecast**")
-                    
-                    # Create forecast visualization
-                    fig = go.Figure()
-                    
-                    # Historical data (last few points for context)
-                    if metric in data.index:
-                        hist_series = data.loc[metric].dropna()
-                        hist_years = hist_series.index.tolist()
-                        hist_values = hist_series.values.tolist()
-                        
-                        fig.add_trace(go.Scatter(
-                            x=hist_years,
-                            y=hist_values,
-                            mode='lines+markers',
-                            name='Historical',
-                            line=dict(color='blue', width=2)
-                        ))
-                    
-                    # Forecast
-                    forecast_periods = forecast['periods']
-                    forecast_values = forecast['values']
-                    
-                    fig.add_trace(go.Scatter(
-                        x=forecast_periods,
-                        y=forecast_values,
-                        mode='lines+markers',
-                        name='Forecast',
-                        line=dict(color='red', dash='dash', width=2)
-                    ))
-                    
-                    # Confidence intervals
-                    if metric in confidence_intervals:
-                        intervals = confidence_intervals[metric]
-                        
-                        fig.add_trace(go.Scatter(
-                            x=forecast_periods + forecast_periods[::-1],
-                            y=intervals['upper'] + intervals['lower'][::-1],
-                            fill='toself',
-                            fillcolor='rgba(255,0,0,0.2)',
-                            line=dict(color='rgba(255,255,255,0)'),
-                            name='95% Confidence',
-                            showlegend=True
-                        ))
-                    
-                    fig.update_layout(
-                        title=f"{metric} - Historical vs Forecast",
-                        xaxis_title="Period",
-                        yaxis_title="Value",
-                        hovermode='x unified',
-                        height=400
-                    )
-                    
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Show accuracy metrics
-                accuracy_metrics = forecast_results.get('accuracy_metrics', {})
-                if accuracy_metrics:
-                    st.subheader("🎯 Model Accuracy")
-                    
-                    accuracy_data = []
-                    for metric, accuracy in accuracy_metrics.items():
-                        accuracy_data.append({
-                            'Metric': metric,
-                            'RMSE': accuracy.get('rmse', 0),
-                            'MAE': accuracy.get('mae', 0),
-                            'MAPE %': accuracy.get('mape', 0) if accuracy.get('mape') else 'N/A'
-                        })
-                    
-                    if accuracy_data:
-                        accuracy_df = pd.DataFrame(accuracy_data)
-                        st.dataframe(accuracy_df, use_container_width=True)
-        
-        # Interactive visualization
-        st.subheader("📊 Interactive Trend Visualization")
-        
-        numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
-        selected_metrics = st.multiselect(
-            "Select metrics to visualize:",
-            numeric_metrics,
-            default=numeric_metrics[:3] if len(numeric_metrics) >= 3 else numeric_metrics
-        )
-        
-        if selected_metrics:
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                show_trend_lines = st.checkbox("Show Trend Lines", value=True)
-            
-            with col2:
-                normalize = st.checkbox("Normalize Values", value=False)
-            
-            with col3:
-                chart_type = st.selectbox("Chart Type", ["Line", "Bar", "Area"])
-            
-            fig = go.Figure()
-            
-            for i, metric in enumerate(selected_metrics):
-                values = data.loc[metric]
-                
-                if normalize:
-                    values = (values / values.iloc[0]) * 100
-                
-                if chart_type == "Line":
-                    fig.add_trace(go.Scatter(
-                        x=data.columns,
-                        y=values,
-                        mode='lines+markers',
-                        name=metric,
-                        line=dict(width=2),
-                        marker=dict(size=8)
-                    ))
-                elif chart_type == "Bar":
-                    fig.add_trace(go.Bar(
-                        x=data.columns,
-                        y=values,
-                        name=metric
-                    ))
-                elif chart_type == "Area":
-                    fig.add_trace(go.Scatter(
-                        x=data.columns,
-                        y=values,
-                        mode='lines',
-                        name=metric,
-                        fill='tonexty' if i > 0 else 'tozeroy',
-                        line=dict(width=2)
-                    ))
-                
-                if show_trend_lines and metric in trends:
-                    trend_info = trends[metric]
-                    if 'slope' in trend_info and 'intercept' in trend_info:
-                        x_numeric = np.arange(len(data.columns))
-                        y_trend = trend_info['slope'] * x_numeric + trend_info['intercept']
-                        
-                        if normalize and values.iloc[0] != 0:
-                            y_trend = (y_trend / values.iloc[0]) * 100
-                        
-                        fig.add_trace(go.Scatter(
-                            x=data.columns,
-                            y=y_trend,
-                            mode='lines',
-                            name=f"{metric} (Trend)",
-                            line=dict(width=2, dash='dash'),
-                            opacity=0.7
-                        ))
-            
-            fig.update_layout(
-                title="Metric Trends Analysis",
-                xaxis_title="Year",
-                yaxis_title="Value" + (" (Base 100)" if normalize else ""),
-                hovermode='x unified',
-                height=500,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                )
-            )
-            
-            if chart_type == "Bar":
-                fig.update_layout(barmode='group')
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Statistical Analysis
-        st.subheader("📈 Statistical Analysis")
-        
-        if selected_metrics and len(selected_metrics) > 1:
-            corr_data = data.loc[selected_metrics].T.corr()
-            
-            fig_corr = go.Figure(data=go.Heatmap(
-                z=corr_data.values,
-                x=corr_data.columns,
-                y=corr_data.index,
-                colorscale='RdBu',
-                zmid=0,
-                text=np.round(corr_data.values, 2),
-                texttemplate='%{text}',
-                textfont={"size": 10},
-                hoverongaps=False
-            ))
-            
-            fig_corr.update_layout(
-                title="Correlation Matrix",
-                height=400
-            )
-            
-            st.plotly_chart(fig_corr, use_container_width=True)
-    
-    @error_boundary()
-    def _render_penman_nissim_tab(self, data: pd.DataFrame):
-        """Render Penman-Nissim analysis tab"""
-        st.header("🎯 Penman-Nissim Analysis")
-        
-        if not self.get_state('pn_mappings'):
-            st.info("Configure Penman-Nissim mappings to proceed")
-            
-            with st.expander("⚙️ Configure P-N Mappings", expanded=True):
-                available_metrics = [''] + [str(m) for m in data.index.tolist()]
-                
-                mapping_fields = {
-                    'Balance Sheet': [
-                        ('Total Assets', 'pn_total_assets'),
-                        ('Total Liabilities', 'pn_total_liabilities'),
-                        ('Total Equity', 'pn_total_equity'),
-                        ('Current Assets', 'pn_current_assets'),
-                        ('Current Liabilities', 'pn_current_liabilities'),
-                    ],
-                    'Income Statement': [
-                        ('Revenue', 'pn_revenue'),
-                        ('Operating Income/EBIT', 'pn_operating_income'),
-                        ('Net Income', 'pn_net_income'),
-                        ('Interest Expense', 'pn_interest'),
-                        ('Tax Expense', 'pn_tax'),
-                    ],
-                    'Cash Flow': [
-                        ('Operating Cash Flow', 'pn_ocf'),
-                        ('Capital Expenditure', 'pn_capex'),
-                        ('Depreciation', 'pn_depreciation'),
-                        ('Income Before Tax', 'pn_ibt'),
-                    ]
-                }
-                
-                mappings = {}
-                cols = st.columns(3)
-                
-                for i, (category, fields) in enumerate(mapping_fields.items()):
-                    with cols[i]:
-                        st.markdown(f"**{category} Items**")
-                        for field_name, field_key in fields:
-                            selected = st.selectbox(
-                                field_name,
-                                available_metrics,
-                                key=field_key
-                            )
-                            if selected:
-                                mappings[selected] = field_name
-                
-                mappings = {k: v for k, v in mappings.items() if k}
-                
-                if st.button("Apply P-N Mappings", type="primary"):
-                    if len(mappings) >= 8:
-                        self.set_state('pn_mappings', mappings)
-                        st.success("Mappings applied successfully!")
-                    else:
-                        st.error("Please provide at least 8 mappings for analysis")
-            
-            return
-        
-        if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
-            mappings = self.get_state('pn_mappings')
-            
-            with st.spinner("Running Penman-Nissim analysis..."):
-                try:
-                    analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
-                    results = analyzer.calculate_all()
-                    
-                    if 'error' in results:
-                        st.error(f"Analysis failed: {results['error']}")
-                        return
-                    
-                    self.set_state('pn_results', results)
-                    st.success("Analysis completed successfully!")
-                    
-                except Exception as e:
-                    st.error(f"Analysis failed: {str(e)}")
-                    if self.config.get('app.debug', False):
-                        st.exception(e)
-                    return
-        
-        if self.get_state('pn_results'):
-            results = self.get_state('pn_results')
-            
-            st.subheader("Key Penman-Nissim Metrics")
-            
-            if 'ratios' in results:
-                ratios_df = results['ratios']
-                
-                key_ratios = [
-                    ('Return on Net Operating Assets (RNOA) %', 'RNOA', 'success'),
-                    ('Financial Leverage (FLEV)', 'FLEV', 'info'),
-                    ('Net Borrowing Cost (NBC) %', 'NBC', 'warning'),
-                    ('Operating Profit Margin (OPM) %', 'OPM', 'primary')
-                ]
-                
-                col1, col2, col3, col4 = st.columns(4)
-                
-                for i, (ratio_name, short_name, color) in enumerate(key_ratios):
-                    if ratio_name in ratios_df.index:
-                        col = [col1, col2, col3, col4][i]
-                        with col:
-                            latest_value = ratios_df.loc[ratio_name].iloc[-1]
-                            prev_value = ratios_df.loc[ratio_name].iloc[-2] if len(ratios_df.columns) > 1 else None
-                            
-                            delta = None
-                            if prev_value is not None:
-                                delta = latest_value - prev_value
-                            
-                            self.ui_factory.create_metric_card(
-                                short_name,
-                                f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}",
-                                delta=delta,
-                                help=self._get_pn_ratio_help(short_name)
-                            )
-            
-            # Reformulated statements
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if 'reformulated_balance_sheet' in results:
-                    st.subheader("Reformulated Balance Sheet")
-                    ref_bs = results['reformulated_balance_sheet']
-                    
-                    st.dataframe(
-                        ref_bs.style.format("{:,.0f}"),
-                        use_container_width=True
-                    )
-            
-            with col2:
-                if 'reformulated_income_statement' in results:
-                    st.subheader("Reformulated Income Statement")
-                    ref_is = results['reformulated_income_statement']
-                    
-                    st.dataframe(
-                        ref_is.style.format("{:,.0f}"),
-                        use_container_width=True
-                    )
-            
-            # Value Drivers
-            if 'value_drivers' in results:
-                st.subheader("Value Drivers Analysis")
-                
-                drivers_df = results['value_drivers']
-                
-                fig = go.Figure()
-                
-                for driver in drivers_df.index:
-                    fig.add_trace(go.Scatter(
-                        x=drivers_df.columns,
-                        y=drivers_df.loc[driver],
-                        mode='lines+markers',
-                        name=driver
-                    ))
-                
-                fig.update_layout(
-                    title="Value Drivers Trend",
-                    xaxis_title="Year",
-                    yaxis_title="Value (%)",
-                    hovermode='x unified',
-                    height=400
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Free Cash Flow
-            if 'free_cash_flow' in results:
-                st.subheader("Free Cash Flow Analysis")
-                fcf_df = results['free_cash_flow']
-                
-                if len(fcf_df.columns) > 0:
-                    latest_year = fcf_df.columns[-1]
-                    
-                    if 'Operating Cash Flow' in fcf_df.index and 'Free Cash Flow' in fcf_df.index:
-                        ocf = fcf_df.loc['Operating Cash Flow', latest_year]
-                        fcf = fcf_df.loc['Free Cash Flow', latest_year]
-                        capex = ocf - fcf
-                        
-                        fig = go.Figure(go.Waterfall(
-                            name="",
-                            orientation="v",
-                            measure=["relative", "relative", "total"],
-                            x=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"],
-                            y=[ocf, -capex, fcf],
-                            connector={"line": {"color": "rgb(63, 63, 63)"}},
-                        ))
-                        
-                        fig.update_layout(
-                            title=f"Free Cash Flow Waterfall - {latest_year}",
-                            height=400
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-            
-            # Insights
-            st.subheader("Penman-Nissim Insights")
-            
-            insights = []
-            
-            if 'ratios' in results:
-                ratios_df = results['ratios']
-                
-                if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
-                    rnoa_latest = ratios_df.loc['Return on Net Operating Assets (RNOA) %'].iloc[-1]
-                    if rnoa_latest > 15:
-                        insights.append("✅ Strong operating performance with RNOA above 15%")
-                    elif rnoa_latest < 8:
-                        insights.append("⚠️ Low RNOA indicates operational efficiency concerns")
-                
-                if 'Spread %' in ratios_df.index:
-                    spread = ratios_df.loc['Spread %'].iloc[-1]
-                    if spread > 0:
-                        insights.append(f"✅ Positive spread ({spread:.1f}%) - operations earn more than borrowing cost")
-                    else:
-                        insights.append(f"⚠️ Negative spread ({spread:.1f}%) - borrowing cost exceeds operating returns")
-            
-            for insight in insights:
-                self.ui_factory.create_insight_card(insight, "info")
-    
-    def _get_pn_ratio_help(self, ratio: str) -> str:
-        """Get help text for Penman-Nissim ratios"""
-        help_texts = {
-            'RNOA': "Return on Net Operating Assets - measures operating efficiency",
-            'FLEV': "Financial Leverage - ratio of financial obligations to equity",
-            'NBC': "Net Borrowing Cost - effective interest rate on net debt",
-            'OPM': "Operating Profit Margin - operating profitability",
-            'NOAT': "Net Operating Asset Turnover - efficiency in using assets",
-            'Spread': "RNOA - NBC, positive spread creates value through leverage"
-        }
-        return help_texts.get(ratio, "Financial ratio")
-    
-    @error_boundary()
-    def _render_industry_tab(self, data: pd.DataFrame):
-        """Render industry comparison tab - COMPLETE IMPLEMENTATION"""
-        st.header("🏭 Industry Comparison")
-        
-        # Industry selection
-        industries = [
-            "Technology", "Healthcare", "Financial Services", "Retail",
-            "Manufacturing", "Energy", "Real Estate", "Consumer Goods",
-            "Telecommunications", "Utilities", "Materials", "Industrials"
-        ]
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            selected_industry = st.selectbox(
-                "Select Industry for Comparison",
-                industries,
-                key="industry_selection"
-            )
-        
-        with col2:
-            comparison_year = st.selectbox(
-                "Select Year for Comparison",
-                data.columns.tolist(),
-                index=len(data.columns)-1 if len(data.columns) > 0 else 0,
-                key="comparison_year"
-            )
-        
-        # Generate industry benchmarks (simplified for demo)
-        st.subheader(f"📊 {selected_industry} Industry Benchmarks")
-        
-        # Mock industry data - in production, this would come from a database
-        industry_benchmarks = self._generate_industry_benchmarks(selected_industry)
-        
-        # Compare company metrics with industry averages
-        if self.get_state('metric_mappings'):
-            mappings = self.get_state('metric_mappings')
-            mapped_df = data.rename(index=mappings)
-            
-            # Calculate company ratios
-            analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
-            company_ratios = analysis.get('ratios', {})
-            
-            # Display comparison
-            for category, ratio_df in company_ratios.items():
-                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-                    st.subheader(f"{category} Ratios Comparison")
-                    
-                    # Get latest year data
-                    if comparison_year in ratio_df.columns:
-                        company_values = ratio_df[comparison_year]
-                        industry_values = industry_benchmarks.get(category, {})
-                        
-                        comparison_data = []
-                        for ratio_name in company_values.index:
-                            company_val = company_values[ratio_name]
-                            industry_avg = industry_values.get(ratio_name, None)
-                            
-                            if pd.notna(company_val) and industry_avg is not None:
-                                comparison_data.append({
-                                    'Ratio': ratio_name,
-                                    'Company': company_val,
-                                    'Industry Average': industry_avg,
-                                    'Difference': company_val - industry_avg,
-                                    'Performance': 'Above Average' if company_val > industry_avg else 'Below Average'
-                                })
-                        
-                        if comparison_data:
-                            comparison_df = pd.DataFrame(comparison_data)
-                            
-                            # Create visualization
-                            fig = go.Figure()
-                            
-                            # Company values
-                            fig.add_trace(go.Bar(
-                                x=comparison_df['Ratio'],
-                                y=comparison_df['Company'],
-                                name='Company',
-                                marker_color='blue'
-                            ))
-                            
-                            # Industry averages
-                            fig.add_trace(go.Bar(
-                                x=comparison_df['Ratio'],
-                                y=comparison_df['Industry Average'],
-                                name='Industry Average',
-                                marker_color='orange'
-                            ))
-                            
-                            fig.update_layout(
-                                title=f"{category} - Company vs Industry",
-                                xaxis_title="Ratios",
-                                yaxis_title="Value",
-                                barmode='group',
-                                height=400
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                            
-                            # Show detailed comparison table
-                            st.dataframe(
-                                comparison_df.style.format({
-                                    'Company': '{:.2f}',
-                                    'Industry Average': '{:.2f}',
-                                    'Difference': '{:.2f}'
-                                }),
-                                use_container_width=True
-                            )
-        else:
-            st.warning("Please complete metric mapping in the Financial Ratios tab first")
-        
-        # Industry insights
-        st.subheader("💡 Industry Insights")
-        
-        industry_insights = {
-            "Technology": [
-                "Tech companies typically have higher profit margins due to scalable software models",
-                "R&D spending is usually 10-20% of revenue",
-                "Working capital requirements are generally low",
-                "Growth rates are typically higher but more volatile"
-            ],
-            "Manufacturing": [
-                "Asset-heavy industry with lower asset turnover ratios",
-                "Inventory management is crucial for profitability",
-                "Cyclical nature affects financial performance",
-                "Leverage ratios tend to be higher due to capital requirements"
-            ],
-            "Retail": [
-                "Inventory turnover is a key performance metric",
-                "Seasonal variations significantly impact performance",
-                "Profit margins are typically lower but volumes are higher",
-                "Working capital management is critical"
-            ],
-            "Financial Services": [
-                "Leverage ratios are naturally higher due to business model",
-                "Net interest margin is a key profitability metric",
-                "Asset quality indicators are crucial",
-                "Regulatory capital requirements affect operations"
-            ]
-        }
-        
-        insights = industry_insights.get(selected_industry, [
-            f"Industry-specific insights for {selected_industry} sector",
-            "Compare your metrics with industry peers",
-            "Focus on key performance indicators for your sector",
-            "Consider industry trends and cycles in your analysis"
-        ])
-        
-        for insight in insights:
-            self.ui_factory.create_insight_card(insight, "info")
-    
-    def _generate_industry_benchmarks(self, industry: str) -> Dict[str, Dict[str, float]]:
-        """Generate mock industry benchmarks - in production, would fetch from database"""
-        benchmarks = {
-            "Technology": {
-                "Profitability": {
-                    "Net Profit Margin %": 15.2,
-                    "Return on Assets %": 8.5,
-                    "Return on Equity %": 18.3,
-                    "ROCE %": 12.7
-                },
-                "Liquidity": {
-                    "Current Ratio": 2.1,
-                    "Quick Ratio": 1.8,
-                    "Cash Ratio": 0.9
-                },
-                "Leverage": {
-                    "Debt to Equity": 0.3,
-                    "Debt Ratio": 0.25,
-                    "Interest Coverage": 12.5
-                },
-                "Efficiency": {
-                    "Asset Turnover": 0.6,
-                    "Inventory Turnover": 8.2,
-                    "Receivables Turnover": 6.8
-                }
-            },
-            "Manufacturing": {
-                "Profitability": {
-                    "Net Profit Margin %": 8.5,
-                    "Return on Assets %": 5.2,
-                    "Return on Equity %": 12.1,
-                    "ROCE %": 8.9
-                },
-                "Liquidity": {
-                    "Current Ratio": 1.5,
-                    "Quick Ratio": 1.1,
-                    "Cash Ratio": 0.3
-                },
-                "Leverage": {
-                    "Debt to Equity": 0.8,
-                    "Debt Ratio": 0.45,
-                    "Interest Coverage": 5.2
-                },
-                "Efficiency": {
-                    "Asset Turnover": 1.2,
-                    "Inventory Turnover": 6.5,
-                    "Receivables Turnover": 8.1
-                }
-            },
-            "Retail": {
-                "Profitability": {
-                    "Net Profit Margin %": 4.8,
-                    "Return on Assets %": 6.2,
-                    "Return on Equity %": 15.5,
-                    "ROCE %": 9.8
-                },
-                "Liquidity": {
-                    "Current Ratio": 1.3,
-                    "Quick Ratio": 0.8,
-                    "Cash Ratio": 0.2
-                },
-                "Leverage": {
-                    "Debt to Equity": 0.6,
-                    "Debt Ratio": 0.38,
-                    "Interest Coverage": 4.5
-                },
-                "Efficiency": {
-                    "Asset Turnover": 2.1,
-                    "Inventory Turnover": 12.3,
-                    "Receivables Turnover": 15.2
-                }
-            }
-        }
-        
-        return benchmarks.get(industry, benchmarks["Technology"])
-    
-    @error_boundary()
-    def _render_data_explorer_tab(self, data: pd.DataFrame):
-        """Render data explorer tab"""
-        st.header("🔍 Data Explorer")
-        
-        # Data overview
-        st.subheader("📊 Data Overview")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total Rows", data.shape[0])
-        
-        with col2:
-            st.metric("Total Columns", data.shape[1])
-        
-        with col3:
-            missing_pct = (data.isnull().sum().sum() / data.size) * 100
-            st.metric("Missing Data %", f"{missing_pct:.1f}")
-        
-        with col4:
-            numeric_cols = data.select_dtypes(include=[np.number]).shape[1]
-            st.metric("Numeric Columns", numeric_cols)
-        
-        # Raw data view
-        st.subheader("📋 Raw Data")
-        
-        # Data filtering options
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            search_term = st.text_input(
-                "🔍 Search metrics",
-                placeholder="Type to filter rows...",
-                help="Search in metric names"
-            )
-        
-        with col2:
-            selected_years = st.multiselect(
-                "📅 Select years",
-                data.columns.tolist(),
-                default=data.columns.tolist(),
-                help="Filter by specific years"
-            )
-        
-        # Apply filters
-        filtered_data = data.copy()
-        
-        if search_term:
-            mask = filtered_data.index.str.contains(search_term, case=False, na=False)
-            filtered_data = filtered_data[mask]
-        
-        if selected_years:
-            filtered_data = filtered_data[selected_years]
-        
-        # Display filtered data
-        st.dataframe(
-            filtered_data.style.format("{:,.0f}", na_rep="-")
-            .background_gradient(cmap='RdYlGn', axis=1),
-            use_container_width=True,
-            height=400
-        )
-        
-        # Data statistics
-        st.subheader("📈 Data Statistics")
-        
-        numeric_data = filtered_data.select_dtypes(include=[np.number])
-        
-        if not numeric_data.empty:
-            stats_df = numeric_data.describe().T
-            stats_df = stats_df.round(2)
-            
-            st.dataframe(stats_df, use_container_width=True)
-            
-            # Missing data analysis
-            st.subheader("🕳️ Missing Data Analysis")
-            
-            missing_data = data.isnull().sum()
-            missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
-            
-            if not missing_data.empty:
-                fig = go.Figure(go.Bar(
-                    x=missing_data.values,
-                    y=missing_data.index,
-                    orientation='h',
-                    marker_color='red'
-                ))
-                
-                fig.update_layout(
-                    title="Missing Values by Column",
-                    xaxis_title="Number of Missing Values",
-                    yaxis_title="Columns",
-                    height=400
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.success("✅ No missing data found!")
-        
-        # Data export
-        st.subheader("💾 Export Filtered Data")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("📋 Copy to Clipboard"):
-                st.code(filtered_data.to_csv())
-        
-        with col2:
-            csv_data = filtered_data.to_csv().encode('utf-8')
-            st.download_button(
-                label="📁 Download CSV",
-                data=csv_data,
-                file_name=f"financial_data_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-        
-        with col3:
-            excel_data = io.BytesIO()
-            filtered_data.to_excel(excel_data, engine='xlsxwriter')
-            excel_data.seek(0)
-            
-            st.download_button(
-                label="📊 Download Excel",
-                data=excel_data.getvalue(),
-                file_name=f"financial_data_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-    
-    @error_boundary()
-    def _render_reports_tab(self, data: pd.DataFrame):
-        """Render reports tab"""
-        st.header("📄 Financial Analysis Reports")
-        
-        # Report configuration
-        st.subheader("⚙️ Report Configuration")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            company_name = st.text_input(
-                "Company Name",
-                value=self.get_state('company_name', 'Your Company'),
-                help="Name to appear on the report"
-            )
-        
-        with col2:
-            report_format = st.selectbox(
-                "Report Format",
-                ["Excel", "Markdown", "PDF", "PowerPoint"],
-                help="Choose output format"
-            )
-        
-        # Report sections
-        st.subheader("📋 Report Sections")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            include_overview = st.checkbox("Executive Summary", value=True)
-            include_ratios = st.checkbox("Financial Ratios", value=True)
-            include_trends = st.checkbox("Trend Analysis", value=True)
-            include_forecasts = st.checkbox("ML Forecasts", value=False)
-        
-        with col2:
-            include_pn = st.checkbox("Penman-Nissim Analysis", value=False)
-            include_industry = st.checkbox("Industry Comparison", value=False)
-            include_raw_data = st.checkbox("Raw Data", value=False)
-            include_charts = st.checkbox("Charts and Visualizations", value=True)
-        
-        # Generate report
-        if st.button("🚀 Generate Report", type="primary"):
-            with st.spinner(f"Generating {report_format} report..."):
-                try:
-                    # Compile analysis data
-                    analysis = self.components['analyzer'].analyze_financial_statements(data)
-                    
-                    # Add additional sections based on selections
-                    if include_pn and self.get_state('pn_results'):
-                        analysis['penman_nissim'] = self.get_state('pn_results')
-                    
-                    if include_forecasts and self.get_state('ml_forecast_results'):
-                        analysis['forecasts'] = self.get_state('ml_forecast_results')
-                    
-                    if include_raw_data:
-                        analysis['filtered_data'] = data
-                    
-                    analysis['company_name'] = company_name
-                    
-                    # Generate report based on format
-                    if report_format == "Excel":
-                        report_data = self.export_manager.export_to_excel(analysis, f"{company_name}_analysis.xlsx")
-                        
-                        st.download_button(
-                            label="📊 Download Excel Report",
-                            data=report_data,
-                            file_name=f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                        
-                        st.success("✅ Excel report generated successfully!")
-                    
-                    elif report_format == "Markdown":
-                        report_content = self.export_manager.export_to_markdown(analysis)
-                        
-                        st.download_button(
-                            label="📝 Download Markdown Report",
-                            data=report_content.encode('utf-8'),
-                            file_name=f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.md",
-                            mime="text/markdown"
-                        )
-                        
-                        # Show preview
-                        with st.expander("📖 Report Preview"):
-                            st.markdown(report_content)
-                        
-                        st.success("✅ Markdown report generated successfully!")
-                    
-                    elif report_format == "PDF":
-                        st.warning("PDF export is coming soon. Please use Excel or Markdown for now.")
-                    
-                    elif report_format == "PowerPoint":
-                        st.warning("PowerPoint export is coming soon. Please use Excel or Markdown for now.")
-                    
-                except Exception as e:
-                    st.error(f"Report generation failed: {str(e)}")
-        
-        # Report templates
-        st.subheader("📋 Report Templates")
-        
-        templates = {
-            "Executive Summary": {
-                "description": "High-level overview for executives",
-                "sections": ["Overview", "Key Metrics", "Insights"]
-            },
-            "Detailed Analysis": {
-                "description": "Comprehensive financial analysis",
-                "sections": ["All sections", "Charts", "Raw Data"]
-            },
-            "Investor Presentation": {
-                "description": "Investor-focused metrics and trends",
-                "sections": ["Ratios", "Trends", "Forecasts", "Industry Comparison"]
-            },
-            "Audit Support": {
-                "description": "Detailed data for audit purposes",
-                "sections": ["Raw Data", "Calculations", "Validation Results"]
-            }
-        }
-        
-        for template_name, template_info in templates.items():
-            with st.expander(f"📄 {template_name}"):
-                st.write(f"**Description:** {template_info['description']}")
-                st.write(f"**Sections:** {', '.join(template_info['sections'])}")
-                
-                if st.button(f"Use {template_name} Template", key=f"template_{template_name}"):
-                    st.info(f"Applied {template_name} template settings")
-    
-    @error_boundary()
-    def _render_ml_insights_tab(self, data: pd.DataFrame):
-        """Render ML insights and advanced analytics tab"""
-        st.header("🤖 ML Insights & Advanced Analytics")
-        
-        if not self.config.get('app.enable_ml_features', True):
-            st.warning("ML features are disabled. Enable them in the sidebar settings.")
-            return
-        
-        # AI-powered insights
-        st.subheader("🧠 AI-Powered Financial Insights")
-        
-        with st.spinner("AI is analyzing your financial data..."):
-            analysis = self.components['analyzer'].analyze_financial_statements(data)
-        
-        # Display AI insights with confidence scores
-        insights = analysis.get('insights', [])
-        
-        if insights:
-            st.write("**AI has identified the following insights:**")
-            
-            for i, insight in enumerate(insights):
-                # Simulate confidence score
-                confidence = np.random.uniform(0.7, 0.95)
-                
-                col1, col2 = st.columns([4, 1])
-                
-                with col1:
-                    if "⚠️" in insight:
-                        insight_type = "warning"
-                    elif "📉" in insight:
-                        insight_type = "error"
-                    elif "🚀" in insight or "📊" in insight:
-                        insight_type = "success"
-                    else:
-                        insight_type = "info"
-                    
-                    self.ui_factory.create_insight_card(insight, insight_type)
-                
-                with col2:
-                    st.metric("Confidence", f"{confidence:.0%}")
-        
-        # Anomaly detection with ML
-        st.subheader("🔍 Advanced Anomaly Detection")
-        
-        anomalies = analysis.get('anomalies', {})
-        total_anomalies = sum(len(v) for v in anomalies.values())
-        
-        if total_anomalies > 0:
-            st.warning(f"Detected {total_anomalies} potential anomalies in your data")
-            
-            # Anomaly visualization
-            fig = go.Figure()
-            
-            categories = list(anomalies.keys())
-            counts = [len(anomalies[cat]) for cat in categories]
-            
-            fig.add_trace(go.Bar(
-                x=categories,
-                y=counts,
-                marker_color=['red', 'orange', 'yellow'][:len(categories)]
-            ))
-            
-            fig.update_layout(
-                title="Anomalies by Category",
-                xaxis_title="Anomaly Type",
-                yaxis_title="Count",
-                height=300
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.success("✅ No significant anomalies detected")
-        
-        # Predictive analytics
-        st.subheader("🔮 Predictive Analytics")
-        
-        if st.button("🚀 Run Predictive Analysis", type="primary"):
-            with st.spinner("Running ML models for predictive analysis..."):
-                try:
-                    # Run ML forecasting
-                    forecast_results = self.ml_forecaster.forecast_metrics(
-                        data, 
-                        periods=3,
-                        model_type='auto'
-                    )
-                    
-                    if 'error' not in forecast_results:
-                        st.success("✅ Predictive analysis completed")
-                        
-                        # Display key predictions
-                        forecasts = forecast_results.get('forecasts', {})
-                        
-                        st.write("**Key Financial Predictions (Next 3 Periods):**")
-                        
-                        for metric, forecast in list(forecasts.items())[:3]:
-                            col1, col2, col3 = st.columns(3)
-                            
-                            with col1:
-                                st.write(f"**{metric}**")
-                            
-                            with col2:
-                                current_value = forecast['last_actual']
-                                predicted_value = forecast['values'][-1]
-                                growth = ((predicted_value / current_value) - 1) * 100
-                                
-                                st.metric(
-                                    "Predicted Growth",
-                                    f"{growth:+.1f}%",
-                                    delta=f"{predicted_value - current_value:,.0f}"
-                                )
-                            
-                            with col3:
-                                # Get accuracy from previous results
-                                accuracy = forecast_results.get('accuracy_metrics', {}).get(metric, {})
-                                mape = accuracy.get('mape', 0)
-                                
-                                if mape and mape < 20:
-                                    confidence_text = "High"
-                                    confidence_color = "success"
-                                elif mape and mape < 40:
-                                    confidence_text = "Medium"
-                                    confidence_color = "warning"
-                                else:
-                                    confidence_text = "Low"
-                                    confidence_color = "error"
-                                
-                                st.markdown(f"**Confidence:** :{confidence_color}[{confidence_text}]")
-                    else:
-                        st.error(f"Predictive analysis failed: {forecast_results['error']}")
-                        
-                except Exception as e:
-                    st.error(f"Predictive analysis error: {str(e)}")
-        
-        # Pattern recognition
-        st.subheader("🎯 Financial Pattern Recognition")
-        
-        # Analyze patterns in the data
-        patterns = self._detect_financial_patterns(data)
-        
-        if patterns:
-            st.write("**Detected Financial Patterns:**")
-            
-            for pattern in patterns:
-                self.ui_factory.create_insight_card(pattern['description'], pattern['type'])
-        
-        # Risk analysis
-        st.subheader("⚠️ Risk Analysis")
-        
-        risk_metrics = self._calculate_risk_metrics(data)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            volatility = risk_metrics.get('volatility', 0)
-            st.metric(
-                "Revenue Volatility",
-                f"{volatility:.1f}%",
-                help="Standard deviation of revenue growth"
-            )
-        
-        with col2:
-            trend_stability = risk_metrics.get('trend_stability', 0)
-            st.metric(
-                "Trend Stability",
-                f"{trend_stability:.0%}",
-                help="Consistency of growth trends"
-            )
-        
-        with col3:
-            outlier_risk = risk_metrics.get('outlier_risk', 0)
-            st.metric(
-                "Outlier Risk",
-                f"{outlier_risk:.0%}",
-                help="Percentage of outlier values"
-            )
-        
-        # Performance monitoring
-        if self.config.get('app.debug', False):
-            st.subheader("🔧 Performance Monitoring")
-            
-            perf_summary = performance_monitor.get_performance_summary()
-            
-            if perf_summary:
-                perf_data = []
-                for operation, stats in perf_summary.items():
-                    perf_data.append({
-                        'Operation': operation,
-                        'Total Calls': stats['total_calls'],
-                        'Avg Duration (s)': stats['avg_duration'],
-                        'Max Duration (s)': stats['max_duration'],
-                        'Total Time (s)': stats['total_time']
-                    })
-                
-                if perf_data:
-                    perf_df = pd.DataFrame(perf_data)
-                    st.dataframe(perf_df, use_container_width=True)
-            
-            # Cache statistics
-            if 'mapper' in self.components:
-                cache_stats = self.components['mapper'].embeddings_cache.get_stats()
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Cache Entries", cache_stats.get('entries', 0))
-                
-                with col2:
-                    st.metric("Cache Hit Rate", f"{cache_stats.get('hit_rate', 0):.1f}%")
-                
-                with col3:
-                    cache_size_mb = cache_stats.get('size_bytes', 0) / (1024 * 1024)
-                    st.metric("Cache Size", f"{cache_size_mb:.1f} MB")
-    
-    def _detect_financial_patterns(self, data: pd.DataFrame) -> List[Dict[str, str]]:
-        """Detect patterns in financial data"""
-        patterns = []
-        
-        # Analyze revenue patterns
-        revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
-        if revenue_metrics:
-            revenue_series = data.loc[revenue_metrics[0]].dropna()
-            
-            # Check for seasonality (simple check)
-            if len(revenue_series) >= 4:
-                growth_rates = revenue_series.pct_change().dropna()
-                
-                if growth_rates.std() < 0.1:  # Low volatility
-                    patterns.append({
-                        'description': '📈 Stable revenue growth pattern detected - consistent performance',
-                        'type': 'success'
-                    })
-                elif growth_rates.std() > 0.3:  # High volatility
-                    patterns.append({
-                        'description': '⚠️ Volatile revenue pattern - consider investigating causes',
-                        'type': 'warning'
-                    })
-        
-        # Check for improvement trends
-        analysis = self.components['analyzer'].analyze_financial_statements(data)
-        trends = analysis.get('trends', {})
-        
-        improving_metrics = 0
-        declining_metrics = 0
-        
-        for metric, trend in trends.items():
-            if isinstance(trend, dict):
-                if trend.get('direction') == 'increasing':
-                    improving_metrics += 1
-                elif trend.get('direction') == 'decreasing':
-                    declining_metrics += 1
-        
-        if improving_metrics > declining_metrics * 2:
-            patterns.append({
-                'description': '🚀 Overall improving trend across multiple metrics',
-                'type': 'success'
-            })
-        elif declining_metrics > improving_metrics * 2:
-            patterns.append({
-                'description': '📉 Concerning declining trend across multiple metrics',
-                'type': 'error'
-            })
-        
-        return patterns
-    
-    def _calculate_risk_metrics(self, data: pd.DataFrame) -> Dict[str, float]:
-        """Calculate risk-related metrics"""
-        risk_metrics = {}
-        
-        # Revenue volatility
-        revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
-        if revenue_metrics:
-            revenue_series = data.loc[revenue_metrics[0]].dropna()
-            growth_rates = revenue_series.pct_change().dropna()
-            risk_metrics['volatility'] = growth_rates.std() * 100
-        
-        # Trend stability
-        analysis = self.components['analyzer'].analyze_financial_statements(data)
-        trends = analysis.get('trends', {})
-        
-        r_squared_values = []
-        for trend in trends.values():
-            if isinstance(trend, dict) and 'r_squared' in trend:
-                r_squared_values.append(trend['r_squared'])
-        
-        if r_squared_values:
-            risk_metrics['trend_stability'] = np.mean(r_squared_values)
-        
-        # Outlier risk
-        numeric_data = data.select_dtypes(include=[np.number])
-        total_values = numeric_data.size
-        outlier_count = 0
-        
-        for col in numeric_data.columns:
-            for val in numeric_data[col].dropna():
-                z_score = np.abs((val - numeric_data[col].mean()) / numeric_data[col].std())
-                if z_score > 3:
-                    outlier_count += 1
-        
-        risk_metrics['outlier_risk'] = outlier_count / total_values if total_values > 0 else 0
-        
-        return risk_metrics
-    
-    def _render_debug_footer(self):
-        """Render debug information in footer"""
-        with st.expander("🔧 Debug Information"):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Session State Keys:**")
-                st.write(list(st.session_state.keys()))
-            
-            with col2:
-                st.write("**Performance Summary:**")
-                perf_summary = performance_monitor.get_performance_summary()
-                if perf_summary:
-                    for op, stats in list(perf_summary.items())[:5]:
-                        st.write(f"- {op}: {stats['avg_duration']:.3f}s avg")
-
-# --- 31. Application Entry Point ---
-def main():
-    """Main application entry point with comprehensive error handling"""
-    try:
-        # Create and run the application
-        app = FinancialAnalyticsPlatform()
-        app.run()
-        
-    except Exception as e:
-        # Critical error handling
-        logging.critical(f"Fatal application error: {e}", exc_info=True)
-        
-        st.error("🚨 A critical error occurred. Please refresh the page.")
-        
-        # Show debug info if available
-        if st.session_state.get('debug_mode', False):
-            st.exception(e)
-            
-            with st.expander("🔧 Debug Information"):
-                st.write("**Error Details:**")
-                st.code(traceback.format_exc())
-                
-                st.write("**Session State:**")
-                st.json(dict(st.session_state))
-        
-        # Recovery options
-        st.subheader("🔄 Recovery Options")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🔄 Refresh Page"):
-                st.experimental_rerun()
-        
-        with col2:
-            if st.button("🗑️ Clear Cache"):
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.success("Cache cleared!")
-        
-        with col3:
-            if st.button("🏠 Reset to Home"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.experimental_rerun()
-
-if __name__ == "__main__":
-    # Configure Python path and environment
-    import sys
-    from pathlib import Path
-    
-    # Add current directory to Python path
-    current_dir = Path(__file__).parent
-    if str(current_dir) not in sys.path:
-        sys.path.insert(0, str(current_dir))
-    
-    # Run the application
-    main()

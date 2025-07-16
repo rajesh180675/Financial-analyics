@@ -2793,22 +2793,36 @@ class AIMapper(Component):
         try:
             self._logger.info(f"Testing connection to: {self.config.get('ai.kaggle_api_url')}")
             
-            health_status = self._api_client.health_check()
-            self._logger.info(f"Health check result: {health_status}")
-            
-            if health_status['healthy'] and health_status.get('response'):
-                response = health_status['response']
-                self._kaggle_info = response
-                self._last_health_check = time.time()
+            # First, test the embed endpoint since we know it works from diagnostics
+            try:
+                test_response = self._api_client.make_request(
+                    'POST', '/embed',
+                    {'texts': ['test']},
+                    timeout=10
+                )
                 
-                self._logger.info(f"Health response type: {type(response)}")
-                self._logger.info(f"Health response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
+                self._logger.info(f"Embed test response: {test_response}")
                 
-                # Your API returns 'status': 'healthy' 
-                if isinstance(response, dict) and response.get('status') == 'healthy':
-                    # Store GPU info from your API's response format
-                    if 'system' in response:
-                        system_info = response['system']
+                if test_response and isinstance(test_response, dict) and 'embeddings' in test_response:
+                    self._logger.info("Embed test successful - proceeding with connection")
+                    
+                    # Optionally test health for additional info
+                    try:
+                        health_status = self._api_client.health_check()
+                        if health_status['healthy'] and health_status.get('response'):
+                            response = health_status['response']
+                            self._kaggle_info = response
+                        else:
+                            self._logger.warning("Health check failed, but embed works - ignoring")
+                    except Exception as e:
+                        self._logger.warning(f"Health check failed but ignored: {e}")
+                    
+                    self._last_health_check = time.time()
+                    self._kaggle_info = self._kaggle_info or {'status': 'healthy (embed test)'}
+                    
+                    # Store GPU info if available
+                    if 'system' in self._kaggle_info:
+                        system_info = self._kaggle_info['system']
                         self._kaggle_info.update({
                             'gpu_name': system_info.get('gpu_name', 'Unknown'),
                             'gpu_available': system_info.get('gpu_available', False),
@@ -2816,39 +2830,16 @@ class AIMapper(Component):
                             'device': system_info.get('device', 'Unknown')
                         })
                     
-                    # Test the embed endpoint
-                    try:
-                        test_response = self._api_client.make_request(
-                            'POST', '/embed',
-                            {'texts': ['test']},
-                            timeout=10
-                        )
-                        
-                        self._logger.info(f"Embed test response: {test_response is not None}")
-                        
-                        # Check for the EXACT format your API returns
-                        if (test_response and 
-                            isinstance(test_response, dict) and 
-                            'embeddings' in test_response and
-                            isinstance(test_response['embeddings'], list) and
-                            len(test_response['embeddings']) > 0):
-                            
-                            self._logger.info(f"Successfully connected to Kaggle API - GPU: {self._kaggle_info.get('gpu_name', 'Unknown')}")
-                            return True
-                        else:
-                            self._logger.error(f"Unexpected embed response format: {test_response}")
-                            return False
-                            
-                    except Exception as e:
-                        self._logger.error(f"Embed endpoint test error: {e}", exc_info=True)
-                        return False
+                    self._logger.info(f"Successfully connected to Kaggle API - GPU: {self._kaggle_info.get('gpu_name', 'Unknown')}")
+                    return True
                 else:
-                    self._logger.error(f"Health check response not in expected format: {response}")
+                    self._logger.error(f"Embed test failed: {test_response}")
                     return False
-            else:
-                self._logger.error(f"Health check failed: healthy={health_status.get('healthy')}, has_response={health_status.get('response') is not None}")
+                    
+            except Exception as e:
+                self._logger.error(f"Embed test failed: {e}", exc_info=True)
                 return False
-                        
+                
         except Exception as e:
             self._logger.error(f"Kaggle connection test failed: {e}", exc_info=True)
             return False

@@ -2922,7 +2922,7 @@ class AIMapper(Component):
                 if previous_state and not self._kaggle_available:
                     self._logger.warning("Kaggle API became unavailable")
                     SimpleState.set('kaggle_api_status', 'offline')
-                    elif not previous_state and self._kaggle_available:
+                elif not previous_state and self._kaggle_available:
                     self._logger.info("Kaggle API recovered")
                     SimpleState.set('kaggle_api_status', 'online')
                 

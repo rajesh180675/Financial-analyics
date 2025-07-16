@@ -8646,52 +8646,69 @@ def _render_debug_footer(self):
             if api_summary:
                 for endpoint, metrics in api_summary.items():
                     st.write(f"- {endpoint}: {metrics['total_requests']} requests, {metrics['success_rate']:.1%} success")
-#--- 31. Application Entry Point ---
-def main(): """Main application entry point with comprehensive error handling""" try: # Create and run the application app = FinancialAnalyticsPlatform() app.run()
+                    
+# --- 31. Application Entry Point ---
 
-except Exception as e:
-    # Critical error handling
-    logging.critical(f"Fatal application error: {e}", exc_info=True)
-    
-    st.error("🚨 A critical error occurred. Please refresh the page.")
-    
-    # Show debug info if available
-    if st.session_state.get('debug_mode', False):
-        st.exception(e)
+def main():
+    """Main application entry point with comprehensive error handling."""
+    try:
+        # Create and run the application.
+        app = FinancialAnalyticsPlatform()
+        app.run()
+
+    except Exception as e:
+        # This block runs ONLY if an error occurs in the app.
         
-        with st.expander("🔧 Debug Information"):
-            st.write("**Error Details:**")
-            st.code(traceback.format_exc())
+        # Log the fatal error for debugging.
+        logging.critical(f"Fatal application error: {e}", exc_info=True)
+    
+        # Display a user-friendly error message.
+        st.error("🚨 A critical error occurred. Please refresh the page.")
+        
+        # Show recovery options to the user.
+        st.subheader("🔄 Recovery Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 Refresh Page"):
+                st.experimental_rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache"):
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.success("Cache cleared! Please refresh the page.")
+        
+        with col3:
+            if st.button("🏠 Reset to Home"):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.experimental_rerun()
+
+        # Optionally show detailed debug info if debug mode is on.
+        if st.session_state.get('debug_mode', False):
+            st.exception(e)
             
-            st.write("**Session State:**")
-            st.json(dict(st.session_state))
-    
-    # Recovery options
-    st.subheader("🔄 Recovery Options")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🔄 Refresh Page"):
-            st.experimental_rerun()
-    
-    with col2:
-        if st.button("🗑️ Clear Cache"):
-            st.cache_data.clear()
-            st.cache_resource.clear()
-            st.success("Cache cleared!")
-    
-    with col3:
-        if st.button("🏠 Reset to Home"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.experimental_rerun()
-if name == "main": # Configure Python path and environment import sys from pathlib import Path
+            with st.expander("🔧 Debug Information"):
+                st.write("**Error Details:**")
+                st.code(traceback.format_exc())
+                
+                st.write("**Session State:**")
+                st.json(dict(st.session_state))
 
-# Add current directory to Python path
-current_dir = Path(__file__).parent
-if str(current_dir) not in sys.path:
-    sys.path.insert(0, str(current_dir))
+# This is the standard Python construct to make a script runnable.
+# The code inside this block will only execute when the script is run directly.
+if __name__ == "__main__":
+    # Configure Python path and environment.
+    import sys
+    from pathlib import Path
 
-# Run the application
-main()
+    # Add the script's directory to the Python path.
+    # This helps ensure that local modules can be imported correctly.
+    current_dir = Path(__file__).parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+
+    # Run the main application function.
+    main()

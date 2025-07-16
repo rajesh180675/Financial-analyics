@@ -8646,7 +8646,7 @@ def _render_debug_footer(self):
             if api_summary:
                 for endpoint, metrics in api_summary.items():
                     st.write(f"- {endpoint}: {metrics['total_requests']} requests, {metrics['success_rate']:.1%} success")
---- 31. Application Entry Point ---
+#--- 31. Application Entry Point ---
 def main(): """Main application entry point with comprehensive error handling""" try: # Create and run the application app = FinancialAnalyticsPlatform() app.run()
 
 except Exception as e:

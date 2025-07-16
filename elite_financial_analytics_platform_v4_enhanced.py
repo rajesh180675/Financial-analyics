@@ -2580,14 +2580,43 @@ class EnhancedAPIClient:
     def health_check(self) -> Dict[str, Any]:
         """Perform health check with detailed status"""
         try:
-            response = self.make_request('GET', '/health', timeout=5)
-            return {
-                'healthy': True,
-                'response': response,
-                'circuit_breaker': self.circuit_breaker.get_state(),
-                'queue_size': self.request_queue.queue.qsize(),
-                'cache_stats': self.response_cache.get_stats()
-            }
+            # Make a simple GET request to /health
+            # Don't use make_request here to avoid circular dependencies
+            url = f"{self.base_url.rstrip('/')}/health"
+            
+            response = self._session.get(
+                url,
+                timeout=5,
+                verify=False,
+                headers={'ngrok-skip-browser-warning': 'true'}
+            )
+            
+            if response.status_code == 200:
+                try:
+                    response_data = response.json()
+                    return {
+                        'healthy': True,
+                        'response': response_data,
+                        'circuit_breaker': self.circuit_breaker.get_state(),
+                        'queue_size': self.request_queue.queue.qsize(),
+                        'cache_stats': self.response_cache.get_stats()
+                    }
+                except:
+                    return {
+                        'healthy': True,
+                        'response': {'status': 'ok'},
+                        'circuit_breaker': self.circuit_breaker.get_state(),
+                        'queue_size': self.request_queue.queue.qsize(),
+                        'cache_stats': self.response_cache.get_stats()
+                    }
+            else:
+                return {
+                    'healthy': False,
+                    'error': f"Status code: {response.status_code}",
+                    'circuit_breaker': self.circuit_breaker.get_state(),
+                    'queue_size': self.request_queue.queue.qsize()
+                }
+                
         except Exception as e:
             return {
                 'healthy': False,
@@ -2756,12 +2785,18 @@ class AIMapper(Component):
     def _test_kaggle_connection(self) -> bool:
         """Test Kaggle API connection with comprehensive checks"""
         try:
+            self._logger.info(f"Testing connection to: {self.config.get('ai.kaggle_api_url')}")
+            
             health_status = self._api_client.health_check()
+            self._logger.info(f"Health check result: {health_status}")
             
             if health_status['healthy'] and health_status.get('response'):
                 response = health_status['response']
                 self._kaggle_info = response
                 self._last_health_check = time.time()
+                
+                self._logger.info(f"Health response type: {type(response)}")
+                self._logger.info(f"Health response keys: {response.keys() if isinstance(response, dict) else 'Not a dict'}")
                 
                 # Your API returns 'status': 'healthy' 
                 if isinstance(response, dict) and response.get('status') == 'healthy':
@@ -2783,6 +2818,8 @@ class AIMapper(Component):
                             timeout=10
                         )
                         
+                        self._logger.info(f"Embed test response: {test_response is not None}")
+                        
                         # Check for the EXACT format your API returns
                         if (test_response and 
                             isinstance(test_response, dict) and 
@@ -2797,17 +2834,17 @@ class AIMapper(Component):
                             return False
                             
                     except Exception as e:
-                        self._logger.warning(f"Embed endpoint test failed: {e}")
-                        # Still return True if health check passed
-                        return True
+                        self._logger.error(f"Embed endpoint test error: {e}", exc_info=True)
+                        return False
                 else:
                     self._logger.error(f"Health check response not in expected format: {response}")
                     return False
+            else:
+                self._logger.error(f"Health check failed: healthy={health_status.get('healthy')}, has_response={health_status.get('response') is not None}")
+                return False
                         
-            return False
-            
         except Exception as e:
-            self._logger.error(f"Kaggle connection test failed: {e}")
+            self._logger.error(f"Kaggle connection test failed: {e}", exc_info=True)
             return False
     
     def _start_health_monitor(self):

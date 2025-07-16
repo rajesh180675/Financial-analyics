@@ -2990,45 +2990,31 @@ class AIMapper(Component):
                 self._embedding_buffer.popitem(last=False)
             
             self._embedding_buffer[text] = embedding
-    
     def _get_embedding_kaggle(self, text: str) -> Optional[np.ndarray]:
         """Get single embedding from Kaggle API"""
         try:
             response = self._api_client.make_request(
                 'POST', '/embed',
-                {'texts': [text]},  # Use the correct format
+                {'texts': [text]},
                 timeout=10,
                 priority=5
             )
             
-            if response:
-                # Handle your API's response format
-                if isinstance(response, dict):
-                    # Try different keys where embeddings might be stored
-                    for key in ['embeddings', 'data', 'vectors', 'output', 'result']:
-                        if key in response:
-                            embeddings = response[key]
-                            if isinstance(embeddings, list) and len(embeddings) > 0:
-                                # Get the first embedding
-                                embedding = embeddings[0]
-                                if isinstance(embedding, list):
-                                    return np.array(embedding)
-                                elif isinstance(embedding, np.ndarray):
-                                    return embedding
-                            break
-                    
-                    # If no standard key found, try the response directly
-                    if isinstance(response, list) and len(response) > 0:
-                        return np.array(response[0])
-                        
-                elif isinstance(response, list) and len(response) > 0:
-                    # Direct list response
-                    return np.array(response[0] if isinstance(response[0], list) else response)
-                    
+            if response and isinstance(response, dict):
+                # Your API returns embeddings in the 'embeddings' key
+                if 'embeddings' in response:
+                    embeddings = response['embeddings']
+                    if isinstance(embeddings, list) and len(embeddings) > 0:
+                        # Get the first embedding (since we sent one text)
+                        embedding = embeddings[0]
+                        if isinstance(embedding, list):
+                            return np.array(embedding)
+                            
+            return None
+            
         except Exception as e:
             self._logger.error(f"Kaggle embedding error: {e}")
-            
-        return None
+            return None
     
     def _get_embedding_local(self, text: str) -> Optional[np.ndarray]:
         """Get embedding using local model"""
@@ -3053,29 +3039,22 @@ class AIMapper(Component):
                 
                 response = self._api_client.make_request(
                     'POST', '/embed',
-                    {'texts': sub_batch},  # Use the correct format
+                    {'texts': sub_batch},
                     priority=3
                 )
                 
-                if response:
-                    # Handle your API's response format
-                    embeddings = None
-                    
-                    if isinstance(response, dict):
-                        for key in ['embeddings', 'data', 'vectors', 'output', 'result']:
-                            if key in response:
-                                embeddings = response[key]
-                                break
-                    elif isinstance(response, list):
-                        embeddings = response
-                    
-                    if embeddings and isinstance(embeddings, list):
+                if response and isinstance(response, dict) and 'embeddings' in response:
+                    embeddings = response['embeddings']
+                    if isinstance(embeddings, list):
+                        # Convert each embedding to numpy array
                         batch_embeddings = [np.array(emb) for emb in embeddings]
                         all_embeddings.extend(batch_embeddings)
                         self.progress_tracker.update_progress(operation_id, len(all_embeddings))
                     else:
+                        self._logger.error("Unexpected embeddings format")
                         return None
                 else:
+                    self._logger.error(f"Invalid response format: {response}")
                     return None
             
             return all_embeddings
@@ -5362,11 +5341,20 @@ class FinancialAnalyticsPlatform:
                                     
                                     # Show API info
                                     if status['api_info']:
+                                        info = status['api_info']
+                                        
+                                        # Extract system info
+                                        system_info = info.get('system', {})
+                                        gpu_name = system_info.get('gpu_name', 'Unknown')
+                                        device = system_info.get('device', 'Unknown')
+                                        model = system_info.get('model', 'Unknown')
+                                        
                                         st.info(f"""
                                         **GPU Info:**
-                                        - Model: {status['api_info'].get('model', 'Unknown')}
-                                        - GPU: {status['api_info'].get('gpu_name', 'Unknown')}
-                                        - Status: {status['api_info'].get('status', 'Unknown')}
+                                        - Model: {model}
+                                        - GPU: {gpu_name}
+                                        - Device: {device}
+                                        - Version: {info.get('version', 'Unknown')}
                                         """)
                                     
                                     # Save to session state

@@ -5531,7 +5531,70 @@ class FinancialAnalyticsPlatform:
                                     st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
                     else:
                         st.warning("Please enter a ngrok URL above")
-                
+                        
+                # Add this debug code temporarily after your existing buttons
+                if st.button("🔬 Debug Embed Response", type="secondary"):
+                    if api_url:
+                        try:
+                            import requests
+                            import json
+                            import urllib3
+                            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                            
+                            # Test embed with exact request
+                            response = requests.post(
+                                f"{api_url}/embed",
+                                json={'texts': ['test embedding']},
+                                headers={
+                                    'Content-Type': 'application/json',
+                                    'ngrok-skip-browser-warning': 'true'
+                                },
+                                verify=False,
+                                timeout=10
+                            )
+                            
+                            if response.status_code == 200:
+                                st.success("✅ Embed request successful!")
+                                
+                                # Get the raw response
+                                response_data = response.json()
+                                
+                                # Show the response structure
+                                st.write("**Raw Response Type:**", type(response_data))
+                                
+                                if isinstance(response_data, dict):
+                                    st.write("**Response Keys:**", list(response_data.keys()))
+                                    
+                                    # Show first level of data
+                                    for key, value in response_data.items():
+                                        st.write(f"\n**Key '{key}':**")
+                                        st.write(f"- Type: {type(value)}")
+                                        
+                                        if isinstance(value, list):
+                                            st.write(f"- Length: {len(value)}")
+                                            if len(value) > 0:
+                                                st.write(f"- First item type: {type(value[0])}")
+                                                if isinstance(value[0], list):
+                                                    st.write(f"- First item length (embedding dimension): {len(value[0])}")
+                                                    st.write(f"- First 5 values: {value[0][:5]}")
+                                        elif isinstance(value, dict):
+                                            st.write(f"- Sub-keys: {list(value.keys())}")
+                                
+                                # Show full response
+                                with st.expander("Full Response JSON"):
+                                    st.json(response_data)
+                                    
+                            else:
+                                st.error(f"Request failed: {response.status_code}")
+                                st.text(response.text)
+                                
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+                            import traceback
+                            st.code(traceback.format_exc())
+                    else:
+                        st.warning("Enter API URL first")
+                        
                 # Show connection guide
                 with st.expander("📚 Setup Guide"):
                     st.markdown("""

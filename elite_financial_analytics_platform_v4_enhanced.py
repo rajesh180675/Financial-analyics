@@ -4573,7 +4573,8 @@ class ExportManager:
             lines.append("\n")
     
     return "\n".join(lines)
---- 27. UI Components Factory ---
+    
+#--- 27. UI Components Factory ---
 class UIComponentFactory: """Factory for creating UI components with consistent styling"""
 
 @staticmethod

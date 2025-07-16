@@ -5587,14 +5587,14 @@ class FinancialAnalyticsPlatform:
                     - Check that ngrok is not expired (8 hour limit)
                     - Verify the URL includes https://
                     """)
-else:
-    # Disabled - clear settings
-    if self.get_state('kaggle_api_enabled'):
-        self.config.set('ai.use_kaggle_api', False)
-        self.set_state('kaggle_api_enabled', False)
-        self.set_state('kaggle_api_status', 'disabled')
-    
-    st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+        else:
+            # Disabled - clear settings
+            if self.get_state('kaggle_api_enabled'):
+                self.config.set('ai.use_kaggle_api', False)
+                self.set_state('kaggle_api_enabled', False)
+                self.set_state('kaggle_api_status', 'disabled')
+            
+            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
         
         # Show performance comparison
         if 'mapper' in self.components:

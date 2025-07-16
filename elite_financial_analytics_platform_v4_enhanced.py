@@ -2763,7 +2763,7 @@ class AIMapper(Component):
                 self._kaggle_info = response
                 self._last_health_check = time.time()
                 
-                # Your API returns 'status': 'healthy' - this is what we need to check
+                # Your API returns 'status': 'healthy' 
                 if isinstance(response, dict) and response.get('status') == 'healthy':
                     # Store GPU info from your API's response format
                     if 'system' in response:
@@ -2775,23 +2775,34 @@ class AIMapper(Component):
                             'device': system_info.get('device', 'Unknown')
                         })
                     
-                    # Test the embed endpoint with the correct format
+                    # Test the embed endpoint
                     try:
                         test_response = self._api_client.make_request(
                             'POST', '/embed',
-                            {'texts': ['test']},  # Use the format that works
+                            {'texts': ['test']},
                             timeout=10
                         )
                         
-                        # Check if we got a valid response
-                        if test_response:
+                        # Check for the EXACT format your API returns
+                        if (test_response and 
+                            isinstance(test_response, dict) and 
+                            'embeddings' in test_response and
+                            isinstance(test_response['embeddings'], list) and
+                            len(test_response['embeddings']) > 0):
+                            
                             self._logger.info(f"Successfully connected to Kaggle API - GPU: {self._kaggle_info.get('gpu_name', 'Unknown')}")
                             return True
+                        else:
+                            self._logger.error(f"Unexpected embed response format: {test_response}")
+                            return False
                             
                     except Exception as e:
                         self._logger.warning(f"Embed endpoint test failed: {e}")
-                        # Still return True since health check passed and we know the endpoint works
+                        # Still return True if health check passed
                         return True
+                else:
+                    self._logger.error(f"Health check response not in expected format: {response}")
+                    return False
                         
             return False
             

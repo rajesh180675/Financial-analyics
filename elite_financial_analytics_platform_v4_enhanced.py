@@ -5365,9 +5365,8 @@ class FinancialAnalyticsPlatform:
                 
                 # Debug embed endpoint button
                 if st.button("🧪 Test Embed Endpoint", type="secondary"):
-                    api_url = self.get_state('kaggle_api_url', '')
-                    
-                    if api_url:
+                    # Use the current api_url variable from the form, not from session state
+                    if api_url:  # This uses the api_url from the text input above
                         with st.spinner("Testing embed endpoint..."):
                             try:
                                 import requests
@@ -5435,13 +5434,12 @@ class FinancialAnalyticsPlatform:
                                 with st.expander("Show error details"):
                                     st.code(traceback.format_exc())
                     else:
-                        st.warning("Please configure and test the Kaggle API connection first")
+                        st.warning("Please enter a ngrok URL above")
                 
                 # Add connection diagnostics button
                 if st.button("🔍 Run Full Diagnostics", type="secondary"):
-                    api_url = self.get_state('kaggle_api_url', '')
-                    
-                    if api_url:
+                    # Use the current api_url variable from the form
+                    if api_url:  # This uses the api_url from the text input above
                         with st.expander("Diagnostic Results", expanded=True):
                             st.write(f"**Testing URL:** `{api_url}`")
                             
@@ -5511,7 +5509,7 @@ class FinancialAnalyticsPlatform:
                                 except Exception as e:
                                     st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
                     else:
-                        st.warning("Please enter a Kaggle API URL first")
+                        st.warning("Please enter a ngrok URL above")
                 
                 # Show connection guide
                 with st.expander("📚 Setup Guide"):

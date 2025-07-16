@@ -5363,8 +5363,6 @@ class FinancialAnalyticsPlatform:
                     else:
                         st.warning("Please enter a valid ngrok URL")
                 
-                # ADD THE NEW DEBUG BUTTONS HERE (AFTER THE EXISTING CODE):
-                
                 # Debug embed endpoint button
                 if st.button("🧪 Test Embed Endpoint", type="secondary"):
                     api_url = self.get_state('kaggle_api_url', '')
@@ -5499,7 +5497,7 @@ class FinancialAnalyticsPlatform:
                                     response = requests.post(
                                         f"{api_url.rstrip('/')}/embed",
                                         json=payload,
-                                        headers={'Content-Type': 'application/json'},
+                                        headers={'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
                                         verify=False,
                                         timeout=10
                                     )
@@ -5514,43 +5512,41 @@ class FinancialAnalyticsPlatform:
                                     st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
                     else:
                         st.warning("Please enter a Kaggle API URL first")
-                                
-                               
                 
-        # Show connection guide
-        with st.expander("📚 Setup Guide"):
-            st.markdown("""
-            **How to connect to Kaggle GPU:**
+                # Show connection guide
+                with st.expander("📚 Setup Guide"):
+                    st.markdown("""
+                    **How to connect to Kaggle GPU:**
+                    
+                    1. **Run the Kaggle notebook** with the API server code
+                    2. **Copy the ngrok URL** shown in the output
+                    3. **Paste it above** and click Test Connection
+                    
+                    **Benefits:**
+                    - 🚀 10-100x faster embedding generation
+                    - 💾 Larger model support (GPU memory)
+                    - 🔋 Reduced local CPU/memory usage
+                    - 📊 Better accuracy with larger models
+                    
+                    **Advanced Features:**
+                    - Circuit breaker for resilience
+                    - Request batching and coalescing
+                    - Response caching
+                    - Connection pooling
+                    
+                    **Troubleshooting:**
+                    - Ensure the Kaggle notebook is running
+                    - Check that ngrok is not expired (8 hour limit)
+                    - Verify the URL includes https://
+                    """)
+        else:
+            # Disabled - clear settings
+            if self.get_state('kaggle_api_enabled'):
+                self.config.set('ai.use_kaggle_api', False)
+                self.set_state('kaggle_api_enabled', False)
+                self.set_state('kaggle_api_status', 'disabled')
             
-            1. **Run the Kaggle notebook** with the API server code
-            2. **Copy the ngrok URL** shown in the output
-            3. **Paste it above** and click Test Connection
-            
-            **Benefits:**
-            - 🚀 10-100x faster embedding generation
-            - 💾 Larger model support (GPU memory)
-            - 🔋 Reduced local CPU/memory usage
-            - 📊 Better accuracy with larger models
-            
-            **Advanced Features:**
-            - Circuit breaker for resilience
-            - Request batching and coalescing
-            - Response caching
-            - Connection pooling
-            
-            **Troubleshooting:**
-            - Ensure the Kaggle notebook is running
-            - Check that ngrok is not expired (8 hour limit)
-            - Verify the URL includes https://
-            """)
-else:
-    # Disabled - clear settings
-    if self.get_state('kaggle_api_enabled'):
-        self.config.set('ai.use_kaggle_api', False)
-        self.set_state('kaggle_api_enabled', False)
-        self.set_state('kaggle_api_status', 'disabled')
-    
-    st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
         
         # Show performance comparison
         if 'mapper' in self.components:

@@ -2359,6 +2359,11 @@ class EnhancedAPIClient:
         self.timeout = config.get('ai.kaggle_api_timeout', 30)
         self.max_retries = config.get('ai.kaggle_max_retries', 3)
         self._session = None
+        
+        # Connection pool - MOVED BEFORE _setup_session()
+        self.connection_pool_size = config.get('ai.kaggle_connection_pool_size', 20)
+        
+        # Now setup session AFTER connection_pool_size is defined
         self._setup_session()
         
         # Metrics
@@ -2380,9 +2385,6 @@ class EnhancedAPIClient:
             max_size=config.get('ai.kaggle_max_queue_size', 100),
             coalesce_window_ms=config.get('ai.kaggle_coalesce_window_ms', 100)
         )
-        
-        # Connection pool
-        self.connection_pool_size = config.get('ai.kaggle_connection_pool_size', 20)
         
         # Response cache
         self.response_cache = AdvancedCache(max_size_mb=20, default_ttl=300)
@@ -2407,7 +2409,7 @@ class EnhancedAPIClient:
             raise_on_status=False
         )
         
-        # Connection pooling
+        # Connection pooling - Now self.connection_pool_size is defined
         adapter = HTTPAdapter(
             max_retries=retry_strategy,
             pool_connections=self.connection_pool_size,

@@ -4524,7 +4524,8 @@ class ExportManager:
             
             if 'quality_score' in analysis:
                 lines.append(f"- **Data Quality Score:** {analysis['quality_score']:.1f}%")
-             if 'completeness' in summary:
+                
+            if 'completeness' in summary:
                 lines.append(f"- **Data Completeness:** {summary['completeness']:.1f}%")
         
             lines.append("\n")

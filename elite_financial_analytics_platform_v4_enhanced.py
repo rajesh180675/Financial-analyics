@@ -4663,7 +4663,8 @@ def render_with_skeleton(render_func: Callable, loading_key: str):
             )
     else:
         render_func()
---- 28. Sample Data Generator ---
+        
+#--- 28. Sample Data Generator ---
 class SampleDataGenerator: """Generate sample financial data for demonstration"""
 
 @staticmethod
@@ -4815,7 +4816,8 @@ def generate_european_retail() -> pd.DataFrame:
     
     df = pd.DataFrame(data, index=list(data.keys()), columns=years)
     return df
---- 29. Error Recovery Mechanisms ---
+    
+#--- 29. Error Recovery Mechanisms ---
 class ErrorRecoveryManager: """Manage error recovery and fallback strategies"""
 
 def __init__(self):
@@ -4863,7 +4865,8 @@ def _recover_memory(self, context: Dict[str, Any]) -> bool:
     gc.collect()
     
     return True
---- 30. Main Application Class ---
+    
+#--- 30. Main Application Class ---
 class FinancialAnalyticsPlatform: """Main application with advanced architecture and all integrations"""
 
 def __init__(self):

@@ -5515,75 +5515,42 @@ class FinancialAnalyticsPlatform:
                     else:
                         st.warning("Please enter a Kaggle API URL first")
                                 
-                                # Show connection guide
-                                with st.expander("📚 Setup Guide"):
-                                    st.markdown("""
-                                    **How to connect to Kaggle GPU:**
-                                    
-                                    1. **Run the Kaggle notebook** with the API server code
-                                    2. **Copy the ngrok URL** shown in the output
-                                    3. **Paste it above** and click Test Connection
-                                    
-                                    **Benefits:**
-                                    - 🚀 10-100x faster embedding generation
-                                    - 💾 Larger model support (GPU memory)
-                                    - 🔋 Reduced local CPU/memory usage
-                                    - 📊 Better accuracy with larger models
-                                    
-                                    **Advanced Features:**
-                                    - Circuit breaker for resilience
-                                    - Request batching and coalescing
-                                    - Response caching
-                                    - Connection pooling
-                                    
-                                    **Troubleshooting:**
-                                    - Ensure the Kaggle notebook is running
-                                    - Check that ngrok is not expired (8 hour limit)
-                                    - Verify the URL includes https://
-                                    """)
-                        else:
-                            # Disabled - clear settings
-                            if self.get_state('kaggle_api_enabled'):
-                                self.config.set('ai.use_kaggle_api', False)
-                                self.set_state('kaggle_api_enabled', False)
-                                self.set_state('kaggle_api_status', 'disabled')
-                            
-                            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+                               
                 
-                # Show connection guide
-                with st.expander("📚 Setup Guide"):
-                    st.markdown("""
-                    **How to connect to Kaggle GPU:**
-                    
-                    1. **Run the Kaggle notebook** with the API server code
-                    2. **Copy the ngrok URL** shown in the output
-                    3. **Paste it above** and click Test Connection
-                    
-                    **Benefits:**
-                    - 🚀 10-100x faster embedding generation
-                    - 💾 Larger model support (GPU memory)
-                    - 🔋 Reduced local CPU/memory usage
-                    - 📊 Better accuracy with larger models
-                    
-                    **Advanced Features:**
-                    - Circuit breaker for resilience
-                    - Request batching and coalescing
-                    - Response caching
-                    - Connection pooling
-                    
-                    **Troubleshooting:**
-                    - Ensure the Kaggle notebook is running
-                    - Check that ngrok is not expired (8 hour limit)
-                    - Verify the URL includes https://
-                    """)
-        else:
-            # Disabled - clear settings
-            if self.get_state('kaggle_api_enabled'):
-                self.config.set('ai.use_kaggle_api', False)
-                self.set_state('kaggle_api_enabled', False)
-                self.set_state('kaggle_api_status', 'disabled')
+        # Show connection guide
+        with st.expander("📚 Setup Guide"):
+            st.markdown("""
+            **How to connect to Kaggle GPU:**
             
-            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+            1. **Run the Kaggle notebook** with the API server code
+            2. **Copy the ngrok URL** shown in the output
+            3. **Paste it above** and click Test Connection
+            
+            **Benefits:**
+            - 🚀 10-100x faster embedding generation
+            - 💾 Larger model support (GPU memory)
+            - 🔋 Reduced local CPU/memory usage
+            - 📊 Better accuracy with larger models
+            
+            **Advanced Features:**
+            - Circuit breaker for resilience
+            - Request batching and coalescing
+            - Response caching
+            - Connection pooling
+            
+            **Troubleshooting:**
+            - Ensure the Kaggle notebook is running
+            - Check that ngrok is not expired (8 hour limit)
+            - Verify the URL includes https://
+            """)
+else:
+    # Disabled - clear settings
+    if self.get_state('kaggle_api_enabled'):
+        self.config.set('ai.use_kaggle_api', False)
+        self.set_state('kaggle_api_enabled', False)
+        self.set_state('kaggle_api_status', 'disabled')
+    
+    st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
         
         # Show performance comparison
         if 'mapper' in self.components:

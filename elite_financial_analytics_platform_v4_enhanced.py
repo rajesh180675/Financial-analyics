@@ -2580,9 +2580,9 @@ class EnhancedAPIClient:
     def health_check(self) -> Dict[str, Any]:
         """Perform health check with detailed status"""
         try:
-            # Make a simple GET request to /health
-            # Don't use make_request here to avoid circular dependencies
+            # Ensure no double slashes
             url = f"{self.base_url.rstrip('/')}/health"
+            self.logger.info(f"Health check URL: {url}")  # Add this for debugging
             
             response = self._session.get(
                 url,
@@ -2591,9 +2591,12 @@ class EnhancedAPIClient:
                 headers={'ngrok-skip-browser-warning': 'true'}
             )
             
+            self.logger.info(f"Health response status: {response.status_code}")  # Debug log
+            
             if response.status_code == 200:
                 try:
                     response_data = response.json()
+                    self.logger.info(f"Health response data: {response_data}")  # Debug log
                     return {
                         'healthy': True,
                         'response': response_data,
@@ -2601,15 +2604,17 @@ class EnhancedAPIClient:
                         'queue_size': self.request_queue.queue.qsize(),
                         'cache_stats': self.response_cache.get_stats()
                     }
-                except:
+                except json.JSONDecodeError as e:
+                    self.logger.warning(f"Health response not JSON: {response.text[:200]} - {e}")
                     return {
-                        'healthy': True,
-                        'response': {'status': 'ok'},
+                        'healthy': True,  # Assume healthy if we get 200 even if not JSON
+                        'response': {'status': 'ok', 'message': response.text},
                         'circuit_breaker': self.circuit_breaker.get_state(),
                         'queue_size': self.request_queue.queue.qsize(),
                         'cache_stats': self.response_cache.get_stats()
                     }
             else:
+                self.logger.error(f"Health check failed with status: {response.status_code} - {response.text[:200]}")
                 return {
                     'healthy': False,
                     'error': f"Status code: {response.status_code}",
@@ -2618,13 +2623,14 @@ class EnhancedAPIClient:
                 }
                 
         except Exception as e:
+            self.logger.error(f"Health check exception: {str(e)}", exc_info=True)
             return {
                 'healthy': False,
                 'error': str(e),
                 'circuit_breaker': self.circuit_breaker.get_state(),
                 'queue_size': self.request_queue.queue.qsize()
             }
-    
+        
     def get_stats(self) -> Dict[str, Any]:
         """Get detailed client statistics"""
         with self._lock:
@@ -5390,8 +5396,6 @@ class FinancialAnalyticsPlatform:
                                     # Show API info
                                     if status['api_info']:
                                         info = status['api_info']
-                                        
-                                        # Extract system info
                                         system_info = info.get('system', {})
                                         gpu_name = system_info.get('gpu_name', 'Unknown')
                                         device = system_info.get('device', 'Unknown')
@@ -5422,8 +5426,7 @@ class FinancialAnalyticsPlatform:
                 
                 # Debug embed endpoint button
                 if st.button("🧪 Test Embed Endpoint", type="secondary"):
-                    # Use the current api_url variable from the form, not from session state
-                    if api_url:  # This uses the api_url from the text input above
+                    if api_url:
                         with st.spinner("Testing embed endpoint..."):
                             try:
                                 import requests
@@ -5495,8 +5498,7 @@ class FinancialAnalyticsPlatform:
                 
                 # Add connection diagnostics button
                 if st.button("🔍 Run Full Diagnostics", type="secondary"):
-                    # Use the current api_url variable from the form
-                    if api_url:  # This uses the api_url from the text input above
+                    if api_url:
                         with st.expander("Diagnostic Results", expanded=True):
                             st.write(f"**Testing URL:** `{api_url}`")
                             
@@ -5567,70 +5569,7 @@ class FinancialAnalyticsPlatform:
                                     st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
                     else:
                         st.warning("Please enter a ngrok URL above")
-                        
-                # Add this debug code temporarily after your existing buttons
-                if st.button("🔬 Debug Embed Response", type="secondary"):
-                    if api_url:
-                        try:
-                            import requests
-                            import json
-                            import urllib3
-                            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                            
-                            # Test embed with exact request
-                            response = requests.post(
-                                f"{api_url}/embed",
-                                json={'texts': ['test embedding']},
-                                headers={
-                                    'Content-Type': 'application/json',
-                                    'ngrok-skip-browser-warning': 'true'
-                                },
-                                verify=False,
-                                timeout=10
-                            )
-                            
-                            if response.status_code == 200:
-                                st.success("✅ Embed request successful!")
-                                
-                                # Get the raw response
-                                response_data = response.json()
-                                
-                                # Show the response structure
-                                st.write("**Raw Response Type:**", type(response_data))
-                                
-                                if isinstance(response_data, dict):
-                                    st.write("**Response Keys:**", list(response_data.keys()))
-                                    
-                                    # Show first level of data
-                                    for key, value in response_data.items():
-                                        st.write(f"\n**Key '{key}':**")
-                                        st.write(f"- Type: {type(value)}")
-                                        
-                                        if isinstance(value, list):
-                                            st.write(f"- Length: {len(value)}")
-                                            if len(value) > 0:
-                                                st.write(f"- First item type: {type(value[0])}")
-                                                if isinstance(value[0], list):
-                                                    st.write(f"- First item length (embedding dimension): {len(value[0])}")
-                                                    st.write(f"- First 5 values: {value[0][:5]}")
-                                        elif isinstance(value, dict):
-                                            st.write(f"- Sub-keys: {list(value.keys())}")
-                                
-                                # Show full response
-                                with st.expander("Full Response JSON"):
-                                    st.json(response_data)
-                                    
-                            else:
-                                st.error(f"Request failed: {response.status_code}")
-                                st.text(response.text)
-                                
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-                            import traceback
-                            st.code(traceback.format_exc())
-                    else:
-                        st.warning("Enter API URL first")
-                        
+                
                 # Show connection guide
                 with st.expander("📚 Setup Guide"):
                     st.markdown("""
@@ -5657,14 +5596,14 @@ class FinancialAnalyticsPlatform:
                     - Check that ngrok is not expired (8 hour limit)
                     - Verify the URL includes https://
                     """)
-        else:
-            # Disabled - clear settings
-            if self.get_state('kaggle_api_enabled'):
-                self.config.set('ai.use_kaggle_api', False)
-                self.set_state('kaggle_api_enabled', False)
-                self.set_state('kaggle_api_status', 'disabled')
-            
-            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+else:
+    # Disabled - clear settings
+    if self.get_state('kaggle_api_enabled'):
+        self.config.set('ai.use_kaggle_api', False)
+        self.set_state('kaggle_api_enabled', False)
+        self.set_state('kaggle_api_status', 'disabled')
+    
+    st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
         
         # Show performance comparison
         if 'mapper' in self.components:

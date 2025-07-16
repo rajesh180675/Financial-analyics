@@ -3873,9 +3873,9 @@ class MLForecaster:
         available_metrics = []
 
         for metric in priority_metrics:
-        matching = [idx for idx in df.index if metric.lower() in str(idx).lower()]
-        if matching:
-            available_metrics.append(matching[0])
+            matching = [idx for idx in df.index if metric.lower() in str(idx).lower()]
+            if matching:
+                available_metrics.append(matching[0])
     
         return available_metrics[:4]
     

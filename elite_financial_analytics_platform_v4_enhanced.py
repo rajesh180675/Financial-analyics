@@ -2467,7 +2467,7 @@ class EnhancedAPIClient:
                 api_request.callback({'error': str(e)})
     
     def _make_raw_request(self, method: str, endpoint: str, data: Optional[Dict] = None, 
-                         params: Optional[Dict] = None) -> Dict:
+                     params: Optional[Dict] = None) -> Dict:
         """Make raw HTTP request with circuit breaker"""
         def _request():
             url = f"{self.base_url}/{endpoint.lstrip('/')}"
@@ -2482,30 +2482,56 @@ class EnhancedAPIClient:
             
             start_time = time.time()
             
-            # Compression for large payloads
-            if data and self.config.get('ai.kaggle_enable_compression', True):
-                data_size = len(json.dumps(data))
-                if data_size > 1024:  # 1KB threshold
+            # Prepare headers for ngrok
+            headers = {
+                'ngrok-skip-browser-warning': 'true',
+                'Content-Type': 'application/json'
+            }
+            
+            # Prepare request kwargs
+            request_kwargs = {
+                'method': method,
+                'url': url,
+                'params': params,
+                'timeout': self.timeout,
+                'verify': False,  # Disable SSL verification for ngrok
+                'headers': headers
+            }
+            
+            # Handle data - FIX: Use the data parameter directly
+            if data:
+                if self.config.get('ai.kaggle_enable_compression', True) and len(json.dumps(data)) > 1024:
+                    # Compression for large payloads
+                    import gzip
                     self._session.headers['Content-Encoding'] = 'gzip'
                     data_bytes = json.dumps(data).encode('utf-8')
-                    data = gzip.compress(data_bytes)
+                    request_kwargs['data'] = gzip.compress(data_bytes)
+                    request_kwargs['headers']['Content-Type'] = 'application/json'
                 else:
+                    # Remove compression header if present
                     self._session.headers.pop('Content-Encoding', None)
+                    request_kwargs['json'] = data
             
-            response = self._session.request(
-                method=method,
-                url=url,
-                json=data if isinstance(data, dict) else None,
-                data=data if isinstance(data, bytes) else None,
-                params=params,
-                timeout=self.timeout
-            )
+            # Make request
+            response = self._session.request(**request_kwargs)
             
-            response.raise_for_status()
-            result = response.json()
+            # Log response for debugging
+            self.logger.debug(f"Response status: {response.status_code}")
+            
+            # Handle different response types
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                except json.JSONDecodeError:
+                    # Try to parse as text
+                    result = {'response': response.text, 'status': 'ok'}
+            else:
+                self.logger.error(f"Request failed: {response.status_code} - {response.text}")
+                response.raise_for_status()
             
             # Cache successful GET responses
-            if method == 'GET':
+            if method == 'GET' and response.status_code == 200:
+                cache_key = f"{url}:{json.dumps(params or {}, sort_keys=True)}"
                 self.response_cache.set(cache_key, result)
             
             # Track metrics

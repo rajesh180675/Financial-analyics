@@ -84,7 +84,7 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
 # --- Enhanced Lazy Loading System ---
 class LazyLoader:
-    \"\"\"Lazy loading for heavy modules with caching\"\"\"
+     """Lazy loading for heavy modules with caching"""
     _cache = {}
     _lock = threading.Lock()
     
@@ -149,7 +149,7 @@ except ImportError:
 
 # --- 2. Thread-Safe State Management (Consolidated) ---
 class ThreadSafeState:
-    \"\"\"Thread-safe state management for Streamlit\"\"\"
+    """Thread-safe state management for Streamlit"""
     _lock = threading.RLock()
     _state_locks = {}
     
@@ -203,7 +203,7 @@ SimpleState = ThreadSafeState
 
 # --- 3. Enhanced Performance Monitoring System ---
 class PerformanceMonitor:
-    \"\"\"Monitor and track performance metrics with API tracking\"\"\"
+    """Monitor and track performance metrics with API tracking"""
     
     def __init__(self):
         self.metrics = defaultdict(list)
@@ -313,7 +313,7 @@ performance_monitor = PerformanceMonitor()
 
 # --- 4. Enhanced Logging Configuration ---
 class LoggerFactory:
-    \"\"\"Factory for creating configured loggers with context\"\"\"
+    """Factory for creating configured loggers with context"""
     
     _loggers = {}
     _lock = threading.Lock()
@@ -368,7 +368,7 @@ class LoggerFactory:
 
 # --- 5. Enhanced Error Context and Circuit Breaker ---
 class CircuitBreaker:
-    \"\"\"Circuit breaker pattern for API calls\"\"\"
+    """Circuit breaker pattern for API calls"""
     
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60, expected_exception: type = Exception):
         self.failure_threshold = failure_threshold
@@ -415,7 +415,7 @@ class CircuitBreaker:
             }
 
 class ErrorContext:
-    \"\"\"Context manager for error handling with recovery\"\"\"
+    """Context manager for error handling with recovery"""
     
     def __init__(self, operation: str, logger: logging.Logger, 
                  fallback: Optional[Callable] = None,
@@ -478,7 +478,7 @@ class ConfigurationError(Exception):
     pass
 
 class Configuration:
-    \"\"\"Centralized configuration with validation and type safety\"\"\"
+    """Centralized configuration with validation and type safety"""
     
     class DisplayMode(Enum):
         FULL = auto()
@@ -693,7 +693,7 @@ def get_number_formatter(format_type: str) -> Callable:
 
 # --- 8. Enhanced Caching System ---
 class CacheEntry:
-    \"\"\"Cache entry with metadata and compression support\"\"\"
+    """Cache entry with metadata and compression support"""
     
     def __init__(self, value: Any, ttl: Optional[int] = None, compressed: bool = False):
         self.value = value
@@ -719,7 +719,7 @@ class CacheEntry:
         return self.value
 
 class AdvancedCache:
-    \"\"\"Thread-safe cache with TTL, size limits, compression, and statistics\"\"\"
+    """Thread-safe cache with TTL, size limits, compression, and statistics"""
     
     def __init__(self, max_size_mb: int = 100, default_ttl: int = 3600):
         self._cache: Dict[str, CacheEntry] = {}
@@ -824,7 +824,7 @@ class AdvancedCache:
 
 # --- 9. Resource Management ---
 class ResourceManager:
-    \"\"\"Manage computational resources and prevent overload\"\"\"
+    """Manage computational resources and prevent overload"""
     
     def __init__(self, config: Configuration):
         self.config = config
@@ -925,7 +925,7 @@ class ResourceManager:
 
 # --- 10. Data Validation ---
 class ValidationResult:
-    \"\"\"Result of validation with detailed information\"\"\"
+    """Result of validation with detailed information"""
     
     def __init__(self):
         self.is_valid = True
@@ -962,7 +962,7 @@ class ValidationResult:
         self.metadata.update(other.metadata)
 
 class DataValidator:
-    \"\"\"Advanced data validation with comprehensive checks and auto-correction\"\"\"
+    """Advanced data validation with comprehensive checks and auto-correction"""
     
     def __init__(self, config: Configuration):
         self.config = config
@@ -1155,7 +1155,7 @@ class DataValidator:
 
 # --- 11. Pattern Matching System ---
 class PatternMatcher:
-    \"\"\"Advanced pattern matching for financial metrics with compiled patterns\"\"\"
+    """Advanced pattern matching for financial metrics with compiled patterns"""
     
     # Class-level compiled patterns for efficiency
     _compiled_patterns = None
@@ -1508,7 +1508,7 @@ class SecurityModule(Component):
 
 # --- 14. Compression Handler ---
 class CompressionHandler:
-    \"\"\"Handle compressed file extraction with proper cleanup\"\"\"
+    """Handle compressed file extraction with proper cleanup"""
     
     def __init__(self, logger):
         self.logger = logger
@@ -2295,7 +2295,7 @@ class FinancialAnalysisEngine(Component):
 # --- 17. Enhanced API Client with Advanced Features ---
 @dataclass
 class APIRequest:
-    \"\"\"API request with metadata\"\"\"
+    """API request with metadata"""
     id: str
     endpoint: str
     method: str
@@ -2307,7 +2307,7 @@ class APIRequest:
     callback: Optional[Callable] = None
 
 class RequestQueue:
-    \"\"\"Priority queue for API requests with coalescing\"\"\"
+    """Priority queue for API requests with coalescing"""
     
     def __init__(self, max_size: int = 100, coalesce_window_ms: int = 100):
         self.queue = queue.PriorityQueue(max_size)
@@ -2351,7 +2351,7 @@ class RequestQueue:
             return None
 
 class EnhancedAPIClient:
-    \"\"\"Enhanced API client with advanced features for Kaggle integration\"\"\"
+    """Enhanced API client with advanced features for Kaggle integration"""
     
     def __init__(self, base_url: str, config: Configuration):
         self.base_url = base_url.rstrip('/')
@@ -2686,7 +2686,7 @@ class EnhancedAPIClient:
 
 # --- 18. Enhanced AI Mapping System with Robust Kaggle Integration ---
 class ProgressTracker:
-    \"\"\"Track progress of long-running operations\"\"\"
+    """Track progress of long-running operations"""
     
     def __init__(self):
         self.operations = {}
@@ -3474,7 +3474,7 @@ class FuzzyMapper(Component):
 
 # --- 20. Penman-Nissim Analyzer ---
 class EnhancedPenmanNissimAnalyzer:
-    \"\"\"Enhanced Penman-Nissim analyzer with flexible initialization\"\"\"
+    """Enhanced Penman-Nissim analyzer with flexible initialization"""
     
     def __init__(self, df: pd.DataFrame, mappings: Dict[str, str]):
         self.df = df
@@ -3688,7 +3688,7 @@ class EnhancedPenmanNissimAnalyzer:
 
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
-    \"\"\"Manual mapping interface for metric mapping\"\"\"
+    """Manual mapping interface for metric mapping"""
     
     def __init__(self, df: pd.DataFrame):
         self.df = df
@@ -3812,7 +3812,7 @@ class ManualMappingInterface:
 
 # --- 22. Machine Learning Forecasting Module ---
 class MLForecaster:
-    \"\"\"Machine learning based financial forecasting\"\"\"
+    """Machine learning based financial forecasting"""
     
     def __init__(self, config: Configuration):
         self.config = config
@@ -4002,7 +4002,7 @@ class MLForecaster:
 
 # --- 23. Natural Language Query Processor ---
 class NLQueryProcessor:
-    \"\"\"Process natural language queries about financial data\"\"\"
+    """Process natural language queries about financial data"""
     
     def __init__(self, config: Configuration):
         self.config = config
@@ -4171,7 +4171,7 @@ class NLQueryProcessor:
 
 # --- 24. Collaboration Manager ---
 class CollaborationManager:
-    \"\"\"Manage collaborative analysis sessions with cleanup\"\"\"
+    """Manage collaborative analysis sessions with cleanup"""
     
     def __init__(self):
         self.active_sessions = {}
@@ -4337,7 +4337,7 @@ class CollaborationManager:
 
 # --- 25. Tutorial System ---
 class TutorialSystem:
-    \"\"\"Interactive tutorial system for new users\"\"\"
+    """Interactive tutorial system for new users"""
     
     def __init__(self):
         self.steps = [
@@ -4440,7 +4440,7 @@ class TutorialSystem:
 
 # --- 26. Export Manager ---
 class ExportManager:
-    \"\"\"Handle various export formats for analysis results\"\"\"
+    """Handle various export formats for analysis results"""
     
     def __init__(self, config: Configuration):
         self.config = config
@@ -4576,7 +4576,7 @@ class ExportManager:
     
 #--- 27. UI Components Factory ---
 class UIComponentFactory:
-    \"\"\"Factory for creating UI components with consistent styling\"\"\"
+    """Factory for creating UI components with consistent styling"""
 
 @staticmethod
 def create_metric_card(title: str, value: Any, delta: Optional[float] = None, 
@@ -4667,7 +4667,7 @@ def render_with_skeleton(render_func: Callable, loading_key: str):
         
 #--- 28. Sample Data Generator ---
 class SampleDataGenerator:
-    \"\"\"Generate sample financial data for demonstration\"\"\"
+    """Generate sample financial data for demonstration"""
 
 @staticmethod
 def generate_indian_tech_company() -> pd.DataFrame:
@@ -4821,7 +4821,7 @@ def generate_european_retail() -> pd.DataFrame:
     
 #--- 29. Error Recovery Mechanisms ---
 class ErrorRecoveryManager:
-    \"\"\"Manage error recovery and fallback strategies\"\"\"
+    """Manage error recovery and fallback strategies"""
 
 def __init__(self):
     self.error_counts = defaultdict(int)
@@ -4871,7 +4871,7 @@ def _recover_memory(self, context: Dict[str, Any]) -> bool:
     
 #--- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:
-    \"\"\"Main application with advanced architecture and all integrations\"\"\"
+    """Main application with advanced architecture and all integrations"""
 
 def __init__(self):
     # Initialize session state for persistent data

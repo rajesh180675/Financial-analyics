@@ -1,4 +1,4 @@
-# elite_financial_analytics_platform_enhanced.py
+# elite_financial_analytics_platform_v5_final.py
 # Enterprise-Grade Financial Analytics Platform - Enhanced Version with Robust Kaggle Integration
 
 # --- 1. Core Imports and Setup ---
@@ -31,8 +31,10 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
-from typing import (Any, Dict, List, Optional, Tuple, Union, Set, TypeVar,
-                    Generic, Callable, Protocol, Type, cast, overload)
+from typing import (
+    Any, Dict, List, Optional, Tuple, Union, Set, TypeVar, Generic,
+    Callable, Protocol, Type, cast, overload
+)
 from weakref import WeakValueDictionary
 from functools import lru_cache
 import queue
@@ -80,7 +82,6 @@ MAX_FILE_SIZE_MB = 50
 CACHE_TTL_SECONDS = 3600
 DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
-
 # --- Enhanced Lazy Loading System ---
 class LazyLoader:
     """Lazy loading for heavy modules with caching"""
@@ -97,16 +98,11 @@ class LazyLoader:
                 if self._module is None:
                     try:
                         if self.module_name not in self._cache:
-                            self._cache[
-                                self.module_name] = importlib.import_module(
-                                    self.module_name)
+                            self._cache[self.module_name] = importlib.import_module(self.module_name)
                         self._module = self._cache[self.module_name]
                     except ImportError:
-                        raise ImportError(
-                            f"Optional module '{self.module_name}' not installed"
-                        )
+                        raise ImportError(f"Optional module '{self.module_name}' not installed")
         return getattr(self._module, attr)
-
 
 # Check module availability
 def check_module_available(module_name: str) -> bool:
@@ -117,34 +113,39 @@ def check_module_available(module_name: str) -> bool:
     except ImportError:
         return False
 
-
 # Lazy load optional dependencies
 sentence_transformers = LazyLoader('sentence_transformers')
 psutil = LazyLoader('psutil')
 bs4 = LazyLoader('bs4')
 
 # Check availability
-SENTENCE_TRANSFORMER_AVAILABLE = check_module_available(
-    'sentence_transformers')
+SENTENCE_TRANSFORMER_AVAILABLE = check_module_available('sentence_transformers')
 BEAUTIFULSOUP_AVAILABLE = check_module_available('bs4')
 PSUTIL_AVAILABLE = check_module_available('psutil')
 
 # --- Import Core Components (with fallback) ---
 try:
     from financial_analytics_core import (
-        ChartGenerator as CoreChartGenerator, FinancialRatioCalculator as
-        CoreRatioCalculator, PenmanNissimAnalyzer as CorePenmanNissim,
-        IndustryBenchmarks as CoreIndustryBenchmarks, DataProcessor as
-        CoreDataProcessor, DataQualityMetrics, parse_html_content,
-        parse_csv_content, process_and_merge_dataframes, REQUIRED_METRICS as
-        CORE_REQUIRED_METRICS, YEAR_REGEX as CORE_YEAR_REGEX, MAX_FILE_SIZE_MB
-        as CORE_MAX_FILE_SIZE, ALLOWED_FILE_TYPES as CORE_ALLOWED_TYPES, EPS)
+        ChartGenerator as CoreChartGenerator,
+        FinancialRatioCalculator as CoreRatioCalculator,
+        PenmanNissimAnalyzer as CorePenmanNissim,
+        IndustryBenchmarks as CoreIndustryBenchmarks,
+        DataProcessor as CoreDataProcessor,
+        DataQualityMetrics,
+        parse_html_content,
+        parse_csv_content,
+        process_and_merge_dataframes,
+        REQUIRED_METRICS as CORE_REQUIRED_METRICS,
+        YEAR_REGEX as CORE_YEAR_REGEX,
+        MAX_FILE_SIZE_MB as CORE_MAX_FILE_SIZE,
+        ALLOWED_FILE_TYPES as CORE_ALLOWED_TYPES,
+        EPS
+    )
     CORE_COMPONENTS_AVAILABLE = True
 except ImportError:
     CORE_COMPONENTS_AVAILABLE = False
     CORE_REQUIRED_METRICS = {}
     CorePenmanNissim = None
-
 
 # --- 2. Thread-Safe State Management (Consolidated) ---
 class ThreadSafeState:
@@ -197,10 +198,8 @@ class ThreadSafeState:
             if key in st.session_state:
                 del st.session_state[key]
 
-
 # Single alias for consistency
 SimpleState = ThreadSafeState
-
 
 # --- 3. Enhanced Performance Monitoring System ---
 class PerformanceMonitor:
@@ -210,15 +209,14 @@ class PerformanceMonitor:
         self.metrics = defaultdict(list)
         self._lock = threading.Lock()
         self.logger = None
-        self.api_metrics = defaultdict(
-            lambda: {
-                'requests': 0,
-                'successes': 0,
-                'failures': 0,
-                'total_time': 0,
-                'response_times': deque(maxlen=100),
-                'error_types': defaultdict(int)
-            })
+        self.api_metrics = defaultdict(lambda: {
+            'requests': 0,
+            'successes': 0,
+            'failures': 0,
+            'total_time': 0,
+            'response_times': deque(maxlen=100),
+            'error_types': defaultdict(int)
+        })
 
     def _get_logger(self):
         """Lazy initialize logger"""
@@ -246,14 +244,9 @@ class PerformanceMonitor:
                 })
 
             if elapsed_time > 1.0:
-                self._get_logger().warning(
-                    f"Slow operation '{operation}': {elapsed_time:.2f}s")
+                self._get_logger().warning(f"Slow operation '{operation}': {elapsed_time:.2f}s")
 
-    def track_api_call(self,
-                       endpoint: str,
-                       success: bool,
-                       duration: float,
-                       error: Optional[str] = None):
+    def track_api_call(self, endpoint: str, success: bool, duration: float, error: Optional[str] = None):
         """Track API call metrics"""
         with self._lock:
             metrics = self.api_metrics[endpoint]
@@ -301,18 +294,11 @@ class PerformanceMonitor:
                 if metrics['requests'] > 0:
                     response_times = list(metrics['response_times'])
                     summary[endpoint] = {
-                        'total_requests':
-                        metrics['requests'],
-                        'success_rate':
-                        metrics['successes'] / metrics['requests'],
-                        'avg_response_time':
-                        statistics.mean(response_times)
-                        if response_times else 0,
-                        'p95_response_time':
-                        np.percentile(response_times, 95)
-                        if response_times else 0,
-                        'error_distribution':
-                        dict(metrics['error_types'])
+                        'total_requests': metrics['requests'],
+                        'success_rate': metrics['successes'] / metrics['requests'],
+                        'avg_response_time': statistics.mean(response_times) if response_times else 0,
+                        'p95_response_time': np.percentile(response_times, 95) if response_times else 0,
+                        'error_distribution': dict(metrics['error_types'])
                     }
             return summary
 
@@ -322,10 +308,8 @@ class PerformanceMonitor:
             self.metrics.clear()
             self.api_metrics.clear()
 
-
 # Global performance monitor instance
 performance_monitor = PerformanceMonitor()
-
 
 # --- 4. Enhanced Logging Configuration ---
 class LoggerFactory:
@@ -344,9 +328,7 @@ class LoggerFactory:
             cls._initialized = True
 
     @classmethod
-    def get_logger(cls,
-                   name: str,
-                   level: int = logging.INFO) -> logging.Logger:
+    def get_logger(cls, name: str, level: int = logging.INFO) -> logging.Logger:
         """Get or create a logger with proper configuration"""
         cls._initialize()
 
@@ -366,7 +348,8 @@ class LoggerFactory:
                 file_handler = RotatingFileHandler(
                     cls._log_dir / f"{name}.log",
                     maxBytes=10485760,  # 10MB
-                    backupCount=5)
+                    backupCount=5
+                )
                 file_handler.setLevel(level)
 
                 # Formatter
@@ -383,15 +366,11 @@ class LoggerFactory:
 
             return cls._loggers[name]
 
-
 # --- 5. Enhanced Error Context and Circuit Breaker ---
 class CircuitBreaker:
     """Circuit breaker pattern for API calls"""
 
-    def __init__(self,
-                 failure_threshold: int = 5,
-                 recovery_timeout: int = 60,
-                 expected_exception: type = Exception):
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60, expected_exception: type = Exception):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
         self.expected_exception = expected_exception
@@ -404,9 +383,7 @@ class CircuitBreaker:
         """Execute function with circuit breaker protection"""
         with self._lock:
             if self.state == 'open':
-                if self.last_failure_time and (
-                        time.time() -
-                        self.last_failure_time) > self.recovery_timeout:
+                if self.last_failure_time and (time.time() - self.last_failure_time) > self.recovery_timeout:
                     self.state = 'half-open'
                 else:
                     raise Exception("Circuit breaker is OPEN")
@@ -437,13 +414,10 @@ class CircuitBreaker:
                 'last_failure': self.last_failure_time
             }
 
-
 class ErrorContext:
     """Context manager for error handling with recovery"""
 
-    def __init__(self,
-                 operation: str,
-                 logger: logging.Logger,
+    def __init__(self, operation: str, logger: logging.Logger,
                  fallback: Optional[Callable] = None,
                  max_retries: int = 3):
         self.operation = operation
@@ -460,7 +434,8 @@ class ErrorContext:
             self.attempts += 1
             self.logger.error(
                 f"Error in {self.operation} (attempt {self.attempts}/{self.max_retries}): "
-                f"{exc_type.__name__}: {exc_val}")
+                f"{exc_type.__name__}: {exc_val}"
+            )
 
             if self.attempts < self.max_retries:
                 self.logger.info(f"Retrying {self.operation}...")
@@ -473,17 +448,13 @@ class ErrorContext:
                 except Exception as fallback_error:
                     self.logger.error(f"Fallback failed: {fallback_error}")
 
-            self.logger.debug(
-                f"Full traceback:\n{''.join(traceback.format_tb(exc_tb))}")
+            self.logger.debug(f"Full traceback:\n{''.join(traceback.format_tb(exc_tb))}")
 
         return False
 
-
 def error_boundary(fallback_return=None):
     """Decorator to add error boundary to functions"""
-
     def decorator(func):
-
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             try:
@@ -492,25 +463,19 @@ def error_boundary(fallback_return=None):
                 logger = LoggerFactory.get_logger(func.__module__)
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
 
-                st.error(
-                    f"An error occurred in {func.__name__}. Please try again or contact support."
-                )
+                st.error(f"An error occurred in {func.__name__}. Please try again or contact support.")
 
                 if callable(fallback_return):
                     return fallback_return()
 
                 return fallback_return
-
         return wrapper
-
     return decorator
-
 
 # --- 6. Configuration Management ---
 class ConfigurationError(Exception):
     """Custom exception for configuration errors"""
     pass
-
 
 class Configuration:
     """Centralized configuration with validation and type safety"""
@@ -526,28 +491,17 @@ class Configuration:
 
     DEFAULTS = {
         'app': {
-            'version':
-            '5.1.0',
-            'name':
-            'Elite Financial Analytics Platform',
-            'debug':
-            False,
-            'display_mode':
-            DisplayMode.LITE,
-            'max_file_size_mb':
-            50,
-            'allowed_file_types':
-            ['csv', 'html', 'htm', 'xls', 'xlsx', 'zip', '7z'],
-            'cache_ttl_seconds':
-            3600,
-            'max_cache_size_mb':
-            100,
-            'enable_telemetry':
-            True,
-            'enable_collaboration':
-            True,
-            'enable_ml_features':
-            True,
+            'version': '5.1.0',
+            'name': 'Elite Financial Analytics Platform',
+            'debug': False,
+            'display_mode': DisplayMode.LITE,
+            'max_file_size_mb': 50,
+            'allowed_file_types': ['csv', 'html', 'htm', 'xls', 'xlsx', 'zip', '7z'],
+            'cache_ttl_seconds': 3600,
+            'max_cache_size_mb': 100,
+            'enable_telemetry': True,
+            'enable_collaboration': True,
+            'enable_ml_features': True,
         },
         'processing': {
             'max_workers': 4,
@@ -607,35 +561,26 @@ class Configuration:
             'enable_progress_tracking': True,
         },
         'security': {
-            'rate_limit_requests':
-            100,
-            'rate_limit_window':
-            60,
-            'max_upload_size_mb':
-            50,
-            'enable_sanitization':
-            True,
-            'allowed_html_tags': [
-                'table', 'tr', 'td', 'th', 'tbody', 'thead', 'p', 'div',
-                'span', 'br'
-            ],
+            'rate_limit_requests': 100,
+            'rate_limit_window': 60,
+            'max_upload_size_mb': 50,
+            'enable_sanitization': True,
+            'allowed_html_tags': ['table', 'tr', 'td', 'th', 'tbody', 'thead', 'p', 'div', 'span', 'br'],
         }
     }
 
     def __init__(self, custom_config: Optional[Dict[str, Any]] = None):
-        self._config = self._deep_merge(self.DEFAULTS.copy(), custom_config
-                                        or {})
+        self._config = self._deep_merge(self.DEFAULTS.copy(), custom_config or {})
         self._validate_config()
         self._logger = LoggerFactory.get_logger('Configuration')
 
     def _deep_merge(self, base: Dict, override: Dict) -> Dict:
         """Deep merge two dictionaries"""
         for key, value in override.items():
-            if key in base and isinstance(base[key], dict) and isinstance(
-                    value, dict):
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                 base[key] = self._deep_merge(base[key], value)
             else:
-                base[key] = value
+               base[key] = value
         return base
 
     def _validate_config(self):
@@ -656,12 +601,10 @@ class Configuration:
 
         # Analysis validation
         if not 0 < self._config['analysis']['confidence_threshold'] <= 1:
-            raise ConfigurationError(
-                "confidence_threshold must be between 0 and 1")
+            raise ConfigurationError("confidence_threshold must be between 0 and 1")
 
         # AI validation - Fixed
-        if self._config['ai'][
-                'use_kaggle_api'] and not self._config['ai']['kaggle_api_url']:
+        if self._config['ai']['use_kaggle_api'] and not self._config['ai']['kaggle_api_url']:
             self._config['ai']['use_kaggle_api'] = False
 
     def get(self, path: str, default: Any = None) -> Any:
@@ -672,9 +615,7 @@ class Configuration:
                 value = value[key]
             return value
         except (KeyError, TypeError):
-            self._logger.warning(
-                f"Configuration key '{path}' not found, using default: {default}"
-            )
+            self._logger.warning(f"Configuration key '{path}' not found, using default: {default}")
             return default
 
     def set(self, path: str, value: Any):
@@ -706,7 +647,6 @@ class Configuration:
             for path, value in original.items():
                 self.set(path, value)
 
-
 # --- 7. Number Formatting Functions ---
 def format_indian_number(value: float) -> str:
     """Format number in Indian numbering system"""
@@ -725,7 +665,6 @@ def format_indian_number(value: float) -> str:
     else:
         return f"{sign}₹ {abs_value:.0f}"
 
-
 def format_international_number(value: float) -> str:
     """Format number in international system"""
     if pd.isna(value) or value is None:
@@ -743,7 +682,6 @@ def format_international_number(value: float) -> str:
     else:
         return f"{sign}${abs_value:.0f}"
 
-
 # Cached formatter selection
 @lru_cache(maxsize=2)
 def get_number_formatter(format_type: str) -> Callable:
@@ -753,15 +691,11 @@ def get_number_formatter(format_type: str) -> Callable:
     else:
         return format_international_number
 
-
 # --- 8. Enhanced Caching System ---
 class CacheEntry:
     """Cache entry with metadata and compression support"""
 
-    def __init__(self,
-                 value: Any,
-                 ttl: Optional[int] = None,
-                 compressed: bool = False):
+    def __init__(self, value: Any, ttl: Optional[int] = None, compressed: bool = False):
         self.value = value
         self.created_at = time.time()
         self.ttl = ttl
@@ -783,7 +717,6 @@ class CacheEntry:
         if self.compressed:
             return pickle.loads(zlib.decompress(self.value))
         return self.value
-
 
 class AdvancedCache:
     """Thread-safe cache with TTL, size limits, compression, and statistics"""
@@ -810,12 +743,13 @@ class AdvancedCache:
 
     def _evict_if_needed(self):
         """Evict entries if cache is too large"""
-        current_size = sum(
-            self._estimate_size(entry.value) for entry in self._cache.values())
+        current_size = sum(self._estimate_size(entry.value) for entry in self._cache.values())
 
         if current_size > self._max_size_bytes:
-            entries = sorted(self._cache.items(),
-                             key=lambda x: x[1].last_accessed)
+            entries = sorted(
+                self._cache.items(),
+                key=lambda x: x.last_accessed
+            )
 
             while current_size > self._max_size_bytes * 0.8 and entries:
                 key, entry = entries.pop(0)
@@ -843,28 +777,19 @@ class AdvancedCache:
             self._stats['misses'] += 1
             return None
 
-    def set(self,
-            key: str,
-            value: Any,
-            ttl: Optional[int] = None,
-            compress: bool = None):
+    def set(self, key: str, value: Any, ttl: Optional[int] = None, compress: bool = None):
         """Set value in cache with optional compression"""
         with self._lock:
             self._stats['set_calls'] += 1
 
             if compress is None:
-                compress = self._estimate_size(
-                    value) > self._compression_threshold
+                compress = self._estimate_size(value) > self._compression_threshold
 
             if compress:
                 compressed_value = self._compress_value(value)
-                entry = CacheEntry(compressed_value,
-                                   ttl or self._default_ttl,
-                                   compressed=True)
+                entry = CacheEntry(compressed_value, ttl or self._default_ttl, compressed=True)
             else:
-                entry = CacheEntry(value,
-                                   ttl or self._default_ttl,
-                                   compressed=False)
+                entry = CacheEntry(value, ttl or self._default_ttl, compressed=False)
 
             self._cache[key] = entry
             self._evict_if_needed()
@@ -888,21 +813,14 @@ class AdvancedCache:
         """Get cache statistics"""
         with self._lock:
             total_calls = self._stats['get_calls']
-            hit_rate = (self._stats['hits'] / total_calls *
-                        100) if total_calls > 0 else 0
+            hit_rate = (self._stats['hits'] / total_calls * 100) if total_calls > 0 else 0
 
             return {
-                'entries':
-                len(self._cache),
-                'size_bytes':
-                sum(
-                    self._estimate_size(e.value)
-                    for e in self._cache.values()),
-                'hit_rate':
-                hit_rate,
+                'entries': len(self._cache),
+                'size_bytes': sum(self._estimate_size(e.value) for e in self._cache.values()),
+                'hit_rate': hit_rate,
                 **self._stats
             }
-
 
 # --- 9. Resource Management ---
 class ResourceManager:
@@ -910,15 +828,14 @@ class ResourceManager:
 
     def __init__(self, config: Configuration):
         self.config = config
-        self._semaphore = threading.Semaphore(
-            config.get('processing.max_workers', 4))
-        self._memory_limit = config.get('processing.memory_limit_mb',
-                                        512) * 1024 * 1024
+        self._semaphore = threading.Semaphore(config.get('processing.max_workers', 4))
+        self._memory_limit = config.get('processing.memory_limit_mb', 512) * 1024 * 1024
         self._active_tasks = set()
         self._lock = threading.Lock()
         self._logger = LoggerFactory.get_logger('ResourceManager')
         self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=config.get('processing.max_workers', 4))
+            max_workers=config.get('processing.max_workers', 4)
+        )
 
     def __del__(self):
         """Cleanup resources"""
@@ -933,7 +850,8 @@ class ResourceManager:
 
         try:
             acquired = self._semaphore.acquire(
-                timeout=self.config.get('processing.timeout_seconds', 30))
+                timeout=self.config.get('processing.timeout_seconds', 30)
+            )
 
             if not acquired:
                 raise TimeoutError(f"Failed to acquire worker for {task_name}")
@@ -952,13 +870,10 @@ class ResourceManager:
                     self._active_tasks.discard(task_name)
 
                 elapsed = time.time() - start_time
-                self._logger.debug(
-                    f"Released worker for {task_name} after {elapsed:.2f}s")
+                self._logger.debug(f"Released worker for {task_name} after {elapsed:.2f}s")
 
-    def process_batch(self,
-                      items: List[Any],
-                      process_func: Callable,
-                      batch_size: Optional[int] = None) -> List[Any]:
+    def process_batch(self, items: List[Any], process_func: Callable,
+                     batch_size: Optional[int] = None) -> List[Any]:
         """Process items in batches for better performance"""
         if batch_size is None:
             batch_size = self.config.get('processing.batch_size', 5)
@@ -974,8 +889,7 @@ class ResourceManager:
         for future in concurrent.futures.as_completed(futures):
             try:
                 result = future.result()
-                results.extend(
-                    result if isinstance(result, list) else [result])
+                results.extend(result if isinstance(result, list) else [result])
             except Exception as e:
                 self._logger.error(f"Batch processing error: {e}")
 
@@ -1008,7 +922,6 @@ class ResourceManager:
         """Shutdown the executor"""
         if hasattr(self, '_executor'):
             self._executor.shutdown(wait=True)
-
 
 # --- 10. Data Validation ---
 class ValidationResult:
@@ -1048,21 +961,16 @@ class ValidationResult:
         self.corrections.extend(other.corrections)
         self.metadata.update(other.metadata)
 
-
 class DataValidator:
     """Advanced data validation with comprehensive checks and auto-correction"""
 
     def __init__(self, config: Configuration):
         self.config = config
         self._logger = LoggerFactory.get_logger('DataValidator')
-        self.enable_auto_correction = config.get(
-            'analysis.enable_auto_correction', True)
+        self.enable_auto_correction = config.get('analysis.enable_auto_correction', True)
 
     @error_boundary((pd.DataFrame(), ValidationResult()))
-    def validate_and_correct(
-            self,
-            df: pd.DataFrame,
-            context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
+    def validate_and_correct(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Validate and auto-correct dataframe"""
         result = self.validate_dataframe(df, context)
 
@@ -1073,9 +981,7 @@ class DataValidator:
         corrections_made = []
 
         # Auto-corrections
-        positive_metrics = [
-            'assets', 'revenue', 'equity', 'sales', 'income', 'cash'
-        ]
+        positive_metrics = ['assets', 'revenue', 'equity', 'sales', 'income', 'cash']
         for idx in corrected_df.index:
             for metric in positive_metrics:
                 if metric in str(idx).lower():
@@ -1085,20 +991,13 @@ class DataValidator:
                         for i in range(len(row_data)):
                             negative_mask = row_data.iloc[i] < 0
                             if negative_mask.any():
-                                corrected_df.loc[idx].iloc[i][
-                                    negative_mask] = abs(
-                                        row_data.iloc[i][negative_mask])
-                                corrections_made.append(
-                                    f"Converted negative values to positive in {idx} (row {i})"
-                                )
+                                corrected_df.loc[idx].iloc[i][negative_mask] = abs(row_data.iloc[i][negative_mask])
+                                corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
                     else:
                         negative_mask = row_data < 0
                         if negative_mask.any():
-                            corrected_df.loc[idx][negative_mask] = abs(
-                                row_data[negative_mask])
-                            corrections_made.append(
-                                f"Converted negative values to positive in {idx}"
-                            )
+                            corrected_df.loc[idx][negative_mask] = abs(row_data[negative_mask])
+                            corrections_made.append(f"Converted negative values to positive in {idx}")
 
         # Fix outliers using IQR method
         for col in corrected_df.select_dtypes(include=[np.number]).columns:
@@ -1112,62 +1011,48 @@ class DataValidator:
                     lower_bound = Q1 - 1.5 * IQR
                     upper_bound = Q3 + 1.5 * IQR
 
-                    outlier_mask = (corrected_df[col] < lower_bound) | (
-                        corrected_df[col] > upper_bound)
+                    outlier_mask = (corrected_df[col] < lower_bound) | (corrected_df[col] > upper_bound)
                     if outlier_mask.any():
                         median_value = series.median()
                         corrected_df.loc[outlier_mask, col] = median_value
-                        corrections_made.append(
-                            f"Corrected {outlier_mask.sum()} outliers in {col} using median"
-                        )
+                        corrections_made.append(f"Corrected {outlier_mask.sum()} outliers in {col} using median")
 
         # Fix accounting equation violations
         self._fix_accounting_equation(corrected_df, corrections_made)
 
         if corrections_made:
-            result.add_info(
-                f"Applied {len(corrections_made)} auto-corrections")
+            result.add_info(f"Applied {len(corrections_made)} auto-corrections")
             result.corrections = corrections_made
 
         return corrected_df, result
 
-    def _fix_accounting_equation(self, df: pd.DataFrame,
-                                 corrections_made: List[str]):
+    def _fix_accounting_equation(self, df: pd.DataFrame, corrections_made: List[str]):
         """Fix violations of accounting equation (Assets = Liabilities + Equity)"""
-        asset_rows = [
-            idx for idx in df.index if 'total asset' in str(idx).lower()
-        ]
-        liability_rows = [
-            idx for idx in df.index if 'total liabilit' in str(idx).lower()
-        ]
-        equity_rows = [
-            idx for idx in df.index if 'total equity' in str(idx).lower()
-        ]
+        asset_rows = [idx for idx in df.index if 'total asset' in str(idx).lower()]
+        liability_rows = [idx for idx in df.index if 'total liabilit' in str(idx).lower()]
+        equity_rows = [idx for idx in df.index if 'total equity' in str(idx).lower()]
 
         if asset_rows and liability_rows and equity_rows:
             for col in df.select_dtypes(include=[np.number]).columns:
                 try:
-                    assets = df.loc[asset_rows[0], col]
-                    liabilities = df.loc[liability_rows[0], col]
-                    equity = df.loc[equity_rows[0], col]
+                    assets = df.loc[asset_rows, col]
+                    liabilities = df.loc[liability_rows, col]
+                    equity = df.loc[equity_rows, col]
 
-                    if not pd.isna(assets) and not pd.isna(
-                            liabilities) and not pd.isna(equity):
+                    if not pd.isna(assets) and not pd.isna(liabilities) and not pd.isna(equity):
                         expected_assets = liabilities + equity
                         diff = abs(assets - expected_assets)
                         tolerance = assets * 0.01
 
                         if diff > tolerance:
-                            df.loc[equity_rows[0], col] = assets - liabilities
+                            df.loc[equity_rows, col] = assets - liabilities
                             corrections_made.append(
                                 f"Adjusted equity in {col} to balance accounting equation"
                             )
                 except Exception:
                     pass
 
-    def validate_dataframe(self,
-                           df: pd.DataFrame,
-                           context: str = "data") -> ValidationResult:
+    def validate_dataframe(self, df: pd.DataFrame, context: str = "data") -> ValidationResult:
         """Comprehensive dataframe validation"""
         result = ValidationResult()
 
@@ -1179,10 +1064,8 @@ class DataValidator:
             result.add_error(f"{context}: No columns found")
             return result
 
-        if df.shape[0] > 1000000:
-            result.add_warning(
-                f"{context}: Large dataset ({df.shape[0]} rows), performance may be impacted"
-            )
+        if df.shape > 1000000:
+            result.add_warning(f"{context}: Large dataset ({df.shape} rows), performance may be impacted")
 
         numeric_cols = df.select_dtypes(include=[np.number]).columns
         if len(numeric_cols) == 0:
@@ -1191,45 +1074,34 @@ class DataValidator:
         if df.index.duplicated().any():
             result.add_warning(f"{context}: Duplicate indices found")
 
-        missing_pct = (df.isnull().sum().sum() /
-                       (df.shape[0] * df.shape[1])) * 100
+        missing_pct = (df.isnull().sum().sum() / (df.shape * df.shape)) * 100
         if missing_pct > 50:
-            result.add_warning(
-                f"{context}: High percentage of missing values ({missing_pct:.1f}%)"
-            )
+            result.add_warning(f"{context}: High percentage of missing values ({missing_pct:.1f}%)")
 
         for col in df.columns:
             if df[col].nunique() == 1:
-                result.add_info(
-                    f"{context}: Column '{col}' has constant value")
+                result.add_info(f"{context}: Column '{col}' has constant value")
 
         for col in numeric_cols:
             series = df[col].dropna()
             if len(series) > 0:
                 mean = series.mean()
                 std = series.std()
-                outlier_threshold = self.config.get(
-                    'analysis.outlier_std_threshold', 3)
+                outlier_threshold = self.config.get('analysis.outlier_std_threshold', 3)
 
                 if std > 0:
-                    outliers = series[(series < mean - outlier_threshold * std)
-                                      | (series > mean +
-                                         outlier_threshold * std)]
+                    outliers = series[(series < mean - outlier_threshold * std) |
+                                     (series > mean + outlier_threshold * std)]
 
                     if len(outliers) > len(series) * 0.1:
                         result.add_warning(
                             f"{context}: Column '{col}' has many outliers ({len(outliers)} values)"
                         )
 
-                positive_keywords = [
-                    'assets', 'revenue', 'sales', 'income', 'cash'
-                ]
-                if any(keyword in str(col).lower()
-                       for keyword in positive_keywords):
+                positive_keywords = ['assets', 'revenue', 'sales', 'income', 'cash']
+                if any(keyword in str(col).lower() for keyword in positive_keywords):
                     if (series < 0).any():
-                        result.add_warning(
-                            f"{context}: Column '{col}' contains negative values"
-                        )
+                        result.add_warning(f"{context}: Column '{col}' contains negative values")
 
         result.metadata['shape'] = df.shape
         result.metadata['columns'] = list(df.columns)
@@ -1242,9 +1114,7 @@ class DataValidator:
         """Validate financial statement data"""
         result = self.validate_dataframe(df, "financial_data")
 
-        required_keywords = [
-            'asset', 'liability', 'equity', 'revenue', 'expense'
-        ]
+        required_keywords = ['asset', 'liability', 'equity', 'revenue', 'expense']
         found_keywords = []
 
         for keyword in required_keywords:
@@ -1254,27 +1124,21 @@ class DataValidator:
         if len(found_keywords) < 2:
             result.add_warning(
                 "Limited financial keywords found in data. "
-                "Please verify the data contains financial statements.")
+                "Please verify the data contains financial statements."
+            )
 
-        asset_rows = [
-            idx for idx in df.index if 'total asset' in str(idx).lower()
-        ]
-        liability_rows = [
-            idx for idx in df.index if 'total liabilit' in str(idx).lower()
-        ]
-        equity_rows = [
-            idx for idx in df.index if 'total equity' in str(idx).lower()
-        ]
+        asset_rows = [idx for idx in df.index if 'total asset' in str(idx).lower()]
+        liability_rows = [idx for idx in df.index if 'total liabilit' in str(idx).lower()]
+        equity_rows = [idx for idx in df.index if 'total equity' in str(idx).lower()]
 
         if asset_rows and liability_rows and equity_rows:
             for col in df.select_dtypes(include=[np.number]).columns:
                 try:
-                    assets = df.loc[asset_rows[0], col]
-                    liabilities = df.loc[liability_rows[0], col]
-                    equity = df.loc[equity_rows[0], col]
+                    assets = df.loc[asset_rows, col]
+                    liabilities = df.loc[liability_rows, col]
+                    equity = df.loc[equity_rows, col]
 
-                    if not pd.isna(assets) and not pd.isna(
-                            liabilities) and not pd.isna(equity):
+                    if not pd.isna(assets) and not pd.isna(liabilities) and not pd.isna(equity):
                         diff = abs(assets - (liabilities + equity))
                         tolerance = assets * 0.01
 
@@ -1282,12 +1146,12 @@ class DataValidator:
                             result.add_warning(
                                 f"Accounting equation imbalance in {col}: "
                                 f"Assets ({assets:,.0f}) ≠ Liabilities ({liabilities:,.0f}) "
-                                f"+ Equity ({equity:,.0f})")
+                                f"+ Equity ({equity:,.0f})"
+                            )
                 except Exception:
                     pass
 
         return result
-
 
 # --- 11. Pattern Matching System ---
 class PatternMatcher:
@@ -1331,8 +1195,7 @@ class PatternMatcher:
             ],
             'cash': [
                 re.compile(r'\bcash\b', re.IGNORECASE),
-                re.compile(r'\bcash\s+(?:and|&)\s+cash\s+equivalents?\b',
-                           re.IGNORECASE),
+                re.compile(r'\bcash\s+(?:and|&)\s+cash\s+equivalents?\b', re.IGNORECASE),
                 re.compile(r'\bcash\s+(?:and|&)\s+bank\b', re.IGNORECASE),
                 re.compile(r'\bliquid\s+funds?\b', re.IGNORECASE),
             ],
@@ -1351,19 +1214,15 @@ class PatternMatcher:
             'total_liabilities': [
                 re.compile(r'\btotal\s+liabilit(?:y|ies)\b', re.IGNORECASE),
                 re.compile(r'\bliabilit(?:y|ies)\s+total\b', re.IGNORECASE),
-                re.compile(r'\b(?:sum|total)\s+of\s+liabilit(?:y|ies)\b',
-                           re.IGNORECASE),
+                re.compile(r'\b(?:sum|total)\s+of\s+liabilit(?:y|ies)\b', re.IGNORECASE),
             ],
             'current_liabilities': [
                 re.compile(r'\bcurrent\s+liabilit(?:y|ies)\b', re.IGNORECASE),
-                re.compile(r'\bshort[\s-]?term\s+liabilit(?:y|ies)\b',
-                           re.IGNORECASE),
+                re.compile(r'\bshort[\s-]?term\s+liabilit(?:y|ies)\b', re.IGNORECASE),
             ],
             'non_current_liabilities': [
-                re.compile(r'\bnon[\s-]?current\s+liabilit(?:y|ies)\b',
-                           re.IGNORECASE),
-                re.compile(r'\blong[\s-]?term\s+liabilit(?:y|ies)\b',
-                           re.IGNORECASE),
+                re.compile(r'\bnon[\s-]?current\s+liabilit(?:y|ies)\b', re.IGNORECASE),
+                re.compile(r'\blong[\s-]?term\s+liabilit(?:y|ies)\b', re.IGNORECASE),
             ],
             'debt': [
                 re.compile(r'\bdebt\b', re.IGNORECASE),
@@ -1385,8 +1244,7 @@ class PatternMatcher:
             ],
             'retained_earnings': [
                 re.compile(r'\bretained\s+earnings?\b', re.IGNORECASE),
-                re.compile(r'\breserves?\s+(?:and|&)\s+surplus\b',
-                           re.IGNORECASE),
+                re.compile(r'\breserves?\s+(?:and|&)\s+surplus\b', re.IGNORECASE),
                 re.compile(r'\baccumulated\s+profits?\b', re.IGNORECASE),
             ],
             'revenue': [
@@ -1406,24 +1264,18 @@ class PatternMatcher:
                 re.compile(r'\boperating\s+expenses?\b', re.IGNORECASE),
                 re.compile(r'\bopex\b', re.IGNORECASE),
                 re.compile(r'\badministrative\s+expenses?\b', re.IGNORECASE),
-                re.compile(r'\bselling\s+(?:and|&)\s+distribution\b',
-                           re.IGNORECASE),
+                re.compile(r'\bselling\s+(?:and|&)\s+distribution\b', re.IGNORECASE),
             ],
             'ebit': [
                 re.compile(r'\bebit\b', re.IGNORECASE),
-                re.compile(
-                    r'\bearnings?\s+before\s+interest\s+(?:and|&)\s+tax\b',
-                    re.IGNORECASE),
-                re.compile(r'\boperating\s+(?:profit|income)\b',
-                           re.IGNORECASE),
+                re.compile(r'\bearnings?\s+before\s+interest\s+(?:and|&)\s+tax\b', re.IGNORECASE),
+                re.compile(r'\boperating\s+(?:profit|income)\b', re.IGNORECASE),
             ],
             'net_income': [
-                re.compile(r'\bnet\s+(?:income|profit|earnings?)\b',
-                           re.IGNORECASE),
+                re.compile(r'\bnet\s+(?:income|profit|earnings?)\b', re.IGNORECASE),
                 re.compile(r'\bprofit\s+after\s+tax\b', re.IGNORECASE),
                 re.compile(r'\bpat\b', re.IGNORECASE),
-                re.compile(r'\bprofit\s+for\s+the\s+(?:year|period)\b',
-                           re.IGNORECASE),
+                re.compile(r'\bprofit\s+for\s+the\s+(?:year|period)\b', re.IGNORECASE),
             ],
             'interest_expense': [
                 re.compile(r'\binterest\s+expense\b', re.IGNORECASE),
@@ -1432,8 +1284,7 @@ class PatternMatcher:
             ],
         }
 
-    def find_matches(self, text: str,
-                     metric_type: str) -> List[Tuple[str, float]]:
+    def find_matches(self, text: str, metric_type: str) -> List[Tuple[str, float]]:
         """Find pattern matches with confidence scores"""
         matches = []
 
@@ -1468,10 +1319,11 @@ class PatternMatcher:
             matches = self.find_matches(text, metric_type)
             for _, confidence in matches:
                 classifications[metric_type] = max(
-                    classifications[metric_type], confidence)
+                    classifications[metric_type],
+                    confidence
+                )
 
         return dict(classifications)
-
 
 # --- 12. Base Component Class ---
 class Component(ABC):
@@ -1486,8 +1338,7 @@ class Component(ABC):
         """Initialize component"""
         if not self._initialized:
             self._logger.info(f"Initializing {self.__class__.__name__}")
-            with performance_monitor.measure(
-                    f"init_{self.__class__.__name__}"):
+            with performance_monitor.measure(f"init_{self.__class__.__name__}"):
                 self._do_initialize()
             self._initialized = True
 
@@ -1506,7 +1357,6 @@ class Component(ABC):
     def _do_cleanup(self):
         """Actual cleanup logic"""
         pass
-
 
 # --- 13. Security Module ---
 class SecurityModule(Component):
@@ -1533,13 +1383,13 @@ class SecurityModule(Component):
 
         for col in sanitized.select_dtypes(include=['object']).columns:
             sanitized[col] = sanitized[col].apply(
-                lambda x: bleach.clean(str(x)) if pd.notna(x) else x)
+                lambda x: bleach.clean(str(x)) if pd.notna(x) else x
+            )
 
         for col in sanitized.select_dtypes(include=[np.number]).columns:
             max_val = sanitized[col].max()
             if pd.notna(max_val) and max_val > 1e15:
-                self._logger.warning(
-                    f"Extremely large values detected in {col}")
+                self._logger.warning(f"Extremely large values detected in {col}")
 
         return sanitized
 
@@ -1547,26 +1397,20 @@ class SecurityModule(Component):
         """Comprehensive file validation"""
         result = ValidationResult()
 
-        max_size = self.config.get('security.max_upload_size_mb',
-                                   50) * 1024 * 1024
+        max_size = self.config.get('security.max_upload_size_mb', 50) * 1024 * 1024
         if file.size > max_size:
-            result.add_error(
-                f"File size ({file.size / 1024 / 1024:.1f}MB) exceeds limit ({max_size / 1024 / 1024}MB)"
-            )
+            result.add_error(f"File size ({file.size / 1024 / 1024:.1f}MB) exceeds limit ({max_size / 1024 / 1024}MB)")
             return result
 
         allowed_types = self.config.get('app.allowed_file_types', [])
         file_ext = Path(file.name).suffix.lower().lstrip('.')
 
         if file_ext not in allowed_types:
-            result.add_error(
-                f"File type '{file_ext}' not allowed. Allowed types: {', '.join(allowed_types)}"
-            )
+            result.add_error(f"File type '{file_ext}' not allowed. Allowed types: {', '.join(allowed_types)}")
             return result
 
         suspicious_patterns = [
-            r'\.\./',
-            r'\.\.\\',  # Path traversal
+            r'\.\./', r'\.\.\\',  # Path traversal
             r'[<>:"|?*]',  # Invalid characters
             r'^\.',  # Hidden files
             r'\.(exe|bat|cmd|sh|ps1)$',  # Executable extensions
@@ -1585,9 +1429,7 @@ class SecurityModule(Component):
 
         return result
 
-    def _read_file_safely(self,
-                          file: UploadedFile,
-                          max_bytes: int = 1024 * 1024) -> Optional[str]:
+    def _read_file_safely(self, file: UploadedFile, max_bytes: int = 1024 * 1024) -> Optional[str]:
         """Safely read file content with size limit"""
         try:
             content = file.read(max_bytes)
@@ -1633,17 +1475,16 @@ class SecurityModule(Component):
 
     def sanitize_html(self, content: str) -> str:
         """Sanitize HTML content"""
-        return bleach.clean(content,
-                            tags=self._allowed_tags,
-                            attributes=self._allowed_attributes,
-                            strip=True,
-                            strip_comments=True)
+        return bleach.clean(
+            content,
+            tags=self._allowed_tags,
+            attributes=self._allowed_attributes,
+            strip=True,
+            strip_comments=True
+        )
 
-    def check_rate_limit(self,
-                         identifier: str,
-                         action: str,
-                         limit: Optional[int] = None,
-                         window: Optional[int] = None) -> bool:
+    def check_rate_limit(self, identifier: str, action: str,
+                        limit: Optional[int] = None, window: Optional[int] = None) -> bool:
         """Check rate limit for an action"""
         if limit is None:
             limit = self.config.get('security.rate_limit_requests', 100)
@@ -1655,7 +1496,8 @@ class SecurityModule(Component):
 
         self._rate_limiter[key] = deque(
             [t for t in self._rate_limiter[key] if now - t < window],
-            maxlen=limit)
+            maxlen=limit
+        )
 
         if len(self._rate_limiter[key]) >= limit:
             self._logger.warning(f"Rate limit exceeded for {key}")
@@ -1663,7 +1505,6 @@ class SecurityModule(Component):
 
         self._rate_limiter[key].append(now)
         return True
-
 
 # --- 14. Compression Handler ---
 class CompressionHandler:
@@ -1688,8 +1529,7 @@ class CompressionHandler:
                 self.logger.error(f"Error cleaning up temp dir: {e}")
         self.temp_dirs.clear()
 
-    def extract_compressed_file(self,
-                                file: UploadedFile) -> List[Tuple[str, bytes]]:
+    def extract_compressed_file(self, file: UploadedFile) -> List[Tuple[str, bytes]]:
         """Extract compressed file and return list of (filename, content) tuples"""
         extracted_files = []
         temp_dir = Path(tempfile.mkdtemp())
@@ -1706,13 +1546,10 @@ class CompressionHandler:
                 if SEVEN_ZIP_AVAILABLE:
                     extracted_files = self._extract_7z(temp_file, temp_dir)
                 else:
-                    st.error(
-                        "7z support not available. Please install 'py7zr' package: pip install py7zr"
-                    )
+                    st.error("7z support not available. Please install 'py7zr' package: pip install py7zr")
                     return []
 
-            self.logger.info(
-                f"Extracted {len(extracted_files)} files from {file.name}")
+            self.logger.info(f"Extracted {len(extracted_files)} files from {file.name}")
 
         except Exception as e:
             self.logger.error(f"Error extracting {file.name}: {e}")
@@ -1727,8 +1564,7 @@ class CompressionHandler:
 
         return extracted_files
 
-    def _extract_zip(self, zip_path: Path,
-                     temp_dir: Path) -> List[Tuple[str, bytes]]:
+    def _extract_zip(self, zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
         """Extract ZIP file"""
         extracted = []
 
@@ -1737,13 +1573,10 @@ class CompressionHandler:
             supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
 
             for file_name in file_list:
-                if file_name.endswith('/') or file_name.startswith(
-                        '.') or '/' in file_name and file_name.split(
-                            '/')[-1].startswith('.'):
+                if file_name.endswith('/') or file_name.startswith('.') or '/' in file_name and file_name.split('/')[-1].startswith('.'):
                     continue
 
-                if any(file_name.lower().endswith(ext)
-                       for ext in supported_extensions):
+                if any(file_name.lower().endswith(ext) for ext in supported_extensions):
                     try:
                         content = zip_file.read(file_name)
                         clean_name = Path(file_name).name
@@ -1754,8 +1587,7 @@ class CompressionHandler:
 
         return extracted
 
-    def _extract_7z(self, seven_zip_path: Path,
-                    temp_dir: Path) -> List[Tuple[str, bytes]]:
+    def _extract_7z(self, seven_zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
         """Extract 7z file"""
         extracted = []
 
@@ -1764,22 +1596,17 @@ class CompressionHandler:
             supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
 
             for extracted_file in temp_dir.rglob('*'):
-                if extracted_file.is_file(
-                ) and not extracted_file.name.startswith('.'):
-                    if any(extracted_file.name.lower().endswith(ext)
-                           for ext in supported_extensions):
+                if extracted_file.is_file() and not extracted_file.name.startswith('.'):
+                    if any(extracted_file.name.lower().endswith(ext) for ext in supported_extensions):
                         try:
                             with open(extracted_file, 'rb') as f:
                                 content = f.read()
                             extracted.append((extracted_file.name, content))
-                            self.logger.info(
-                                f"Extracted: {extracted_file.name}")
+                            self.logger.info(f"Extracted: {extracted_file.name}")
                         except Exception as e:
-                            self.logger.error(
-                                f"Error reading {extracted_file}: {e}")
+                            self.logger.error(f"Error reading {extracted_file}: {e}")
 
         return extracted
-
 
 # --- 15. Data Processing Pipeline ---
 class DataProcessor(Component):
@@ -1818,10 +1645,7 @@ class DataProcessor(Component):
         ]
 
     @error_boundary()
-    def process(
-            self,
-            df: pd.DataFrame,
-            context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
+    def process(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Process dataframe through pipeline"""
         with performance_monitor.measure(f"process_{context}"):
             if len(df) > self.chunk_size:
@@ -1829,9 +1653,7 @@ class DataProcessor(Component):
             else:
                 return self._process_standard(df, context)
 
-    def _process_standard(
-            self, df: pd.DataFrame,
-            context: str) -> Tuple[pd.DataFrame, ValidationResult]:
+    def _process_standard(self, df: pd.DataFrame, context: str) -> Tuple[pd.DataFrame, ValidationResult]:
         """Standard processing for normal-sized dataframes"""
         result = ValidationResult()
         processed_df = df.copy()
@@ -1848,8 +1670,7 @@ class DataProcessor(Component):
             if self.config.get('analysis.enable_auto_correction', True):
                 validator = DataValidator(self.config)
                 try:
-                    processed_df, correction_result = validator.validate_and_correct(
-                        processed_df, context)
+                    processed_df, correction_result = validator.validate_and_correct(processed_df, context)
                     result.merge(correction_result)
                 except Exception as e:
                     self._logger.error(f"Auto-correction failed: {e}")
@@ -1860,19 +1681,14 @@ class DataProcessor(Component):
                         processed_df = transformer(processed_df)
                     except Exception as e:
                         result.add_error(f"Transformation error: {str(e)}")
-                        self._logger.error(
-                            f"Error in transformer {transformer.__name__}: {e}"
-                        )
+                        self._logger.error(f"Error in transformer {transformer.__name__}: {e}")
                         break
 
         return processed_df, result
 
-    def _process_large_dataframe(
-            self, df: pd.DataFrame,
-            context: str) -> Tuple[pd.DataFrame, ValidationResult]:
+    def _process_large_dataframe(self, df: pd.DataFrame, context: str) -> Tuple[pd.DataFrame, ValidationResult]:
         """Process large dataframes in chunks to reduce memory usage"""
-        self._logger.info(
-            f"Processing large dataframe ({len(df)} rows) in chunks")
+        self._logger.info(f"Processing large dataframe ({len(df)} rows) in chunks")
 
         result = ValidationResult()
         chunks = []
@@ -1881,8 +1697,7 @@ class DataProcessor(Component):
             end = min(start + self.chunk_size, len(df))
             chunk = df.iloc[start:end]
 
-            processed_chunk, chunk_result = self._process_standard(
-                chunk, f"{context}_chunk_{start}")
+            processed_chunk, chunk_result = self._process_standard(chunk, f"{context}_chunk_{start}")
             chunks.append(processed_chunk)
             result.merge(chunk_result)
 
@@ -1896,12 +1711,12 @@ class DataProcessor(Component):
 
         return processed_df, result
 
-    def process_batch(
-        self, dataframes: List[pd.DataFrame]
-    ) -> List[Tuple[pd.DataFrame, ValidationResult]]:
+    def process_batch(self, dataframes: List[pd.DataFrame]) -> List[Tuple[pd.DataFrame, ValidationResult]]:
         """Process multiple dataframes in batch for efficiency"""
         return self.resource_manager.process_batch(
-            dataframes, lambda batch: [self.process(df) for df in batch])
+            dataframes,
+            lambda batch: [self.process(df) for df in batch]
+        )
 
     def _clean_numeric_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean numeric data with advanced techniques"""
@@ -1939,16 +1754,14 @@ class DataProcessor(Component):
                 min_points = self.config.get('analysis.min_data_points', 3)
 
                 if non_na_count >= min_points:
-                    df_interp[col] = df[col].interpolate(
-                        method=method, limit_direction='both')
+                    df_interp[col] = df[col].interpolate(method=method, limit_direction='both')
 
         return df_interp
 
     def _detect_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
         """Detect and optionally handle outliers"""
         df_clean = df.copy()
-        outlier_threshold = self.config.get('analysis.outlier_std_threshold',
-                                            3)
+        outlier_threshold = self.config.get('analysis.outlier_std_threshold', 3)
 
         for col in df.select_dtypes(include=[np.number]).columns:
             series = df[col].dropna()
@@ -1962,14 +1775,12 @@ class DataProcessor(Component):
 
                     outliers = (series < lower_bound) | (series > upper_bound)
                     if outliers.any():
-                        self._logger.info(
-                            f"Found {outliers.sum()} outliers in {col}")
+                        self._logger.info(f"Found {outliers.sum()} outliers in {col}")
 
                         outlier_indices = series[outliers].index.tolist()
                         SimpleState.set(f"outliers_{col}", outlier_indices)
 
         return df_clean
-
 
 # --- 16. Financial Analysis Engine ---
 class FinancialAnalysisEngine(Component):
@@ -2027,8 +1838,7 @@ class FinancialAnalysisEngine(Component):
 
             return analysis
 
-    def _detect_anomalies(self,
-                          df: pd.DataFrame) -> Dict[str, List[Dict[str, Any]]]:
+    def _detect_anomalies(self, df: pd.DataFrame) -> Dict[str, List[Dict[str, Any]]]:
         """Detect anomalies in financial data"""
         anomalies = {
             'value_anomalies': [],
@@ -2040,18 +1850,14 @@ class FinancialAnalysisEngine(Component):
             series = df[col].dropna()
             if len(series) > 3:
                 z_scores = np.abs(stats.zscore(series))
-                anomaly_indices = np.where(z_scores > 3)[0]
+                anomaly_indices = np.where(z_scores > 3)
 
                 for idx in anomaly_indices:
                     anomalies['value_anomalies'].append({
-                        'metric':
-                        df.index[idx],
-                        'year':
-                        col,
-                        'value':
-                        series.iloc[idx],
-                        'z_score':
-                        z_scores[idx]
+                        'metric': df.index[idx],
+                        'year': col,
+                        'value': series.iloc[idx],
+                        'z_score': z_scores[idx]
                     })
 
         for idx in df.index:
@@ -2062,12 +1868,9 @@ class FinancialAnalysisEngine(Component):
 
                 for year, change in extreme_changes.items():
                     anomalies['trend_anomalies'].append({
-                        'metric':
-                        str(idx),
-                        'year':
-                        year,
-                        'change_pct':
-                        change * 100
+                        'metric': str(idx),
+                        'year': year,
+                        'change_pct': change * 100
                     })
 
         return anomalies
@@ -2078,8 +1881,7 @@ class FinancialAnalysisEngine(Component):
             str(df.shape),
             str(df.index[:5].tolist()),
             str(df.columns[:5].tolist()),
-            str(df.iloc[:5, :5].values.tolist())
-            if df.shape[0] >= 5 and df.shape[1] >= 5 else ""
+            str(df.iloc[:5, :5].values.tolist()) if df.shape >= 5 and df.shape >= 5 else ""
         ]
 
         key_string = "|".join(key_parts)
@@ -2093,15 +1895,10 @@ class FinancialAnalysisEngine(Component):
             return {'error': 'No numeric data found'}
 
         summary = {
-            'total_metrics':
-            len(df),
-            'years_covered':
-            len(numeric_df.columns),
-            'year_range':
-            f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}"
-            if len(numeric_df.columns) > 0 else "N/A",
-            'completeness':
-            (numeric_df.notna().sum().sum() / numeric_df.size) * 100,
+            'total_metrics': len(df),
+            'years_covered': len(numeric_df.columns),
+            'year_range': f"{numeric_df.columns} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
+            'completeness': (numeric_df.notna().sum().sum() / numeric_df.size) * 100,
             'key_statistics': {}
         }
 
@@ -2123,8 +1920,7 @@ class FinancialAnalysisEngine(Component):
         for idx in df.index:
             classifications = self.pattern_matcher.classify_metric(str(idx))
             if classifications:
-                top_classification = max(classifications.items(),
-                                         key=lambda x: x[1])
+                top_classification = max(classifications.items(), key=lambda x: x)
                 metric_type, confidence = top_classification
 
                 if confidence > 0.5:
@@ -2147,17 +1943,16 @@ class FinancialAnalysisEngine(Component):
 
         metric_values = {}
         metric_keys = [
-            'current_assets', 'current_liabilities', 'total_assets',
-            'total_liabilities', 'total_equity', 'inventory', 'cash',
-            'net_income', 'revenue', 'cost_of_goods_sold', 'ebit',
-            'interest_expense', 'receivables'
+            'current_assets', 'current_liabilities', 'total_assets', 'total_liabilities',
+            'total_equity', 'inventory', 'cash', 'net_income', 'revenue',
+            'cost_of_goods_sold', 'ebit', 'interest_expense', 'receivables'
         ]
 
         for metric_key in metric_keys:
             metric_value = self._get_metric_value(df, metrics, metric_key)
             if metric_value is not None:
                 if isinstance(metric_value, pd.DataFrame):
-                    metric_value = metric_value.iloc[0]
+                    metric_value = metric_value.iloc
                 metric_values[metric_key] = metric_value
             else:
                 metric_values[metric_key] = None
@@ -2186,18 +1981,14 @@ class FinancialAnalysisEngine(Component):
         try:
             liquidity_data = {}
 
-            current_ratio = safe_divide('current_assets',
-                                        'current_liabilities')
+            current_ratio = safe_divide('current_assets', 'current_liabilities')
             if current_ratio is not None:
                 liquidity_data['Current Ratio'] = current_ratio
 
-            if metric_values['current_assets'] is not None and metric_values[
-                    'inventory'] is not None:
-                quick_assets = metric_values['current_assets'] - metric_values[
-                    'inventory']
+            if metric_values['current_assets'] is not None and metric_values['inventory'] is not None:
+                quick_assets = metric_values['current_assets'] - metric_values['inventory']
                 if metric_values['current_liabilities'] is not None:
-                    quick_ratio = quick_assets / metric_values[
-                        'current_liabilities'].replace(0, np.nan)
+                    quick_ratio = quick_assets / metric_values['current_liabilities'].replace(0, np.nan)
                     liquidity_data['Quick Ratio'] = quick_ratio
 
             cash_ratio = safe_divide('cash', 'current_liabilities')
@@ -2219,12 +2010,9 @@ class FinancialAnalysisEngine(Component):
             if npm is not None:
                 profitability_data['Net Profit Margin %'] = npm
 
-            if metric_values['revenue'] is not None and metric_values[
-                    'cost_of_goods_sold'] is not None:
-                gross_profit = metric_values['revenue'] - metric_values[
-                    'cost_of_goods_sold']
-                gpm = (gross_profit /
-                       metric_values['revenue'].replace(0, np.nan)) * 100
+            if metric_values['revenue'] is not None and metric_values['cost_of_goods_sold'] is not None:
+                gross_profit = metric_values['revenue'] - metric_values['cost_of_goods_sold']
+                gpm = (gross_profit / metric_values['revenue'].replace(0, np.nan)) * 100
                 profitability_data['Gross Profit Margin %'] = gpm
 
             roa = safe_divide('net_income', 'total_assets', 100)
@@ -2235,13 +2023,9 @@ class FinancialAnalysisEngine(Component):
             if roe is not None:
                 profitability_data['Return on Equity %'] = roe
 
-            if metric_values['ebit'] is not None and metric_values[
-                    'total_assets'] is not None and metric_values[
-                        'current_liabilities'] is not None:
-                capital_employed = metric_values[
-                    'total_assets'] - metric_values['current_liabilities']
-                roce = (metric_values['ebit'] /
-                        capital_employed.replace(0, np.nan)) * 100
+            if metric_values['ebit'] is not None and metric_values['total_assets'] is not None and metric_values['current_liabilities'] is not None:
+                capital_employed = metric_values['total_assets'] - metric_values['current_liabilities']
+                roce = (metric_values['ebit'] / capital_employed.replace(0, np.nan)) * 100
                 profitability_data['ROCE %'] = roce
 
             if profitability_data:
@@ -2289,9 +2073,7 @@ class FinancialAnalysisEngine(Component):
             rec_turnover = safe_divide('revenue', 'receivables')
             if rec_turnover is not None:
                 efficiency_data['Receivables Turnover'] = rec_turnover
-                efficiency_data[
-                    'Days Sales Outstanding'] = 365 / rec_turnover.replace(
-                        0, np.nan)
+                efficiency_data['Days Sales Outstanding'] = 365 / rec_turnover.replace(0, np.nan)
 
             if efficiency_data:
                 efficiency_df = pd.DataFrame(efficiency_data)
@@ -2302,20 +2084,17 @@ class FinancialAnalysisEngine(Component):
 
         return ratios
 
-    def _get_metric_value(self, df: pd.DataFrame, metrics: Dict,
-                          metric_type: str) -> Optional[pd.Series]:
+    def _get_metric_value(self, df: pd.DataFrame, metrics: Dict, metric_type: str) -> Optional[pd.Series]:
         """Get metric value from dataframe with fallback"""
         if metric_type in metrics and metrics[metric_type]:
-            best_match = max(metrics[metric_type],
-                             key=lambda x: x['confidence'])
+            best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
             metric_name = best_match['name']
 
             if metric_name in df.index:
                 result = df.loc[metric_name]
                 if isinstance(result, pd.DataFrame):
-                    self._logger.warning(
-                        f"Multiple rows found for {metric_name}, taking first")
-                    result = result.iloc[0]
+                    self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
+                    result = result.iloc
                 return result
 
         return None
@@ -2332,9 +2111,8 @@ class FinancialAnalysisEngine(Component):
             series = numeric_df.loc[idx]
 
             if isinstance(series, pd.DataFrame):
-                self._logger.warning(
-                    f"Multiple rows found for {idx}, taking first")
-                series = series.iloc[0]
+                self._logger.warning(f"Multiple rows found for {idx}, taking first")
+                series = series.iloc
 
             series = series.dropna()
 
@@ -2343,27 +2121,25 @@ class FinancialAnalysisEngine(Component):
                 values = series.values
 
                 coefficients = np.polyfit(years, values, 1)
-                slope = float(coefficients[0])
-                intercept = float(coefficients[1])
+                slope = float(coefficients)
+                intercept = float(coefficients)
 
                 # CAGR calculation
                 try:
-                    first_value = float(series.iloc[0])
+                    first_value = float(series.iloc)
                     last_value = float(series.iloc[-1])
 
                     if first_value > 0 and last_value > 0:
                         years_diff = len(series) - 1
                         if years_diff > 0:
-                            cagr = ((last_value / first_value)**
-                                    (1 / years_diff) - 1) * 100
+                            cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
                         else:
                             cagr = 0
                     else:
                         cagr = 0
 
                 except Exception as e:
-                    self._logger.warning(
-                        f"Could not calculate CAGR for {idx}: {e}")
+                    self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
                     cagr = 0
 
                 # Volatility
@@ -2375,26 +2151,20 @@ class FinancialAnalysisEngine(Component):
                     volatility = 0
 
                 trends[str(idx)] = {
-                    'slope':
-                    slope,
-                    'direction':
-                    'increasing' if slope > 0 else 'decreasing',
-                    'cagr':
-                    cagr,
-                    'volatility':
-                    volatility,
-                    'r_squared':
-                    self._calculate_r_squared(years, values, slope, intercept)
+                    'slope': slope,
+                    'direction': 'increasing' if slope > 0 else 'decreasing',
+                    'cagr': cagr,
+                    'volatility': volatility,
+                    'r_squared': self._calculate_r_squared(years, values, slope, intercept)
                 }
 
         return trends
 
-    def _calculate_r_squared(self, x: np.ndarray, y: np.ndarray, slope: float,
-                             intercept: float) -> float:
+    def _calculate_r_squared(self, x: np.ndarray, y: np.ndarray, slope: float, intercept: float) -> float:
         """Calculate R-squared for linear regression"""
         y_pred = slope * x + intercept
-        ss_res = np.sum((y - y_pred)**2)
-        ss_tot = np.sum((y - np.mean(y))**2)
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
 
         return 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
@@ -2411,18 +2181,16 @@ class FinancialAnalysisEngine(Component):
 
             for idx in numeric_df.index:
                 positive_metrics = ['assets', 'revenue', 'equity']
-                if any(keyword in str(idx).lower()
-                       for keyword in positive_metrics):
+                if any(keyword in str(idx).lower() for keyword in positive_metrics):
                     row_data = numeric_df.loc[idx]
 
                     if isinstance(row_data, pd.DataFrame):
-                        row_data = row_data.iloc[0]
+                        row_data = row_data.iloc
 
                     negative_count = int((row_data < 0).sum())
 
                     if negative_count > 0:
-                        consistency_score -= (negative_count /
-                                              len(numeric_df.columns)) * 20
+                        consistency_score -= (negative_count / len(numeric_df.columns)) * 20
 
             scores.append(max(0, consistency_score))
 
@@ -2434,7 +2202,7 @@ class FinancialAnalysisEngine(Component):
                 series = numeric_df.loc[idx]
 
                 if isinstance(series, pd.DataFrame):
-                    series = series.iloc[0]
+                    series = series.iloc
 
                 series = series.dropna()
 
@@ -2457,108 +2225,72 @@ class FinancialAnalysisEngine(Component):
 
         ratios = self._calculate_ratios(df)
 
-        if 'Liquidity' in ratios and 'Current Ratio' in ratios[
-                'Liquidity'].index:
+        if 'Liquidity' in ratios and 'Current Ratio' in ratios['Liquidity'].index:
             current_ratios = ratios['Liquidity'].loc['Current Ratio'].dropna()
             if len(current_ratios) > 0:
                 latest_cr = current_ratios.iloc[-1]
                 if latest_cr < 1:
-                    insights.append(
-                        f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues"
-                    )
+                    insights.append(f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues")
                 elif latest_cr > 3:
-                    insights.append(
-                        f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets"
-                    )
+                    insights.append(f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets")
 
                 if len(current_ratios) > 1:
-                    trend = 'improving' if current_ratios.iloc[
-                        -1] > current_ratios.iloc[0] else 'declining'
-                    insights.append(
-                        f"📊 Current ratio is {trend} over the period")
+                    trend = 'improving' if current_ratios.iloc[-1] > current_ratios.iloc else 'declining'
+                    insights.append(f"📊 Current ratio is {trend} over the period")
 
-        if 'Profitability' in ratios and 'Net Profit Margin %' in ratios[
-                'Profitability'].index:
+        if 'Profitability' in ratios and 'Net Profit Margin %' in ratios['Profitability'].index:
             npm = ratios['Profitability'].loc['Net Profit Margin %'].dropna()
             if len(npm) > 1:
-                trend = 'improving' if npm.iloc[-1] > npm.iloc[
-                    0] else 'declining'
-                insights.append(
-                    f"📊 Net profit margin is {trend} ({npm.iloc[0]:.1f}% → {npm.iloc[-1]:.1f}%)"
-                )
+                trend = 'improving' if npm.iloc[-1] > npm.iloc else 'declining'
+                insights.append(f"📊 Net profit margin is {trend} ({npm.iloc:.1f}% → {npm.iloc[-1]:.1f}%)")
 
                 if npm.iloc[-1] < 5:
-                    insights.append(
-                        f"⚠️ Low profit margin may indicate competitive pressure or cost issues"
-                    )
+                    insights.append(f"⚠️ Low profit margin may indicate competitive pressure or cost issues")
 
-        if 'Leverage' in ratios and 'Debt to Equity' in ratios[
-                'Leverage'].index:
+        if 'Leverage' in ratios and 'Debt to Equity' in ratios['Leverage'].index:
             de_ratio = ratios['Leverage'].loc['Debt to Equity'].dropna()
             if len(de_ratio) > 0:
                 latest_de = de_ratio.iloc[-1]
                 if latest_de > 2:
-                    insights.append(
-                        f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage"
-                    )
+                    insights.append(f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage")
                 elif latest_de < 0.3:
-                    insights.append(
-                        f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth"
-                    )
+                    insights.append(f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth")
 
-        if 'Efficiency' in ratios and 'Asset Turnover' in ratios[
-                'Efficiency'].index:
-            asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna(
-            )
+        if 'Efficiency' in ratios and 'Asset Turnover' in ratios['Efficiency'].index:
+            asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna()
             if len(asset_turnover) > 0:
                 latest_at = asset_turnover.iloc[-1]
                 if latest_at < 0.5:
-                    insights.append(
-                        f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets"
-                    )
+                    insights.append(f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets")
 
         trends = self._analyze_trends(df)
 
-        revenue_trends = [
-            v for k, v in trends.items() if 'revenue' in k.lower()
-        ]
-        if revenue_trends and revenue_trends[0].get('cagr') is not None:
-            cagr = revenue_trends[0]['cagr']
+        revenue_trends = [v for k, v in trends.items() if 'revenue' in k.lower()]
+        if revenue_trends and revenue_trends.get('cagr') is not None:
+            cagr = revenue_trends['cagr']
             if cagr > 20:
                 insights.append(f"🚀 Strong revenue growth (CAGR: {cagr:.1f}%)")
             elif cagr < 0:
                 insights.append(f"📉 Declining revenue (CAGR: {cagr:.1f}%)")
             elif 0 < cagr < 5:
-                insights.append(
-                    f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies"
-                )
+                insights.append(f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies")
 
-        profit_trends = [
-            v for k, v in trends.items()
-            if 'net income' in k.lower() or 'profit' in k.lower()
-        ]
+        profit_trends = [v for k, v in trends.items() if 'net income' in k.lower() or 'profit' in k.lower()]
         if revenue_trends and profit_trends:
-            rev_cagr = revenue_trends[0].get('cagr', 0)
-            prof_cagr = profit_trends[0].get('cagr', 0)
+            rev_cagr = revenue_trends.get('cagr', 0)
+            prof_cagr = profit_trends.get('cagr', 0)
             if rev_cagr > 0 and prof_cagr < rev_cagr:
-                insights.append(
-                    f"⚠️ Profit growing slower than revenue - check cost management"
-                )
+                insights.append(f"⚠️ Profit growing slower than revenue - check cost management")
 
         quality_score = self._calculate_quality_score(df)
         if quality_score < 70:
-            insights.append(
-                f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable"
-            )
+            insights.append(f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable")
 
         anomalies = self._detect_anomalies(df)
         if anomalies['value_anomalies']:
-            insights.append(
-                f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy"
-            )
+            insights.append(f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy")
 
         return insights
-
 
 # --- 17. Enhanced API Client with Advanced Features ---
 @dataclass
@@ -2574,7 +2306,6 @@ class APIRequest:
     retries: int = 0
     callback: Optional[Callable] = None
 
-
 class RequestQueue:
     """Priority queue for API requests with coalescing"""
 
@@ -2584,9 +2315,7 @@ class RequestQueue:
         self.coalesce_window = coalesce_window_ms / 1000
         self._lock = threading.Lock()
 
-    def put(self,
-            request: APIRequest,
-            timeout: Optional[float] = None) -> bool:
+    def put(self, request: APIRequest, timeout: Optional[float] = None) -> bool:
         """Add request to queue with optional coalescing"""
         with self._lock:
             # Check for similar pending request
@@ -2597,15 +2326,13 @@ class RequestQueue:
                 existing = self.pending[coalesce_key]
                 if time.time() - existing.timestamp < self.coalesce_window:
                     # Update priority to highest
-                    existing.priority = min(existing.priority,
-                                            request.priority)
+                    existing.priority = min(existing.priority, request.priority)
                     return True
 
             self.pending[coalesce_key] = request
 
         try:
-            self.queue.put((request.priority, request.id, request),
-                           timeout=timeout)
+            self.queue.put((request.priority, request.id, request), timeout=timeout)
             return True
         except queue.Full:
             return False
@@ -2623,7 +2350,6 @@ class RequestQueue:
         except queue.Empty:
             return None
 
-
 class EnhancedAPIClient:
     """Enhanced API client with advanced features for Kaggle integration"""
 
@@ -2635,8 +2361,7 @@ class EnhancedAPIClient:
         self._session = None
 
         # Connection pool - MOVED BEFORE _setup_session()
-        self.connection_pool_size = config.get(
-            'ai.kaggle_connection_pool_size', 20)
+        self.connection_pool_size = config.get('ai.kaggle_connection_pool_size', 20)
 
         # Now setup session AFTER connection_pool_size is defined
         self._setup_session()
@@ -2650,16 +2375,16 @@ class EnhancedAPIClient:
 
         # Circuit breaker
         self.circuit_breaker = CircuitBreaker(
-            failure_threshold=config.get('ai.kaggle_circuit_breaker_threshold',
-                                         5),
-            recovery_timeout=config.get('ai.kaggle_circuit_breaker_timeout',
-                                        300),
-            expected_exception=requests.exceptions.RequestException)
+            failure_threshold=config.get('ai.kaggle_circuit_breaker_threshold', 5),
+            recovery_timeout=config.get('ai.kaggle_circuit_breaker_timeout', 300),
+            expected_exception=requests.exceptions.RequestException
+        )
 
         # Request queue
         self.request_queue = RequestQueue(
             max_size=config.get('ai.kaggle_max_queue_size', 100),
-            coalesce_window_ms=config.get('ai.kaggle_coalesce_window_ms', 100))
+            coalesce_window_ms=config.get('ai.kaggle_coalesce_window_ms', 100)
+        )
 
         # Response cache
         self.response_cache = AdvancedCache(max_size_mb=20, default_ttl=300)
@@ -2676,19 +2401,20 @@ class EnhancedAPIClient:
         self._session = requests.Session()
 
         # Retry strategy with exponential backoff
-        retry_strategy = Retry(total=self.max_retries,
-                               backoff_factor=2,
-                               status_forcelist=[429, 500, 502, 503, 504],
-                               allowed_methods=[
-                                   "HEAD", "GET", "PUT", "DELETE", "OPTIONS",
-                                   "TRACE", "POST"
-                               ],
-                               raise_on_status=False)
+        retry_strategy = Retry(
+            total=self.max_retries,
+            backoff_factor=2,
+            status_forcelist=,
+            allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"],
+            raise_on_status=False
+        )
 
         # Connection pooling - Now self.connection_pool_size is defined
-        adapter = HTTPAdapter(max_retries=retry_strategy,
-                              pool_connections=self.connection_pool_size,
-                              pool_maxsize=self.connection_pool_size * 2)
+        adapter = HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=self.connection_pool_size,
+            pool_maxsize=self.connection_pool_size * 2
+        )
 
         self._session.mount("http://", adapter)
         self._session.mount("https://", adapter)
@@ -2709,8 +2435,7 @@ class EnhancedAPIClient:
 
     def _start_processor(self):
         """Start background request processor"""
-        self._processor_thread = threading.Thread(
-            target=self._process_requests, daemon=True)
+        self._processor_thread = threading.Thread(target=self._process_requests, daemon=True)
         self._processor_thread.start()
 
     def _process_requests(self):
@@ -2726,27 +2451,24 @@ class EnhancedAPIClient:
     def _execute_request(self, api_request: APIRequest):
         """Execute a single API request"""
         try:
-            response = self._make_raw_request(api_request.method,
-                                              api_request.endpoint,
-                                              api_request.data,
-                                              api_request.params)
+            response = self._make_raw_request(
+                api_request.method,
+                api_request.endpoint,
+                api_request.data,
+                api_request.params
+            )
 
             if api_request.callback:
                 api_request.callback(response)
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to execute request {api_request.id}: {e}")
+            self.logger.error(f"Failed to execute request {api_request.id}: {e}")
             if api_request.callback:
                 api_request.callback({'error': str(e)})
 
-    def _make_raw_request(self,
-                          method: str,
-                          endpoint: str,
-                          data: Optional[Dict] = None,
-                          params: Optional[Dict] = None) -> Dict:
+    def _make_raw_request(self, method: str, endpoint: str, data: Optional[Dict] = None,
+                     params: Optional[Dict] = None) -> Dict:
         """Make raw HTTP request with circuit breaker"""
-
         def _request():
             url = f"{self.base_url}/{endpoint.lstrip('/')}"
 
@@ -2778,15 +2500,13 @@ class EnhancedAPIClient:
 
             # Handle data - FIX: Use the data parameter directly
             if data:
-                if self.config.get('ai.kaggle_enable_compression',
-                                   True) and len(json.dumps(data)) > 1024:
+                if self.config.get('ai.kaggle_enable_compression', True) and len(json.dumps(data)) > 1024:
                     # Compression for large payloads
                     import gzip
                     self._session.headers['Content-Encoding'] = 'gzip'
                     data_bytes = json.dumps(data).encode('utf-8')
                     request_kwargs['data'] = gzip.compress(data_bytes)
-                    request_kwargs['headers'][
-                        'Content-Type'] = 'application/json'
+                    request_kwargs['headers']['Content-Type'] = 'application/json'
                 else:
                     # Remove compression header if present
                     self._session.headers.pop('Content-Encoding', None)
@@ -2806,9 +2526,7 @@ class EnhancedAPIClient:
                     # Try to parse as text
                     result = {'response': response.text, 'status': 'ok'}
             else:
-                self.logger.error(
-                    f"Request failed: {response.status_code} - {response.text}"
-                )
+                self.logger.error(f"Request failed: {response.status_code} - {response.text}")
                 response.raise_for_status()
 
             # Cache successful GET responses
@@ -2825,15 +2543,9 @@ class EnhancedAPIClient:
         # Execute with circuit breaker
         return self.circuit_breaker.call(_request)
 
-    def make_request(
-            self,
-            method: str,
-            endpoint: str,
-            data: Optional[Dict] = None,
-            params: Optional[Dict] = None,
-            timeout: Optional[int] = None,
-            priority: int = 5,
-            async_callback: Optional[Callable] = None) -> Optional[Dict]:
+    def make_request(self, method: str, endpoint: str, data: Optional[Dict] = None,
+                    params: Optional[Dict] = None, timeout: Optional[int] = None,
+                    priority: int = 5, async_callback: Optional[Callable] = None) -> Optional[Dict]:
         """Make HTTP request with queuing and priority"""
         request_id = f"{endpoint}_{time.time()}_{id(data)}"
 
@@ -2842,13 +2554,15 @@ class EnhancedAPIClient:
             self.last_request_time = datetime.now()
 
         # Create request
-        api_request = APIRequest(id=request_id,
-                                 endpoint=endpoint,
-                                 method=method,
-                                 data=data,
-                                 params=params,
-                                 priority=priority,
-                                 callback=async_callback)
+        api_request = APIRequest(
+            id=request_id,
+            endpoint=endpoint,
+            method=method,
+            data=data,
+            params=params,
+            priority=priority,
+            callback=async_callback
+        )
 
         # Async request with callback
         if async_callback:
@@ -2867,9 +2581,7 @@ class EnhancedAPIClient:
             performance_monitor.track_api_call(endpoint, False, 0, str(e))
             raise
 
-    def batch_request(self,
-                      requests: List[Dict],
-                      endpoint: str = '/batch') -> List[Dict]:
+    def batch_request(self, requests: List[Dict], endpoint: str = '/batch') -> List[Dict]:
         """Execute multiple requests in a single batch"""
         batch_size = self.config.get('ai.kaggle_batch_size', 50)
         results = []
@@ -2884,9 +2596,7 @@ class EnhancedAPIClient:
                 # Fallback to individual requests
                 for req in batch:
                     try:
-                        result = self.make_request(req['method'],
-                                                   req['endpoint'],
-                                                   req.get('data'))
+                        result = self.make_request(req['method'], req['endpoint'], req.get('data'))
                         results.append(result)
                     except Exception as e:
                         results.append({'error': str(e)})
@@ -2898,23 +2608,21 @@ class EnhancedAPIClient:
         try:
             # Ensure no double slashes
             url = f"{self.base_url.rstrip('/')}/health"
-            self.logger.info(
-                f"Health check URL: {url}")  # Add this for debugging
+            self.logger.info(f"Health check URL: {url}")  # Add this for debugging
 
             response = self._session.get(
                 url,
                 timeout=5,
                 verify=False,
-                headers={'ngrok-skip-browser-warning': 'true'})
+                headers={'ngrok-skip-browser-warning': 'true'}
+            )
 
-            self.logger.info(
-                f"Health response status: {response.status_code}")  # Debug log
+            self.logger.info(f"Health response status: {response.status_code}")  # Debug log
 
             if response.status_code == 200:
                 try:
                     response_data = response.json()
-                    self.logger.info(
-                        f"Health response data: {response_data}")  # Debug log
+                    self.logger.info(f"Health response data: {response_data}")  # Debug log
                     return {
                         'healthy': True,
                         'response': response_data,
@@ -2923,24 +2631,16 @@ class EnhancedAPIClient:
                         'cache_stats': self.response_cache.get_stats()
                     }
                 except json.JSONDecodeError as e:
-                    self.logger.warning(
-                        f"Health response not JSON: {response.text[:200]} - {e}"
-                    )
+                    self.logger.warning(f"Health response not JSON: {response.text[:200]} - {e}")
                     return {
-                        'healthy':
-                        True,  # Assume healthy if we get 200 even if not JSON
-                        'response': {
-                            'status': 'ok',
-                            'message': response.text
-                        },
+                        'healthy': True,  # Assume healthy if we get 200 even if not JSON
+                        'response': {'status': 'ok', 'message': response.text},
                         'circuit_breaker': self.circuit_breaker.get_state(),
                         'queue_size': self.request_queue.queue.qsize(),
                         'cache_stats': self.response_cache.get_stats()
                     }
             else:
-                self.logger.error(
-                    f"Health check failed with status: {response.status_code} - {response.text[:200]}"
-                )
+                self.logger.error(f"Health check failed with status: {response.status_code} - {response.text[:200]}")
                 return {
                     'healthy': False,
                     'error': f"Status code: {response.status_code}",
@@ -2949,8 +2649,7 @@ class EnhancedAPIClient:
                 }
 
         except Exception as e:
-            self.logger.error(f"Health check exception: {str(e)}",
-                              exc_info=True)
+            self.logger.error(f"Health check exception: {str(e)}", exc_info=True)
             return {
                 'healthy': False,
                 'error': str(e),
@@ -2961,31 +2660,19 @@ class EnhancedAPIClient:
     def get_stats(self) -> Dict[str, Any]:
         """Get detailed client statistics"""
         with self._lock:
-            avg_response_time = np.mean(
-                self.response_times) if self.response_times else 0
-            p95_response_time = np.percentile(list(self.response_times),
-                                              95) if self.response_times else 0
+            avg_response_time = np.mean(self.response_times) if self.response_times else 0
+            p95_response_time = np.percentile(list(self.response_times), 95) if self.response_times else 0
 
             return {
-                'total_requests':
-                self.request_count,
-                'total_errors':
-                self.error_count,
-                'error_rate':
-                self.error_count /
-                self.request_count if self.request_count > 0 else 0,
-                'avg_response_time':
-                avg_response_time,
-                'p95_response_time':
-                p95_response_time,
-                'last_request':
-                self.last_request_time,
-                'circuit_breaker_state':
-                self.circuit_breaker.get_state()['state'],
-                'queue_size':
-                self.request_queue.queue.qsize(),
-                'cache_hit_rate':
-                self.response_cache.get_stats()['hit_rate']
+                'total_requests': self.request_count,
+                'total_errors': self.error_count,
+                'error_rate': self.error_count / self.request_count if self.request_count > 0 else 0,
+                'avg_response_time': avg_response_time,
+                'p95_response_time': p95_response_time,
+                'last_request': self.last_request_time,
+                'circuit_breaker_state': self.circuit_breaker.get_state()['state'],
+                'queue_size': self.request_queue.queue.qsize(),
+                'cache_hit_rate': self.response_cache.get_stats()['hit_rate']
             }
 
     def close(self):
@@ -2997,7 +2684,6 @@ class EnhancedAPIClient:
         if self._session:
             self._session.close()
 
-
 # --- 18. Enhanced AI Mapping System with Robust Kaggle Integration ---
 class ProgressTracker:
     """Track progress of long-running operations"""
@@ -3006,10 +2692,7 @@ class ProgressTracker:
         self.operations = {}
         self._lock = threading.Lock()
 
-    def start_operation(self,
-                        operation_id: str,
-                        total_items: int,
-                        description: str = ""):
+    def start_operation(self, operation_id: str, total_items: int, description: str = ""):
         """Start tracking an operation"""
         with self._lock:
             self.operations[operation_id] = {
@@ -3027,14 +2710,11 @@ class ProgressTracker:
             if operation_id in self.operations:
                 self.operations[operation_id]['completed'] = completed
 
-    def complete_operation(self,
-                           operation_id: str,
-                           error: Optional[str] = None):
+    def complete_operation(self, operation_id: str, error: Optional[str] = None):
         """Mark operation as complete"""
         with self._lock:
             if operation_id in self.operations:
-                self.operations[operation_id][
-                    'status'] = 'error' if error else 'completed'
+                self.operations[operation_id]['status'] = 'error' if error else 'completed'
                 self.operations[operation_id]['error'] = error
                 self.operations[operation_id]['end_time'] = time.time()
 
@@ -3042,7 +2722,6 @@ class ProgressTracker:
         """Get operation progress"""
         with self._lock:
             return self.operations.get(operation_id)
-
 
 class AIMapper(Component):
     """Enhanced AI-powered mapping with robust Kaggle GPU support"""
@@ -3075,13 +2754,11 @@ class AIMapper(Component):
         self._session.headers.update({'Content-Type': 'application/json'})
 
         # Initialize Kaggle API if configured
-        if self.config.get('ai.use_kaggle_api',
-                           False) and self.config.get('ai.kaggle_api_url'):
+        if self.config.get('ai.use_kaggle_api', False) and self.config.get('ai.kaggle_api_url'):
             self._initialize_kaggle_api()
 
         # Initialize local model if available and needed
-        if not self._kaggle_available or self.config.get(
-                'ai.kaggle_fallback_to_local', True):
+        if not self._kaggle_available or self.config.get('ai.kaggle_fallback_to_local', True):
             self._initialize_local_model()
 
         # Initialize fallback fuzzy mapper
@@ -3123,19 +2800,15 @@ class AIMapper(Component):
             for attempt in range(3):
                 if self._test_kaggle_connection():
                     self._kaggle_available = True
-                    self._logger.info(
-                        f"Successfully connected to Kaggle API at {api_url}")
+                    self._logger.info(f"Successfully connected to Kaggle API at {api_url}")
                     break
 
                 if attempt < 2:
                     wait_time = (attempt + 1) * 2
-                    self._logger.warning(
-                        f"Kaggle connection attempt {attempt + 1} failed, retrying in {wait_time}s"
-                    )
+                    self._logger.warning(f"Kaggle connection attempt {attempt + 1} failed, retrying in {wait_time}s")
                     time.sleep(wait_time)
             else:
-                self._logger.warning(
-                    "Failed to connect to Kaggle API after 3 attempts")
+                self._logger.warning("Failed to connect to Kaggle API after 3 attempts")
 
         except Exception as e:
             self._logger.error(f"Failed to initialize Kaggle API: {e}")
@@ -3144,59 +2817,46 @@ class AIMapper(Component):
     def _test_kaggle_connection(self) -> bool:
         """Test Kaggle API connection with comprehensive checks"""
         try:
-            self._logger.info(
-                f"Testing connection to: {self.config.get('ai.kaggle_api_url')}"
-            )
+            self._logger.info(f"Testing connection to: {self.config.get('ai.kaggle_api_url')}")
 
             # First, test the embed endpoint since we know it works from diagnostics
             try:
                 test_response = self._api_client.make_request(
-                    'POST', '/embed', {'texts': ['test']}, timeout=10)
+                    'POST', '/embed',
+                    {'texts': ['test']},
+                    timeout=10
+                )
 
                 self._logger.info(f"Embed test response: {test_response}")
 
-                if test_response and isinstance(
-                        test_response, dict) and 'embeddings' in test_response:
-                    self._logger.info(
-                        "Embed test successful - proceeding with connection")
+                if test_response and isinstance(test_response, dict) and 'embeddings' in test_response:
+                    self._logger.info("Embed test successful - proceeding with connection")
 
                     # Optionally test health for additional info
                     try:
                         health_status = self._api_client.health_check()
-                        if health_status['healthy'] and health_status.get(
-                                'response'):
+                        if health_status['healthy'] and health_status.get('response'):
                             response = health_status['response']
                             self._kaggle_info = response
                         else:
-                            self._logger.warning(
-                                "Health check failed, but embed works - ignoring"
-                            )
+                            self._logger.warning("Health check failed, but embed works - ignoring")
                     except Exception as e:
-                        self._logger.warning(
-                            f"Health check failed but ignored: {e}")
+                        self._logger.warning(f"Health check failed but ignored: {e}")
 
                     self._last_health_check = time.time()
-                    self._kaggle_info = self._kaggle_info or {
-                        'status': 'healthy (embed test)'
-                    }
+                    self._kaggle_info = self._kaggle_info or {'status': 'healthy (embed test)'}
 
                     # Store GPU info if available
                     if 'system' in self._kaggle_info:
                         system_info = self._kaggle_info['system']
                         self._kaggle_info.update({
-                            'gpu_name':
-                            system_info.get('gpu_name', 'Unknown'),
-                            'gpu_available':
-                            system_info.get('gpu_available', False),
-                            'model':
-                            system_info.get('model', 'Unknown'),
-                            'device':
-                            system_info.get('device', 'Unknown')
+                            'gpu_name': system_info.get('gpu_name', 'Unknown'),
+                            'gpu_available': system_info.get('gpu_available', False),
+                            'model': system_info.get('model', 'Unknown'),
+                            'device': system_info.get('device', 'Unknown')
                         })
 
-                    self._logger.info(
-                        f"Successfully connected to Kaggle API - GPU: {self._kaggle_info.get('gpu_name', 'Unknown')}"
-                    )
+                    self._logger.info(f"Successfully connected to Kaggle API - GPU: {self._kaggle_info.get('gpu_name', 'Unknown')}")
                     return True
                 else:
                     self._logger.error(f"Embed test failed: {test_response}")
@@ -3207,18 +2867,15 @@ class AIMapper(Component):
                 return False
 
         except Exception as e:
-            self._logger.error(f"Kaggle connection test failed: {e}",
-                               exc_info=True)
+            self._logger.error(f"Kaggle connection test failed: {e}", exc_info=True)
             return False
 
     def _start_health_monitor(self):
         """Start background health monitoring thread"""
-
         def monitor():
             while self._initialized:
                 try:
-                    time.sleep(
-                        self.config.get('ai.kaggle_health_check_interval', 60))
+                    time.sleep(self.config.get('ai.kaggle_health_check_interval', 60))
                     if self._kaggle_available:
                         self._check_kaggle_health()
                 except Exception as e:
@@ -3258,27 +2915,17 @@ class AIMapper(Component):
 
         standard_metrics = {
             'Total Assets': ['total assets', 'sum of assets', 'asset total'],
-            'Total Liabilities':
-            ['total liabilities', 'sum of liabilities', 'liability total'],
-            'Total Equity':
-            ['total equity', 'shareholders equity', 'net worth'],
-            'Revenue':
-            ['revenue', 'sales', 'turnover', 'income from operations'],
-            'Net Income':
-            ['net income', 'net profit', 'profit after tax', 'earnings'],
-            'Current Assets':
-            ['current assets', 'short term assets', 'liquid assets'],
-            'Current Liabilities':
-            ['current liabilities', 'short term liabilities'],
+            'Total Liabilities': ['total liabilities', 'sum of liabilities', 'liability total'],
+            'Total Equity': ['total equity', 'shareholders equity', 'net worth'],
+            'Revenue': ['revenue', 'sales', 'turnover', 'income from operations'],
+            'Net Income': ['net income', 'net profit', 'profit after tax', 'earnings'],
+            'Current Assets': ['current assets', 'short term assets', 'liquid assets'],
+            'Current Liabilities': ['current liabilities', 'short term liabilities'],
             'Cash': ['cash', 'cash and cash equivalents', 'liquid funds'],
             'Inventory': ['inventory', 'stock', 'goods'],
-            'Receivables': [
-                'receivables', 'accounts receivable', 'trade receivables',
-                'debtors'
-            ],
+            'Receivables': ['receivables', 'accounts receivable', 'trade receivables', 'debtors'],
             'EBIT': ['ebit', 'operating income', 'operating profit'],
-            'Interest Expense':
-            ['interest expense', 'finance costs', 'interest costs'],
+            'Interest Expense': ['interest expense', 'finance costs', 'interest costs'],
             'Tax Expense': ['tax expense', 'income tax', 'tax'],
         }
 
@@ -3290,8 +2937,7 @@ class AIMapper(Component):
 
     def _start_batch_processor(self):
         """Start background thread for batch processing"""
-        self._batch_processor = threading.Thread(
-            target=self._process_batch_queue, daemon=True)
+        self._batch_processor = threading.Thread(target=self._process_batch_queue, daemon=True)
         self._batch_processor.start()
 
     def _process_batch_queue(self):
@@ -3327,14 +2973,12 @@ class AIMapper(Component):
 
         try:
             # Track progress
-            self.progress_tracker.start_operation(operation_id, len(texts),
-                                                  "Processing embeddings")
+            self.progress_tracker.start_operation(operation_id, len(texts), "Processing embeddings")
 
             embeddings = self._get_embeddings_kaggle_batch(texts, operation_id)
 
             if embeddings:
-                for i, (future,
-                        embedding) in enumerate(zip(futures, embeddings)):
+                for i, (future, embedding) in enumerate(zip(futures, embeddings)):
                     future.set_result(embedding)
                     self.progress_tracker.update_progress(operation_id, i + 1)
             else:
@@ -3355,11 +2999,10 @@ class AIMapper(Component):
         """Periodic health check for Kaggle API with recovery"""
         with self._health_check_lock:
             current_time = time.time()
-            check_interval = self.config.get('ai.kaggle_health_check_interval',
-                                             60)
+            check_interval = self.config.get('ai.kaggle_health_check_interval', 60)
 
             if (self._last_health_check is None or
-                    current_time - self._last_health_check > check_interval):
+                current_time - self._last_health_check > check_interval):
 
                 previous_state = self._kaggle_available
                 self._kaggle_available = self._test_kaggle_connection()
@@ -3422,11 +3065,12 @@ class AIMapper(Component):
     def _get_embedding_kaggle(self, text: str) -> Optional[np.ndarray]:
         """Get single embedding from Kaggle API"""
         try:
-            response = self._api_client.make_request('POST',
-                                                     '/embed',
-                                                     {'texts': [text]},
-                                                     timeout=10,
-                                                     priority=5)
+            response = self._api_client.make_request(
+                'POST', '/embed',
+                {'texts': [text]},
+                timeout=10,
+                priority=5
+            )
 
             if response and isinstance(response, dict):
                 # Your API returns embeddings in the 'embeddings' key
@@ -3434,7 +3078,7 @@ class AIMapper(Component):
                     embeddings = response['embeddings']
                     if isinstance(embeddings, list) and len(embeddings) > 0:
                         # Get the first embedding (since we sent one text)
-                        embedding = embeddings[0]
+                        embedding = embeddings
                         if isinstance(embedding, list):
                             return np.array(embedding)
 
@@ -3450,16 +3094,12 @@ class AIMapper(Component):
             return None
 
         try:
-            return self.model.encode(text,
-                                     convert_to_numpy=True,
-                                     show_progress_bar=False)
+            return self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
         except Exception as e:
             self._logger.error(f"Local embedding error: {e}")
             return None
 
-    def _get_embeddings_kaggle_batch(
-            self, texts: List[str],
-            operation_id: str) -> Optional[List[np.ndarray]]:
+    def _get_embeddings_kaggle_batch(self, texts: List[str], operation_id: str) -> Optional[List[np.ndarray]]:
         """Get batch embeddings from Kaggle API with progress tracking"""
         try:
             # Split into sub-batches if needed
@@ -3469,22 +3109,19 @@ class AIMapper(Component):
             for i in range(0, len(texts), max_batch):
                 sub_batch = texts[i:i + max_batch]
 
-                response = self._api_client.make_request('POST',
-                                                         '/embed',
-                                                         {'texts': sub_batch},
-                                                         priority=3)
+                response = self._api_client.make_request(
+                    'POST', '/embed',
+                    {'texts': sub_batch},
+                    priority=3
+                )
 
-                if response and isinstance(response,
-                                           dict) and 'embeddings' in response:
+                if response and isinstance(response, dict) and 'embeddings' in response:
                     embeddings = response['embeddings']
                     if isinstance(embeddings, list):
                         # Convert each embedding to numpy array
-                        batch_embeddings = [
-                            np.array(emb) for emb in embeddings
-                        ]
+                        batch_embeddings = [np.array(emb) for emb in embeddings]
                         all_embeddings.extend(batch_embeddings)
-                        self.progress_tracker.update_progress(
-                            operation_id, len(all_embeddings))
+                        self.progress_tracker.update_progress(operation_id, len(all_embeddings))
                     else:
                         self._logger.error("Unexpected embeddings format")
                         return None
@@ -3499,15 +3136,11 @@ class AIMapper(Component):
             return None
 
     @error_boundary({})
-    def map_metrics_with_confidence_levels(
-            self,
-            source_metrics: List[str],
-            target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+    def map_metrics_with_confidence_levels(self, source_metrics: List[str],
+                                         target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
         """Enhanced mapping with multiple confidence levels and progress tracking"""
         operation_id = f"mapping_{time.time()}"
-        self.progress_tracker.start_operation(operation_id,
-                                              len(source_metrics),
-                                              "Mapping financial metrics")
+        self.progress_tracker.start_operation(operation_id, len(source_metrics), "Mapping financial metrics")
 
         try:
             confidence_thresholds = self.config.get('ai.confidence_levels', {
@@ -3523,18 +3156,17 @@ class AIMapper(Component):
                 # Try Kaggle API first
                 try:
                     response = self._api_client.make_request(
-                        'POST',
-                        '/map_metrics_with_confidence',
+                        'POST', '/map_metrics_with_confidence',
                         {'source_metrics': source_metrics},
-                        timeout=30)
+                        timeout=30
+                    )
 
                     if response and 'high_confidence' in response:
                         self.progress_tracker.complete_operation(operation_id)
                         return response
 
                 except Exception as e:
-                    self._logger.warning(
-                        f"Kaggle mapping failed, falling back to local: {e}")
+                    self._logger.warning(f"Kaggle mapping failed, falling back to local: {e}")
 
             # Fallback to local processing
             base_result = self.map_metrics(source_metrics, target_metrics)
@@ -3550,8 +3182,7 @@ class AIMapper(Component):
 
             for i, source in enumerate(source_metrics):
                 if source in base_result['mappings']:
-                    confidence = base_result['confidence_scores'].get(
-                        source, 0)
+                    confidence = base_result['confidence_scores'].get(source, 0)
                     target = base_result['mappings'][source]
 
                     if confidence >= confidence_thresholds['high']:
@@ -3583,11 +3214,9 @@ class AIMapper(Component):
             self.progress_tracker.complete_operation(operation_id, str(e))
             raise
 
-    def map_metrics(
-            self,
-            source_metrics: List[str],
-            target_metrics: Optional[List[str]] = None,
-            confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
+    def map_metrics(self, source_metrics: List[str],
+                   target_metrics: Optional[List[str]] = None,
+                   confidence_threshold: Optional[float] = None) -> Dict[str, Any]:
         """Map source metrics to target metrics with hybrid approach"""
 
         if not source_metrics:
@@ -3600,24 +3229,21 @@ class AIMapper(Component):
             }
 
         if confidence_threshold is None:
-            confidence_threshold = self.config.get('ai.similarity_threshold',
-                                                   0.6)
+            confidence_threshold = self.config.get('ai.similarity_threshold', 0.6)
 
         if target_metrics is None:
             target_metrics = self._get_standard_metrics()
 
         # Try AI mapping if available
         if (self.model is not None or self._kaggle_available):
-            return self._map_metrics_ai(source_metrics, target_metrics,
-                                        confidence_threshold)
+            return self._map_metrics_ai(source_metrics, target_metrics, confidence_threshold)
         else:
             # Fallback to fuzzy matching
-            return self.fallback_mapper.map_metrics(source_metrics,
-                                                    target_metrics)
+            return self.fallback_mapper.map_metrics(source_metrics, target_metrics)
 
     def _map_metrics_ai(self, source_metrics: List[str],
-                        target_metrics: List[str],
-                        confidence_threshold: float) -> Dict[str, Any]:
+                       target_metrics: List[str],
+                       confidence_threshold: float) -> Dict[str, Any]:
         """AI-based metric mapping with embeddings"""
         mappings = {}
         confidence_scores = {}
@@ -3652,8 +3278,7 @@ class AIMapper(Component):
 
                     for target in target_metrics:
                         # Check pre-computed embeddings first
-                        embedding = SimpleState.get(
-                            f"standard_embedding_{target}")
+                        embedding = SimpleState.get(f"standard_embedding_{target}")
 
                         if embedding is None:
                             embedding = self._get_embedding(target.lower())
@@ -3670,18 +3295,19 @@ class AIMapper(Component):
                     source_matrix = np.vstack(source_embeddings)
                     target_matrix = np.vstack(target_embeddings)
 
-                    similarities = cosine_similarity(source_matrix,
-                                                     target_matrix)
+                    similarities = cosine_similarity(source_matrix, target_matrix)
 
                     # Create mappings
                     for idx, source in enumerate(valid_sources):
                         sim_scores = similarities[idx]
                         top_indices = np.argsort(sim_scores)[::-1][:3]
 
-                        top_matches = [(valid_targets[i], sim_scores[i])
-                                       for i in top_indices]
+                        top_matches = [
+                            (valid_targets[i], sim_scores[i])
+                            for i in top_indices
+                        ]
 
-                        best_target, best_score = top_matches[0]
+                        best_target, best_score = top_matches
 
                         if best_score >= confidence_threshold:
                             mappings[source] = best_target
@@ -3689,10 +3315,10 @@ class AIMapper(Component):
                         else:
                             unmapped.append(source)
 
-                        suggestions[source] = [{
-                            'target': target,
-                            'confidence': float(score)
-                        } for target, score in top_matches]
+                        suggestions[source] = [
+                            {'target': target, 'confidence': float(score)}
+                            for target, score in top_matches
+                        ]
 
                 except Exception as e:
                     self._logger.error(f"Error in batch mapping: {e}")
@@ -3712,57 +3338,42 @@ class AIMapper(Component):
             'Total Assets', 'Current Assets', 'Non-current Assets',
             'Cash and Cash Equivalents', 'Inventory', 'Trade Receivables',
             'Property Plant and Equipment', 'Total Liabilities',
-            'Current Liabilities', 'Non-current Liabilities', 'Total Equity',
-            'Share Capital', 'Retained Earnings', 'Revenue',
-            'Cost of Goods Sold', 'Gross Profit', 'Operating Expenses',
-            'Operating Income', 'Net Income', 'Earnings Per Share',
-            'Operating Cash Flow', 'Investing Cash Flow',
-            'Financing Cash Flow', 'EBIT', 'EBITDA', 'Interest Expense',
-            'Tax Expense'
+            'Current Liabilities', 'Non-current Liabilities',
+            'Total Equity', 'Share Capital', 'Retained Earnings',
+            'Revenue', 'Cost of Goods Sold', 'Gross Profit',
+            'Operating Expenses', 'Operating Income', 'Net Income',
+            'Earnings Per Share', 'Operating Cash Flow',
+            'Investing Cash Flow', 'Financing Cash Flow',
+            'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
 
     def get_api_status(self) -> Dict[str, Any]:
         """Get comprehensive API status with metrics"""
         status = {
-            'kaggle_configured':
-            bool(self.config.get('ai.kaggle_api_url')),
-            'kaggle_available':
-            self._kaggle_available,
-            'local_model_available':
-            self.model is not None,
-            'cache_size':
-            len(self.embeddings_cache._cache),
-            'buffer_size':
-            len(self._embedding_buffer),
-            'api_info':
-            self._kaggle_info,
-            'api_stats':
-            self._api_client.get_stats() if self._api_client else None,
-            'api_metrics':
-            performance_monitor.get_api_summary()
-            if self._kaggle_available else None
+            'kaggle_configured': bool(self.config.get('ai.kaggle_api_url')),
+            'kaggle_available': self._kaggle_available,
+            'local_model_available': self.model is not None,
+            'cache_size': len(self.embeddings_cache._cache),
+            'buffer_size': len(self._embedding_buffer),
+            'api_info': self._kaggle_info,
+            'api_stats': self._api_client.get_stats() if self._api_client else None,
+            'api_metrics': performance_monitor.get_api_summary() if self._kaggle_available else None
         }
 
         # Add circuit breaker status
         if self._api_client and hasattr(self._api_client, 'circuit_breaker'):
-            status[
-                'circuit_breaker'] = self._api_client.circuit_breaker.get_state(
-                )
+            status['circuit_breaker'] = self._api_client.circuit_breaker.get_state()
 
         return status
 
-    def process_natural_language_query(
-            self,
-            query: str,
-            context: Optional[Dict] = None) -> Dict[str, Any]:
+    def process_natural_language_query(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """Process natural language queries about financial data"""
         if self._kaggle_available:
             try:
                 response = self._api_client.make_request(
-                    'POST', '/process_query', {
-                        'query': query,
-                        'context': context
-                    })
+                    'POST', '/process_query',
+                    {'query': query, 'context': context}
+                )
 
                 if response:
                     return response
@@ -3773,9 +3384,7 @@ class AIMapper(Component):
         # Fallback to simple keyword matching
         return self._process_query_local(query, context)
 
-    def _process_query_local(self,
-                             query: str,
-                             context: Optional[Dict] = None) -> Dict[str, Any]:
+    def _process_query_local(self, query: str, context: Optional[Dict] = None) -> Dict[str, Any]:
         """Local processing of natural language queries"""
         query_lower = query.lower()
 
@@ -3799,7 +3408,6 @@ class AIMapper(Component):
             'method': 'local'
         }
 
-
 # --- 19. Fuzzy Mapping Fallback ---
 class FuzzyMapper(Component):
     """Fuzzy string matching for metric mapping"""
@@ -3808,10 +3416,8 @@ class FuzzyMapper(Component):
         """Initialize fuzzy mapper"""
         pass
 
-    def map_metrics(
-            self,
-            source_metrics: List[str],
-            target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+    def map_metrics(self, source_metrics: List[str],
+                   target_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
         """Map metrics using fuzzy string matching"""
 
         if target_metrics is None:
@@ -3827,22 +3433,21 @@ class FuzzyMapper(Component):
 
             scores = []
             for target in target_metrics:
-                score = fuzz.token_sort_ratio(source_lower,
-                                              target.lower()) / 100.0
+                score = fuzz.token_sort_ratio(source_lower, target.lower()) / 100.0
                 scores.append((target, score))
 
-            scores.sort(key=lambda x: x[1], reverse=True)
+            scores.sort(key=lambda x: x, reverse=True)
 
-            if scores and scores[0][1] > 0.7:
-                mappings[source] = scores[0][0]
-                confidence_scores[source] = scores[0][1]
+            if scores and scores > 0.7:
+                mappings[source] = scores
+                confidence_scores[source] = scores
             else:
                 unmapped.append(source)
 
-            suggestions[source] = [{
-                'target': target,
-                'confidence': score
-            } for target, score in scores[:3]]
+            suggestions[source] = [
+                {'target': target, 'confidence': score}
+                for target, score in scores[:3]
+            ]
 
         return {
             'mappings': mappings,
@@ -3858,15 +3463,14 @@ class FuzzyMapper(Component):
             'Total Assets', 'Current Assets', 'Non-current Assets',
             'Cash and Cash Equivalents', 'Inventory', 'Trade Receivables',
             'Property Plant and Equipment', 'Total Liabilities',
-            'Current Liabilities', 'Non-current Liabilities', 'Total Equity',
-            'Share Capital', 'Retained Earnings', 'Revenue',
-            'Cost of Goods Sold', 'Gross Profit', 'Operating Expenses',
-            'Operating Income', 'Net Income', 'Earnings Per Share',
-            'Operating Cash Flow', 'Investing Cash Flow',
-            'Financing Cash Flow', 'EBIT', 'EBITDA', 'Interest Expense',
-            'Tax Expense'
+            'Current Liabilities', 'Non-current Liabilities',
+            'Total Equity', 'Share Capital', 'Retained Earnings',
+            'Revenue', 'Cost of Goods Sold', 'Gross Profit',
+            'Operating Expenses', 'Operating Income', 'Net Income',
+            'Earnings Per Share', 'Operating Cash Flow',
+            'Investing Cash Flow', 'Financing Cash Flow',
+            'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
-
 
 # --- 20. Penman-Nissim Analyzer ---
 class EnhancedPenmanNissimAnalyzer:
@@ -3887,30 +3491,25 @@ class EnhancedPenmanNissimAnalyzer:
                 params = list(sig.parameters.keys())[1:]
 
                 if len(params) >= 2:
-                    self.core_analyzer = CorePenmanNissim(
-                        self.df, self.mappings)
-                    self.logger.info(
-                        "Initialized CorePenmanNissim with df and mappings")
+                    self.core_analyzer = CorePenmanNissim(self.df, self.mappings)
+                    self.logger.info("Initialized CorePenmanNissim with df and mappings")
                 elif len(params) == 1:
                     self.core_analyzer = CorePenmanNissim(self.df)
                     if hasattr(self.core_analyzer, 'set_mappings'):
                         self.core_analyzer.set_mappings(self.mappings)
                     elif hasattr(self.core_analyzer, 'mappings'):
                         self.core_analyzer.mappings = self.mappings
-                    self.logger.info(
-                        "Initialized CorePenmanNissim with df only")
+                    self.logger.info("Initialized CorePenmanNissim with df only")
                 else:
                     self.core_analyzer = CorePenmanNissim()
                     if hasattr(self.core_analyzer, 'df'):
                         self.core_analyzer.df = self.df
                     if hasattr(self.core_analyzer, 'mappings'):
                         self.core_analyzer.mappings = self.mappings
-                    self.logger.info(
-                        "Initialized CorePenmanNissim with no parameters")
+                    self.logger.info("Initialized CorePenmanNissim with no parameters")
 
             except Exception as e:
-                self.logger.warning(
-                    f"Could not initialize CorePenmanNissim: {e}")
+                self.logger.warning(f"Could not initialize CorePenmanNissim: {e}")
                 self.core_analyzer = None
         else:
             self.core_analyzer = None
@@ -3932,16 +3531,11 @@ class EnhancedPenmanNissimAnalyzer:
             mapped_df = self.df.rename(index=self.mappings)
 
             results = {
-                'reformulated_balance_sheet':
-                self._reformulate_balance_sheet(mapped_df),
-                'reformulated_income_statement':
-                self._reformulate_income_statement(mapped_df),
-                'ratios':
-                self._calculate_ratios(mapped_df),
-                'free_cash_flow':
-                self._calculate_free_cash_flow(mapped_df),
-                'value_drivers':
-                self._calculate_value_drivers(mapped_df)
+                'reformulated_balance_sheet': self._reformulate_balance_sheet(mapped_df),
+                'reformulated_income_statement': self._reformulate_income_statement(mapped_df),
+                'ratios': self._calculate_ratios(mapped_df),
+                'free_cash_flow': self._calculate_free_cash_flow(mapped_df),
+                'value_drivers': self._calculate_value_drivers(mapped_df)
             }
 
             return results
@@ -3954,44 +3548,33 @@ class EnhancedPenmanNissimAnalyzer:
         """Reformulate balance sheet for Penman-Nissim analysis"""
         reformulated = pd.DataFrame(index=df.columns)
 
-        operating_assets = [
-            'Current Assets', 'Property Plant Equipment', 'Intangible Assets'
-        ]
+        operating_assets = ['Current Assets', 'Property Plant Equipment', 'Intangible Assets']
         operating_assets_sum = pd.Series(0, index=df.columns)
         for asset in operating_assets:
             if asset in df.index:
                 operating_assets_sum += df.loc[asset].fillna(0)
 
-        financial_assets = [
-            'Cash', 'Short-term Investments', 'Long-term Investments'
-        ]
+        financial_assets = ['Cash', 'Short-term Investments', 'Long-term Investments']
         financial_assets_sum = pd.Series(0, index=df.columns)
         for asset in financial_assets:
             if asset in df.index:
                 financial_assets_sum += df.loc[asset].fillna(0)
 
-        operating_liabilities = [
-            'Accounts Payable', 'Accrued Expenses', 'Deferred Revenue'
-        ]
+        operating_liabilities = ['Accounts Payable', 'Accrued Expenses', 'Deferred Revenue']
         operating_liabilities_sum = pd.Series(0, index=df.columns)
         for liab in operating_liabilities:
             if liab in df.index:
                 operating_liabilities_sum += df.loc[liab].fillna(0)
 
-        financial_liabilities = [
-            'Short-term Debt', 'Long-term Debt', 'Bonds Payable'
-        ]
+        financial_liabilities = ['Short-term Debt', 'Long-term Debt', 'Bonds Payable']
         financial_liabilities_sum = pd.Series(0, index=df.columns)
         for liab in financial_liabilities:
             if liab in df.index:
                 financial_liabilities_sum += df.loc[liab].fillna(0)
 
-        reformulated[
-            'Net Operating Assets'] = operating_assets_sum - operating_liabilities_sum
-        reformulated[
-            'Net Financial Assets'] = financial_assets_sum - financial_liabilities_sum
-        reformulated['Common Equity'] = reformulated[
-            'Net Operating Assets'] + reformulated['Net Financial Assets']
+        reformulated['Net Operating Assets'] = operating_assets_sum - operating_liabilities_sum
+        reformulated['Net Financial Assets'] = financial_assets_sum - financial_liabilities_sum
+        reformulated['Common Equity'] = reformulated['Net Operating Assets'] + reformulated['Net Financial Assets']
 
         return reformulated
 
@@ -4003,26 +3586,23 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Operating Income'] = df.loc['Operating Income']
 
             if 'Tax Expense' in df.index and 'Income Before Tax' in df.index:
-                income_before_tax = df.loc['Income Before Tax'].replace(
-                    0, np.nan)
+                income_before_tax = df.loc['Income Before Tax'].replace(0, np.nan)
                 tax_rate = df.loc['Tax Expense'] / income_before_tax
-                reformulated['Tax on Operating Income'] = reformulated[
-                    'Operating Income'] * tax_rate
+                reformulated['Tax on Operating Income'] = reformulated['Operating Income'] * tax_rate
                 reformulated['Operating Income After Tax'] = (
-                    reformulated['Operating Income'] -
-                    reformulated['Tax on Operating Income'])
+                    reformulated['Operating Income'] - reformulated['Tax on Operating Income']
+                )
 
         if 'Interest Expense' in df.index:
             reformulated['Net Financial Expense'] = df.loc['Interest Expense']
             if 'Interest Income' in df.index:
-                reformulated['Net Financial Expense'] -= df.loc[
-                    'Interest Income']
+                reformulated['Net Financial Expense'] -= df.loc['Interest Income']
 
         return reformulated
 
     def _calculate_ratios(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Penman-Nissim ratios - FIXED"""
-        ratios = pd.DataFrame(index=df.columns)
+        ratios_data = {}
 
         ref_bs = self._reformulate_balance_sheet(df)
         ref_is = self._reformulate_income_statement(df)
@@ -4030,40 +3610,41 @@ class EnhancedPenmanNissimAnalyzer:
         # RNOA (Return on Net Operating Assets)
         if 'Operating Income After Tax' in ref_is.index and 'Net Operating Assets' in ref_bs.index:
             noa = ref_bs.loc['Net Operating Assets'].replace(0, np.nan)
-            ratios['Return on Net Operating Assets (RNOA) %'] = (
-                ref_is.loc['Operating Income After Tax'] / noa) * 100
+            ratios_data['Return on Net Operating Assets (RNOA) %'] = (
+                ref_is.loc['Operating Income After Tax'] / noa
+            ) * 100
 
         # FLEV (Financial Leverage)
         if 'Net Financial Assets' in ref_bs.index and 'Common Equity' in ref_bs.index:
             ce = ref_bs.loc['Common Equity'].replace(0, np.nan)
-            ratios['Financial Leverage (FLEV)'] = -ref_bs.loc[
-                'Net Financial Assets'] / ce
+            ratios_data['Financial Leverage (FLEV)'] = -ref_bs.loc['Net Financial Assets'] / ce
 
         # NBC (Net Borrowing Cost)
         if 'Net Financial Expense' in ref_is.index and 'Net Financial Assets' in ref_bs.index:
             nfa = ref_bs.loc['Net Financial Assets'].replace(0, np.nan)
-            ratios['Net Borrowing Cost (NBC) %'] = (
-                -ref_is.loc['Net Financial Expense'] / nfa) * 100
+            ratios_data['Net Borrowing Cost (NBC) %'] = (
+                -ref_is.loc['Net Financial Expense'] / nfa
+            ) * 100
 
         # OPM (Operating Profit Margin)
         if 'Operating Income After Tax' in ref_is.index and 'Revenue' in df.index:
             revenue = df.loc['Revenue'].replace(0, np.nan)
-            ratios['Operating Profit Margin (OPM) %'] = (
-                ref_is.loc['Operating Income After Tax'] / revenue) * 100
+            ratios_data['Operating Profit Margin (OPM) %'] = (
+                ref_is.loc['Operating Income After Tax'] / revenue
+            ) * 100
 
         # NOAT (Net Operating Asset Turnover)
         if 'Revenue' in df.index and 'Net Operating Assets' in ref_bs.index:
             noa = ref_bs.loc['Net Operating Assets'].replace(0, np.nan)
-            ratios['Net Operating Asset Turnover (NOAT)'] = df.loc[
-                'Revenue'] / noa
+            ratios_data['Net Operating Asset Turnover (NOAT)'] = df.loc['Revenue'] / noa
 
         # Spread (RNOA - NBC)
-        if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
-            ratios['Spread %'] = ratios.loc[
-                'Return on Net Operating Assets (RNOA) %'] - ratios.loc[
-                    'Net Borrowing Cost (NBC) %']
+        if 'Return on Net Operating Assets (RNOA) %' in ratios_data and 'Net Borrowing Cost (NBC) %' in ratios_data:
+            ratios_data['Spread %'] = ratios_data['Return on Net Operating Assets (RNOA) %'] - ratios_data['Net Borrowing Cost (NBC) %']
 
-        return ratios.T
+        # Convert dictionary to DataFrame
+        ratios_df = pd.DataFrame(ratios_data)
+        return ratios_df.T # Transpose to have ratios as index
 
     def _calculate_free_cash_flow(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate free cash flow"""
@@ -4073,17 +3654,17 @@ class EnhancedPenmanNissimAnalyzer:
             fcf['Operating Cash Flow'] = df.loc['Operating Cash Flow']
 
             if 'Capital Expenditure' in df.index:
-                fcf['Free Cash Flow'] = fcf['Operating Cash Flow'] - df.loc[
-                    'Capital Expenditure']
+                fcf['Free Cash Flow'] = fcf['Operating Cash Flow'] - df.loc['Capital Expenditure']
             else:
                 fcf['Free Cash Flow'] = fcf['Operating Cash Flow']
 
             # Free Cash Flow to Equity
             if 'Net Income' in df.index and 'Depreciation' in df.index:
                 fcf['Free Cash Flow to Equity'] = (
-                    df.loc['Net Income'] + df.loc['Depreciation'] -
-                    (df.loc['Capital Expenditure']
-                     if 'Capital Expenditure' in df.index else 0))
+                    df.loc['Net Income'] +
+                    df.loc['Depreciation'] -
+                    (df.loc['Capital Expenditure'] if 'Capital Expenditure' in df.index else 0)
+                )
 
         return fcf
 
@@ -4098,18 +3679,14 @@ class EnhancedPenmanNissimAnalyzer:
 
         # NOPAT margin
         if 'Operating Income' in df.index and 'Revenue' in df.index:
-            drivers['NOPAT Margin %'] = (df.loc['Operating Income'] /
-                                         df.loc['Revenue']) * 100
+            drivers['NOPAT Margin %'] = (df.loc['Operating Income'] / df.loc['Revenue']) * 100
 
         # Working capital as % of revenue
         if 'Current Assets' in df.index and 'Current Liabilities' in df.index and 'Revenue' in df.index:
-            working_capital = df.loc['Current Assets'] - df.loc[
-                'Current Liabilities']
-            drivers['Working Capital % of Revenue'] = (working_capital /
-                                                       df.loc['Revenue']) * 100
+            working_capital = df.loc['Current Assets'] - df.loc['Current Liabilities']
+            drivers['Working Capital % of Revenue'] = (working_capital / df.loc['Revenue']) * 100
 
         return drivers
-
 
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
@@ -4126,75 +3703,46 @@ class ManualMappingInterface:
             'Total Assets', 'Current Assets', 'Non-current Assets',
             'Cash and Cash Equivalents', 'Inventory', 'Trade Receivables',
             'Property Plant and Equipment', 'Total Liabilities',
-            'Current Liabilities', 'Non-current Liabilities', 'Total Equity',
-            'Share Capital', 'Retained Earnings', 'Revenue',
-            'Cost of Goods Sold', 'Gross Profit', 'Operating Expenses',
-            'Operating Income', 'Net Income', 'Earnings Per Share',
-            'Operating Cash Flow', 'Investing Cash Flow',
-            'Financing Cash Flow', 'Interest Expense', 'Tax Expense', 'EBIT',
-            'EBITDA', 'Capital Expenditure', 'Depreciation',
-            'Income Before Tax'
+            'Current Liabilities', 'Non-current Liabilities',
+            'Total Equity', 'Share Capital', 'Retained Earnings',
+            'Revenue', 'Cost of Goods Sold', 'Gross Profit',
+            'Operating Expenses', 'Operating Income', 'Net Income',
+            'Earnings Per Share', 'Operating Cash Flow',
+            'Investing Cash Flow', 'Financing Cash Flow',
+            'Interest Expense', 'Tax Expense', 'EBIT', 'EBITDA',
+            'Capital Expenditure', 'Depreciation', 'Income Before Tax'
         ]
 
     def render(self) -> Dict[str, str]:
         """Render the manual mapping interface and return mappings"""
         st.subheader("📋 Manual Metric Mapping")
-        st.info(
-            "Map your financial statement items to standard metrics for analysis"
-        )
+        st.info("Map your financial statement items to standard metrics for analysis")
 
         essential_mappings = {
             'Balance Sheet': {
-                'Total Assets':
-                ['Total Assets', 'TOTAL ASSETS', 'Assets Total'],
-                'Current Assets':
-                ['Current Assets', 'CURRENT ASSETS', 'Short-term Assets'],
-                'Current Liabilities': [
-                    'Current Liabilities', 'CURRENT LIABILITIES',
-                    'Short-term Liabilities'
-                ],
-                'Total Liabilities': [
-                    'Total Liabilities', 'TOTAL LIABILITIES',
-                    'Liabilities Total'
-                ],
-                'Total Equity': [
-                    'Total Equity', 'TOTAL EQUITY', 'Shareholders Equity',
-                    'Net Worth'
-                ],
-                'Cash and Cash Equivalents':
-                ['Cash', 'Cash and Cash Equivalents', 'Cash & Bank'],
+                'Total Assets': ['Total Assets', 'TOTAL ASSETS', 'Assets Total'],
+                'Current Assets': ['Current Assets', 'CURRENT ASSETS', 'Short-term Assets'],
+                'Current Liabilities': ['Current Liabilities', 'CURRENT LIABILITIES', 'Short-term Liabilities'],
+                'Total Liabilities': ['Total Liabilities', 'TOTAL LIABILITIES', 'Liabilities Total'],
+                'Total Equity': ['Total Equity', 'TOTAL EQUITY', 'Shareholders Equity', 'Net Worth'],
+                'Cash and Cash Equivalents': ['Cash', 'Cash and Cash Equivalents', 'Cash & Bank'],
                 'Inventory': ['Inventory', 'Inventories', 'Stock'],
-                'Trade Receivables':
-                ['Trade Receivables', 'Accounts Receivable', 'Debtors'],
+                'Trade Receivables': ['Trade Receivables', 'Accounts Receivable', 'Debtors'],
             },
             'Income Statement': {
-                'Revenue': [
-                    'Revenue', 'Total Income', 'Net Sales',
-                    'Revenue from Operations', 'Sales'
-                ],
-                'Cost of Goods Sold': [
-                    'Cost of Goods Sold', 'COGS', 'Cost of Sales',
-                    'Cost of Materials'
-                ],
-                'Operating Expenses':
-                ['Operating Expenses', 'OPEX', 'Other Expenses'],
-                'Net Income':
-                ['Net Income', 'Net Profit', 'Profit for the Period', 'PAT'],
-                'Interest Expense':
-                ['Interest Expense', 'Finance Costs', 'Interest Costs'],
+                'Revenue': ['Revenue', 'Total Income', 'Net Sales', 'Revenue from Operations', 'Sales'],
+                'Cost of Goods Sold': ['Cost of Goods Sold', 'COGS', 'Cost of Sales', 'Cost of Materials'],
+                'Operating Expenses': ['Operating Expenses', 'OPEX', 'Other Expenses'],
+                'Net Income': ['Net Income', 'Net Profit', 'Profit for the Period', 'PAT'],
+                'Interest Expense': ['Interest Expense', 'Finance Costs', 'Interest Costs'],
                 'Tax Expense': ['Tax Expense', 'Income Tax', 'Tax'],
-                'Operating Income':
-                ['Operating Income', 'EBIT', 'Operating Profit'],
+                'Operating Income': ['Operating Income', 'EBIT', 'Operating Profit'],
             },
             'Cash Flow': {
-                'Operating Cash Flow':
-                ['Operating Cash Flow', 'Cash from Operations', 'CFO'],
-                'Investing Cash Flow':
-                ['Investing Cash Flow', 'Cash from Investing', 'CFI'],
-                'Financing Cash Flow':
-                ['Financing Cash Flow', 'Cash from Financing', 'CFF'],
-                'Capital Expenditure':
-                ['Capital Expenditure', 'CAPEX', 'Fixed Asset Purchases'],
+                'Operating Cash Flow': ['Operating Cash Flow', 'Cash from Operations', 'CFO'],
+                'Investing Cash Flow': ['Investing Cash Flow', 'Cash from Investing', 'CFI'],
+                'Financing Cash Flow': ['Financing Cash Flow', 'Cash from Financing', 'CFF'],
+                'Capital Expenditure': ['Capital Expenditure', 'CAPEX', 'Fixed Asset Purchases'],
             }
         }
 
@@ -4203,8 +3751,7 @@ class ManualMappingInterface:
         # Create tabs for different statement types
         tabs = st.tabs(list(essential_mappings.keys()))
 
-        for i, (statement_type,
-                metrics) in enumerate(essential_mappings.items()):
+        for i, (statement_type, metrics) in enumerate(essential_mappings.items()):
             with tabs[i]:
                 cols = st.columns(2)
 
@@ -4215,8 +3762,7 @@ class ManualMappingInterface:
                         # Find best match from source metrics
                         default_idx = 0
                         for k, source in enumerate(self.source_metrics):
-                            if any(sug.lower() in source.lower()
-                                   for sug in suggestions):
+                            if any(sug.lower() in source.lower() for sug in suggestions):
                                 default_idx = k + 1
                                 break
 
@@ -4225,9 +3771,9 @@ class ManualMappingInterface:
                             f"{target}:",
                             ['(Not mapped)'] + self.source_metrics,
                             index=default_idx,
-                            key=
-                            f"map_{statement_type}_{target}_{i}_{j}_{id(self)}",
-                            help=f"Common names: {', '.join(suggestions[:3])}")
+                            key=f"map_{statement_type}_{target}_{i}_{j}_{id(self)}",
+                            help=f"Common names: {', '.join(suggestions[:3])}"
+                        )
 
                         if selected != '(Not mapped)':
                             mappings[selected] = target
@@ -4240,16 +3786,17 @@ class ManualMappingInterface:
                 custom_source = st.selectbox(
                     "Source Metric:",
                     [m for m in self.source_metrics if m not in mappings],
-                    key=f"custom_source_mapping_{id(self)}")
+                    key=f"custom_source_mapping_{id(self)}"
+                )
 
             with col2:
                 custom_target = st.selectbox(
                     "Target Metric:",
                     self.target_metrics,
-                    key=f"custom_target_mapping_{id(self)}")
+                    key=f"custom_target_mapping_{id(self)}"
+                )
 
-            if st.button("Add Mapping",
-                         key=f"add_custom_mapping_btn_{id(self)}"):
+            if st.button("Add Mapping", key=f"add_custom_mapping_btn_{id(self)}"):
                 if custom_source and custom_target:
                     mappings[custom_source] = custom_target
                     st.success(f"Added: {custom_source} → {custom_target}")
@@ -4258,13 +3805,12 @@ class ManualMappingInterface:
         if mappings:
             with st.expander("📊 Current Mappings", expanded=True):
                 mapping_df = pd.DataFrame(
-                    [(k, v)
-                     for k, v in sorted(mappings.items(), key=lambda x: x[1])],
-                    columns=['Source Metric', 'Target Metric'])
+                    [(k, v) for k, v in sorted(mappings.items(), key=lambda x: x)],
+                    columns=['Source Metric', 'Target Metric']
+                )
                 st.dataframe(mapping_df, use_container_width=True)
 
         return mappings
-
 
 # --- 22. Machine Learning Forecasting Module ---
 class MLForecaster:
@@ -4281,12 +3827,8 @@ class MLForecaster:
         }
 
     @error_boundary({'error': 'Forecasting failed'})
-    def forecast_metrics(
-            self,
-            df: pd.DataFrame,
-            periods: int = 3,
-            model_type: str = 'auto',
-            metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+    def forecast_metrics(self, df: pd.DataFrame, periods: int = 3,
+                        model_type: str = 'auto', metrics: Optional[List[str]] = None) -> Dict[str, Any]:
         """Forecast financial metrics using ML"""
         if not self.config.get('app.enable_ml_features', True):
             return {'error': 'ML features disabled'}
@@ -4307,27 +3849,20 @@ class MLForecaster:
                     if len(series) >= 3:
                         try:
                             model = self.models[model_type](series)
-                            forecast = self._generate_forecast(
-                                model, series, periods)
+                            forecast = self._generate_forecast(model, series, periods)
                             accuracy = self._calculate_accuracy(model, series)
 
                             forecasts[metric] = forecast
                             accuracy_metrics[metric] = accuracy
                         except Exception as e:
-                            self.logger.error(
-                                f"Error forecasting {metric}: {e}")
+                            self.logger.error(f"Error forecasting {metric}: {e}")
 
             return {
-                'forecasts':
-                forecasts,
-                'accuracy_metrics':
-                accuracy_metrics,
-                'model_type':
-                model_type,
-                'periods':
-                periods,
-                'confidence_intervals':
-                self._calculate_confidence_intervals(forecasts)
+                'forecasts': forecasts,
+                'accuracy_metrics': accuracy_metrics,
+                'model_type': model_type,
+                'periods': periods,
+                'confidence_intervals': self._calculate_confidence_intervals(forecasts)
             }
 
     def _select_best_model(self, df: pd.DataFrame) -> str:
@@ -4336,17 +3871,13 @@ class MLForecaster:
 
     def _select_key_metrics(self, df: pd.DataFrame) -> List[str]:
         """Select key metrics to forecast"""
-        priority_metrics = [
-            'Revenue', 'Net Income', 'Total Assets', 'Operating Cash Flow'
-        ]
+        priority_metrics = ['Revenue', 'Net Income', 'Total Assets', 'Operating Cash Flow']
         available_metrics = []
 
         for metric in priority_metrics:
-            matching = [
-                idx for idx in df.index if metric.lower() in str(idx).lower()
-            ]
+            matching = [idx for idx in df.index if metric.lower() in str(idx).lower()]
             if matching:
-                available_metrics.append(matching[0])
+                available_metrics.append(matching)
 
         return available_metrics[:4]
 
@@ -4380,7 +3911,6 @@ class MLForecaster:
 
         # Return wrapper that exponentiates predictions
         class ExpModel:
-
             def __init__(self, base_model):
                 self.base_model = base_model
 
@@ -4408,19 +3938,17 @@ class MLForecaster:
             y_test = series.values[train_size:]
             y_pred = model.predict(X_test)
 
-            mse = np.mean((y_test - y_pred)**2)
+            mse = np.mean((y_test - y_pred) ** 2)
             if mse < best_score:
                 best_score = mse
                 best_model = model
 
         return best_model
 
-    def _generate_forecast(self, model: Any, series: pd.Series,
-                           periods: int) -> Dict[str, Any]:
+    def _generate_forecast(self, model: Any, series: pd.Series, periods: int) -> Dict[str, Any]:
         """Generate forecast for future periods"""
         last_index = len(series)
-        future_indices = np.arange(last_index,
-                                   last_index + periods).reshape(-1, 1)
+        future_indices = np.arange(last_index, last_index + periods).reshape(-1, 1)
 
         predictions = model.predict(future_indices)
 
@@ -4438,30 +3966,31 @@ class MLForecaster:
             'last_actual': series.iloc[-1]
         }
 
-    def _calculate_accuracy(self, model: Any,
-                            series: pd.Series) -> Dict[str, float]:
+    def _calculate_accuracy(self, model: Any, series: pd.Series) -> Dict[str, float]:
         """Calculate model accuracy metrics"""
         X = np.arange(len(series)).reshape(-1, 1)
         y = series.values
         y_pred = model.predict(X)
 
-        mse = np.mean((y - y_pred)**2)
+        mse = np.mean((y - y_pred) ** 2)
         mae = np.mean(np.abs(y - y_pred))
-        mape = np.mean(np.abs(
-            (y - y_pred) / y)) * 100 if not (y == 0).any() else None
+        mape = np.mean(np.abs((y - y_pred) / y)) * 100 if not (y == 0).any() else None
 
-        return {'mse': mse, 'mae': mae, 'mape': mape, 'rmse': np.sqrt(mse)}
+        return {
+            'mse': mse,
+            'mae': mae,
+            'mape': mape,
+            'rmse': np.sqrt(mse)
+        }
 
-    def _calculate_confidence_intervals(
-            self,
-            forecasts: Dict[str, Any],
-            confidence: float = 0.95) -> Dict[str, Any]:
+    def _calculate_confidence_intervals(self, forecasts: Dict[str, Any],
+                                      confidence: float = 0.95) -> Dict[str, Any]:
         """Calculate confidence intervals for forecasts"""
         intervals = {}
 
         for metric, forecast in forecasts.items():
             values = np.array(forecast['values'])
-            std = values.std() if len(values) > 1 else values[0] * 0.1
+            std = values.std() if len(values) > 1 else values * 0.1
 
             z_score = stats.norm.ppf((1 + confidence) / 2)
             margin = z_score * std
@@ -4473,7 +4002,6 @@ class MLForecaster:
 
         return intervals
 
-
 # --- 23. Natural Language Query Processor ---
 class NLQueryProcessor:
     """Process natural language queries about financial data"""
@@ -4482,10 +4010,8 @@ class NLQueryProcessor:
         self.config = config
         self.logger = LoggerFactory.get_logger('NLQueryProcessor')
         self.intents = {
-            'growth_rate':
-            ['growth', 'increase', 'decrease', 'change', 'trend'],
-            'comparison':
-            ['compare', 'versus', 'vs', 'difference', 'better', 'worse'],
+            'growth_rate': ['growth', 'increase', 'decrease', 'change', 'trend'],
+            'comparison': ['compare', 'versus', 'vs', 'difference', 'better', 'worse'],
             'ratio': ['ratio', 'margin', 'return', 'turnover'],
             'forecast': ['forecast', 'predict', 'future', 'will', 'expect'],
             'summary': ['summary', 'overview', 'key', 'main', 'important']
@@ -4493,7 +4019,7 @@ class NLQueryProcessor:
 
     @error_boundary({'type': 'error', 'message': 'Query processing failed'})
     def process_query(self, query: str, data: pd.DataFrame,
-                      analysis: Dict[str, Any]) -> Dict[str, Any]:
+                     analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Process natural language query and return results"""
         query_lower = query.lower()
 
@@ -4501,8 +4027,7 @@ class NLQueryProcessor:
         intent = self._classify_intent(query_lower)
         entities = self._extract_entities(query_lower, data)
 
-        self.logger.info(
-            f"Query: {query}, Intent: {intent}, Entities: {entities}")
+        self.logger.info(f"Query: {query}, Intent: {intent}, Entities: {entities}")
 
         # Process based on intent
         if intent == 'growth_rate':
@@ -4525,10 +4050,13 @@ class NLQueryProcessor:
                 return intent
         return 'general'
 
-    def _extract_entities(self, query: str,
-                          data: pd.DataFrame) -> Dict[str, Any]:
+    def _extract_entities(self, query: str, data: pd.DataFrame) -> Dict[str, Any]:
         """Extract entities from query"""
-        entities = {'metrics': [], 'years': [], 'periods': []}
+        entities = {
+            'metrics': [],
+            'years': [],
+            'periods': []
+        }
 
         # Extract metrics
         for metric in data.index:
@@ -4549,16 +4077,17 @@ class NLQueryProcessor:
         return entities
 
     def _handle_growth_query(self, entities: Dict, data: pd.DataFrame,
-                             analysis: Dict) -> Dict[str, Any]:
+                           analysis: Dict) -> Dict[str, Any]:
         """Handle growth rate queries"""
-        results = {'type': 'growth_analysis', 'data': []}
+        results = {
+            'type': 'growth_analysis',
+            'data': []
+        }
 
         metrics = entities.get('metrics', [])
         if not metrics:
             # Default to revenue if no metric specified
-            revenue_metrics = [
-                idx for idx in data.index if 'revenue' in str(idx).lower()
-            ]
+            revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
             metrics = revenue_metrics[:1] if revenue_metrics else []
 
         for metric in metrics:
@@ -4566,30 +4095,22 @@ class NLQueryProcessor:
                 series = data.loc[metric].dropna()
                 if len(series) > 1:
                     # Calculate growth
-                    growth_rate = ((series.iloc[-1] / series.iloc[0])**
-                                   (1 / (len(series) - 1)) - 1) * 100
-                    yoy_change = ((series.iloc[-1] / series.iloc[-2]) -
-                                  1) * 100 if len(series) > 1 else 0
+                    growth_rate = ((series.iloc[-1] / series.iloc) ** (1/(len(series)-1)) - 1) * 100
+                    yoy_change = ((series.iloc[-1] / series.iloc[-2]) - 1) * 100 if len(series) > 1 else 0
 
                     results['data'].append({
-                        'metric':
-                        str(metric),
-                        'cagr':
-                        growth_rate,
-                        'yoy_change':
-                        yoy_change,
-                        'first_value':
-                        series.iloc[0],
-                        'last_value':
-                        series.iloc[-1],
-                        'period':
-                        f"{series.index[0]} to {series.index[-1]}"
+                        'metric': str(metric),
+                        'cagr': growth_rate,
+                        'yoy_change': yoy_change,
+                        'first_value': series.iloc,
+                        'last_value': series.iloc[-1],
+                        'period': f"{series.index} to {series.index[-1]}"
                     })
 
         return results
 
     def _handle_comparison_query(self, entities: Dict, data: pd.DataFrame,
-                                 analysis: Dict) -> Dict[str, Any]:
+                               analysis: Dict) -> Dict[str, Any]:
         """Handle comparison queries"""
         return {
             'type': 'comparison',
@@ -4597,10 +4118,13 @@ class NLQueryProcessor:
         }
 
     def _handle_ratio_query(self, entities: Dict, data: pd.DataFrame,
-                            analysis: Dict) -> Dict[str, Any]:
+                          analysis: Dict) -> Dict[str, Any]:
         """Handle ratio queries"""
         ratios = analysis.get('ratios', {})
-        results = {'type': 'ratio_analysis', 'data': {}}
+        results = {
+            'type': 'ratio_analysis',
+            'data': {}
+        }
 
         # Return all ratios or filtered based on query
         for category, ratio_df in ratios.items():
@@ -4609,21 +4133,20 @@ class NLQueryProcessor:
 
         return results
 
-    def _handle_forecast_query(self, entities: Dict,
-                               data: pd.DataFrame) -> Dict[str, Any]:
+    def _handle_forecast_query(self, entities: Dict, data: pd.DataFrame) -> Dict[str, Any]:
         """Handle forecast queries"""
         # Use ML forecaster
         forecaster = MLForecaster(self.config)
         metrics = entities.get('metrics', None)
 
-        forecast_results = forecaster.forecast_metrics(data,
-                                                       periods=3,
-                                                       metrics=metrics)
+        forecast_results = forecaster.forecast_metrics(data, periods=3, metrics=metrics)
 
-        return {'type': 'forecast', 'data': forecast_results}
+        return {
+            'type': 'forecast',
+            'data': forecast_results
+        }
 
-    def _handle_summary_query(self, entities: Dict,
-                              analysis: Dict) -> Dict[str, Any]:
+    def _handle_summary_query(self, entities: Dict, analysis: Dict) -> Dict[str, Any]:
         """Handle summary queries"""
         return {
             'type': 'summary',
@@ -4635,13 +4158,11 @@ class NLQueryProcessor:
         }
 
     def _handle_general_query(self, query: str, data: pd.DataFrame,
-                              analysis: Dict) -> Dict[str, Any]:
+                            analysis: Dict) -> Dict[str, Any]:
         """Handle general queries"""
         return {
-            'type':
-            'general',
-            'message':
-            f"I understood your query: '{query}', but I need more specific information to help you.",
+            'type': 'general',
+            'message': f"I understood your query: '{query}', but I need more specific information to help you.",
             'suggestions': [
                 "What was the revenue growth last year?",
                 "Show me the profitability ratios",
@@ -4649,7 +4170,6 @@ class NLQueryProcessor:
                 "Give me a summary of the financial performance"
             ]
         }
-
 
 # --- 24. Collaboration Manager ---
 class CollaborationManager:
@@ -4670,8 +4190,7 @@ class CollaborationManager:
 
     def _start_cleanup_thread(self):
         """Start background thread for session cleanup"""
-        self._cleanup_thread = threading.Thread(
-            target=self._cleanup_expired_sessions, daemon=True)
+        self._cleanup_thread = threading.Thread(target=self._cleanup_expired_sessions, daemon=True)
         self._cleanup_thread.start()
 
     def _stop_cleanup_thread(self):
@@ -4691,16 +4210,14 @@ class CollaborationManager:
 
                     for session_id, session in self.active_sessions.items():
                         # Remove sessions inactive for more than 1 hour
-                        if (current_time -
-                                session['last_activity']).seconds > 3600:
+                        if (current_time - session['last_activity']).seconds > 3600:
                             expired_sessions.append(session_id)
 
                     for session_id in expired_sessions:
                         del self.active_sessions[session_id]
                         if session_id in self.user_presence:
                             del self.user_presence[session_id]
-                        self.logger.info(
-                            f"Cleaned up expired session: {session_id}")
+                        self.logger.info(f"Cleaned up expired session: {session_id}")
 
             except Exception as e:
                 self.logger.error(f"Error in cleanup thread: {e}")
@@ -4708,8 +4225,7 @@ class CollaborationManager:
     def create_session(self, analysis_id: str, owner_id: str) -> str:
         """Create a new collaborative session"""
         with self._lock:
-            session_id = hashlib.md5(f"{analysis_id}_{owner_id}_{time.time()}".
-                                     encode()).hexdigest()[:8]
+            session_id = hashlib.md5(f"{analysis_id}_{owner_id}_{time.time()}".encode()).hexdigest()[:8]
 
             self.active_sessions[session_id] = {
                 'analysis_id': analysis_id,
@@ -4721,8 +4237,7 @@ class CollaborationManager:
                 'annotations': {}
             }
 
-            self.logger.info(
-                f"Created session {session_id} for analysis {analysis_id}")
+            self.logger.info(f"Created session {session_id} for analysis {analysis_id}")
             return session_id
 
     def join_session(self, session_id: str, user_id: str) -> bool:
@@ -4746,16 +4261,13 @@ class CollaborationManager:
 
             return False
 
-    def share_analysis(self,
-                       analysis_data: Dict[str, Any],
-                       owner_id: str,
-                       permissions: List[str] = None) -> str:
+    def share_analysis(self, analysis_data: Dict[str, Any], owner_id: str,
+                      permissions: List[str] = None) -> str:
         """Share analysis with other users"""
         if permissions is None:
             permissions = ['view', 'comment']
 
-        share_token = hashlib.md5(
-            f"{owner_id}_{time.time()}".encode()).hexdigest()[:12]
+        share_token = hashlib.md5(f"{owner_id}_{time.time()}".encode()).hexdigest()[:12]
 
         with self._lock:
             self.shared_analyses[share_token] = {
@@ -4768,8 +4280,7 @@ class CollaborationManager:
 
         return share_token
 
-    def get_shared_analysis(self, share_token: str,
-                            user_id: str) -> Optional[Dict[str, Any]]:
+    def get_shared_analysis(self, share_token: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Get shared analysis by token"""
         with self._lock:
             if share_token in self.shared_analyses:
@@ -4786,7 +4297,7 @@ class CollaborationManager:
             return None
 
     def add_annotation(self, session_id: str, user_id: str,
-                       annotation: Dict[str, Any]) -> bool:
+                      annotation: Dict[str, Any]) -> bool:
         """Add annotation to collaborative session"""
         with self._lock:
             if session_id in self.active_sessions:
@@ -4807,8 +4318,7 @@ class CollaborationManager:
 
             return False
 
-    def get_session_activity(self,
-                             session_id: str) -> Optional[Dict[str, Any]]:
+    def get_session_activity(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get session activity and participants"""
         with self._lock:
             if session_id in self.active_sessions:
@@ -4816,63 +4326,59 @@ class CollaborationManager:
                 presence = self.user_presence.get(session_id, {})
 
                 return {
-                    'participants':
-                    session['participants'],
+                    'participants': session['participants'],
                     'active_users': [
                         uid for uid, data in presence.items()
-                        if (datetime.now() -
-                            data['last_seen']).seconds < 300  # 5 minutes
+                        if (datetime.now() - data['last_seen']).seconds < 300  # 5 minutes
                     ],
-                    'annotations':
-                    session['annotations'],
-                    'chat_history':
-                    session['chat_history'][-50:]  # Last 50 messages
+                    'annotations': session['annotations'],
+                    'chat_history': session['chat_history'][-50:]  # Last 50 messages
                 }
 
             return None
-
 
 # --- 25. Tutorial System ---
 class TutorialSystem:
     """Interactive tutorial system for new users"""
 
     def __init__(self):
-        self.steps = [{
-            'id': 'welcome',
-            'title': 'Welcome to Elite Financial Analytics',
-            'content':
-            'This tutorial will guide you through the platform features.',
-            'location': 'main',
-            'action': None
-        }, {
-            'id': 'upload',
-            'title': 'Upload Financial Data',
-            'content':
-            'Start by uploading your financial statements using the sidebar.',
-            'location': 'sidebar',
-            'action': 'highlight_upload'
-        }, {
-            'id': 'mapping',
-            'title': 'Map Your Metrics',
-            'content':
-            'Our AI will automatically map your metrics, or you can do it manually.',
-            'location': 'main',
-            'action': 'show_mapping'
-        }, {
-            'id': 'analysis',
-            'title': 'Explore Analysis',
-            'content':
-            'Navigate through different analysis tabs to explore ratios, trends, and insights.',
-            'location': 'tabs',
-            'action': 'highlight_tabs'
-        }, {
-            'id': 'export',
-            'title': 'Export Results',
-            'content':
-            'Generate and download comprehensive reports in various formats.',
-            'location': 'reports',
-            'action': 'show_export'
-        }]
+        self.steps = [
+            {
+                'id': 'welcome',
+                'title': 'Welcome to Elite Financial Analytics',
+                'content': 'This tutorial will guide you through the platform features.',
+                'location': 'main',
+                'action': None
+            },
+            {
+                'id': 'upload',
+                'title': 'Upload Financial Data',
+                'content': 'Start by uploading your financial statements using the sidebar.',
+                'location': 'sidebar',
+                'action': 'highlight_upload'
+            },
+            {
+                'id': 'mapping',
+                'title': 'Map Your Metrics',
+                'content': 'Our AI will automatically map your metrics, or you can do it manually.',
+                'location': 'main',
+                'action': 'show_mapping'
+            },
+            {
+                'id': 'analysis',
+                'title': 'Explore Analysis',
+                'content': 'Navigate through different analysis tabs to explore ratios, trends, and insights.',
+                'location': 'tabs',
+                'action': 'highlight_tabs'
+            },
+            {
+                'id': 'export',
+                'title': 'Export Results',
+                'content': 'Generate and download comprehensive reports in various formats.',
+                'location': 'reports',
+                'action': 'show_export'
+            }
+        ]
 
         self.completed_steps = set()
 
@@ -4891,12 +4397,12 @@ class TutorialSystem:
 
         # Tutorial overlay
         with st.container():
-            col1, col2, col3 = st.columns([1, 3, 1])
+            col1, col2, col3 = st.columns()
 
             with col2:
                 st.info(f"""
                 ### Tutorial Step {current_step + 1}/{len(self.steps)}: {step['title']}
-                
+
                 {step['content']}
                 """)
 
@@ -4908,8 +4414,7 @@ class TutorialSystem:
                             SimpleState.set('tutorial_step', current_step - 1)
 
                 with col_next:
-                    if st.button("Next →", key="tutorial_next",
-                                 type="primary"):
+                    if st.button("Next →", key="tutorial_next", type="primary"):
                         self.completed_steps.add(step['id'])
                         SimpleState.set('tutorial_step', current_step + 1)
 
@@ -4935,7 +4440,6 @@ class TutorialSystem:
         SimpleState.set('tutorial_completed', True)
         st.success("Tutorial completed! You're ready to use the platform.")
 
-
 # --- 26. Export Manager ---
 class ExportManager:
     """Handle various export formats for analysis results"""
@@ -4945,9 +4449,7 @@ class ExportManager:
         self.logger = LoggerFactory.get_logger('ExportManager')
 
     @error_boundary(b"Export failed")
-    def export_to_excel(self,
-                        analysis: Dict[str, Any],
-                        filename: str = "analysis.xlsx") -> bytes:
+    def export_to_excel(self, analysis: Dict[str, Any], filename: str = "analysis.xlsx") -> bytes:
         """Export analysis to Excel format"""
         output = io.BytesIO()
 
@@ -4956,9 +4458,7 @@ class ExportManager:
                 # Summary sheet
                 if 'summary' in analysis:
                     summary_df = pd.DataFrame([analysis['summary']])
-                    summary_df.to_excel(writer,
-                                        sheet_name='Summary',
-                                        index=False)
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
 
                 # Ratios sheets
                 if 'ratios' in analysis:
@@ -4978,22 +4478,16 @@ class ExportManager:
 
                     if trends_data:
                         trends_df = pd.DataFrame(trends_data)
-                        trends_df.to_excel(writer,
-                                           sheet_name='Trends',
-                                           index=False)
+                        trends_df.to_excel(writer, sheet_name='Trends', index=False)
 
                 # Insights sheet
                 if 'insights' in analysis:
-                    insights_df = pd.DataFrame(
-                        {'Insights': analysis['insights']})
-                    insights_df.to_excel(writer,
-                                         sheet_name='Insights',
-                                         index=False)
+                    insights_df = pd.DataFrame({'Insights': analysis['insights']})
+                    insights_df.to_excel(writer, sheet_name='Insights', index=False)
 
                 # Filtered data if present
                 if 'filtered_data' in analysis:
-                    analysis['filtered_data'].to_excel(writer,
-                                                       sheet_name='Data')
+                    analysis['filtered_data'].to_excel(writer, sheet_name='Data')
 
         except Exception as e:
             self.logger.error(f"Excel export error: {e}")
@@ -5002,19 +4496,14 @@ class ExportManager:
         output.seek(0)
         return output.read()
 
-    def export_to_pdf(self,
-                      analysis: Dict[str, Any],
-                      charts: List[Any] = None) -> bytes:
+    def export_to_pdf(self, analysis: Dict[str, Any], charts: List[Any] = None) -> bytes:
         """Export analysis to PDF format (placeholder)"""
         self.logger.info("PDF export requested - placeholder implementation")
         return b"PDF export not yet implemented. Please use Excel or Markdown export."
 
-    def export_to_powerpoint(self,
-                             analysis: Dict[str, Any],
-                             template: str = 'default') -> bytes:
+    def export_to_powerpoint(self, analysis: Dict[str, Any], template: str = 'default') -> bytes:
         """Export analysis to PowerPoint format (placeholder)"""
-        self.logger.info(
-            "PowerPoint export requested - placeholder implementation")
+        self.logger.info("PowerPoint export requested - placeholder implementation")
         return b"PowerPoint export not yet implemented. Please use Excel or Markdown export."
 
     def export_to_markdown(self, analysis: Dict[str, Any]) -> str:
@@ -5036,77 +4525,68 @@ class ExportManager:
             ])
 
             if 'quality_score' in analysis:
-                lines.append(
-                    f"- **Data Quality Score:** {analysis['quality_score']:.1f}%"
-                )
+                lines.append(f"- **Data Quality Score:** {analysis['quality_score']:.1f}%")
 
             if 'completeness' in summary:
-                lines.append(
-                    f"- **Data Completeness:** {summary['completeness']:.1f}%")
+                lines.append(f"- **Data Completeness:** {summary['completeness']:.1f}%")
 
             lines.append("\n")
 
-    # Key Insights
-    if 'insights' in analysis and analysis['insights']:
-        lines.extend(["## Key Insights\n"])
-        for insight in analysis['insights']:
-            lines.append(f"- {insight}")
-        lines.append("\n")
+        # Key Insights
+        if 'insights' in analysis and analysis['insights']:
+            lines.extend([
+                "## Key Insights\n"
+            ])
+            for insight in analysis['insights']:
+                lines.append(f"- {insight}")
+            lines.append("\n")
 
-    # Financial Ratios
-    if 'ratios' in analysis:
-        lines.extend(["## Financial Ratios\n"])
+        # Financial Ratios
+        if 'ratios' in analysis:
+            lines.extend([
+                "## Financial Ratios\n"
+            ])
 
-        for category, ratio_df in analysis['ratios'].items():
-            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-                lines.append(f"\n### {category} Ratios\n")
-                lines.append(ratio_df.to_markdown())
+            for category, ratio_df in analysis['ratios'].items():
+                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                    lines.append(f"\n### {category} Ratios\n")
+                    lines.append(ratio_df.to_markdown())
+                    lines.append("\n")
+
+        # Trends
+        if 'trends' in analysis:
+            lines.extend([
+                "## Trend Analysis\n"
+            ])
+
+            significant_trends = []
+            for metric, trend in analysis['trends'].items():
+                if isinstance(trend, dict) and trend.get('cagr') is not None:
+                    significant_trends.append({
+                        'Metric': metric,
+                        'Direction': trend['direction'],
+                        'CAGR %': f"{trend['cagr']:.1f}" if trend['cagr'] is not None else 'N/A',
+                        'R-squared': f"{trend.get('r_squared', 0):.3f}"
+                    })
+
+            if significant_trends:
+                trend_df = pd.DataFrame(significant_trends)
+                lines.append(trend_df.to_markdown(index=False))
                 lines.append("\n")
 
-    # Trends
-    if 'trends' in analysis:
-        lines.extend(["## Trend Analysis\n"])
-
-        significant_trends = []
-        for metric, trend in analysis['trends'].items():
-            if isinstance(trend, dict) and trend.get('cagr') is not None:
-                significant_trends.append({
-                    'Metric':
-                    metric,
-                    'Direction':
-                    trend['direction'],
-                    'CAGR %':
-                    f"{trend['cagr']:.1f}"
-                    if trend['cagr'] is not None else 'N/A',
-                    'R-squared':
-                    f"{trend.get('r_squared', 0):.3f}"
-                })
-
-        if significant_trends:
-            trend_df = pd.DataFrame(significant_trends)
-            lines.append(trend_df.to_markdown(index=False))
-            lines.append("\n")
-
-    return "\n".join(lines)
-
+        return "\n".join(lines)
 
 #--- 27. UI Components Factory ---
-class UIComponentFactory:
-    """Factory for creating UI components with consistent styling"""
-
+class UIComponentFactory: """Factory for creating UI components with consistent styling"""
 
 @staticmethod
-def create_metric_card(title: str,
-                       value: Any,
-                       delta: Optional[float] = None,
-                       help: Optional[str] = None,
-                       delta_color: str = "normal") -> None:
+def create_metric_card(title: str, value: Any, delta: Optional[float] = None,
+                      help: Optional[str] = None, delta_color: str = "normal") -> None:
     """Create a metric card with optional delta"""
     if help:
         st.metric(title, value, delta, delta_color=delta_color, help=help)
     else:
         st.metric(title, value, delta, delta_color=delta_color)
-
 
 @staticmethod
 def create_progress_indicator(progress: float, text: str = "") -> None:
@@ -5125,7 +4605,6 @@ def create_progress_indicator(progress: float, text: str = "") -> None:
     if text:
         status_text.text(f"{text} ({int(progress * 100)}%)")
 
-
 @staticmethod
 def create_data_quality_badge(score: float) -> None:
     """Create data quality badge"""
@@ -5143,13 +4622,18 @@ def create_data_quality_badge(score: float) -> None:
         f'<span style="background-color: {color}; color: white; '
         f'padding: 5px 10px; border-radius: 5px; font-weight: bold;">'
         f'{label} ({score:.0f}%)</span>',
-        unsafe_allow_html=True)
-
+        unsafe_allow_html=True
+    )
 
 @staticmethod
 def create_insight_card(insight: str, insight_type: str = "info") -> None:
     """Create insight card with appropriate styling"""
-    icons = {'success': '✅', 'warning': '⚠️', 'error': '❌', 'info': '💡'}
+    icons = {
+        'success': '✅',
+        'warning': '⚠️',
+        'error': '❌',
+        'info': '💡'
+    }
 
     colors = {
         'success': '#d4edda',
@@ -5165,26 +4649,25 @@ def create_insight_card(insight: str, insight_type: str = "info") -> None:
         f'<div style="background-color: {color}; padding: 10px; '
         f'border-radius: 5px; margin: 5px 0; border-left: 4px solid;">'
         f'{icon} {insight}</div>',
-        unsafe_allow_html=True)
-
+        unsafe_allow_html=True
+    )
 
 @staticmethod
 def render_with_skeleton(render_func: Callable, loading_key: str):
     """Render with skeleton loading state"""
     if SimpleState.get(f'{loading_key}_loading', False):
         for _ in range(3):
-            st.container().markdown("""
+            st.container().markdown(
+                """
                 <div class="skeleton"></div>
                 """,
-                                    unsafe_allow_html=True)
+                unsafe_allow_html=True
+            )
     else:
         render_func()
 
-
 #--- 28. Sample Data Generator ---
-class SampleDataGenerator:
-    """Generate sample financial data for demonstration"""
-
+class SampleDataGenerator: """Generate sample financial data for demonstration"""
 
 @staticmethod
 def generate_indian_tech_company() -> pd.DataFrame:
@@ -5193,27 +4676,29 @@ def generate_indian_tech_company() -> pd.DataFrame:
 
     data = {
         # Balance Sheet Items (in ₹ Crores)
-        'Total Assets': [450, 520, 610, 720, 850],
-        'Current Assets': [280, 320, 380, 450, 530],
-        'Non-current Assets': [170, 200, 230, 270, 320],
-        'Cash and Cash Equivalents': [120, 140, 170, 210, 250],
-        'Inventory': [20, 23, 27, 32, 38],
-        'Trade Receivables': [80, 92, 108, 127, 150],
-        'Property Plant and Equipment': [100, 120, 140, 165, 195],
-        'Total Liabilities': [180, 200, 225, 255, 290],
-        'Current Liabilities': [100, 110, 125, 140, 160],
-        'Non-current Liabilities': [80, 90, 100, 115, 130],
-        'Short-term Borrowings': [30, 33, 37, 42, 48],
-        'Long-term Debt': [60, 66, 73, 82, 92],
-        'Trade Payables': [40, 44, 49, 55, 62],
-        'Total Equity': [270, 320, 385, 465, 560],
-        'Share Capital': [100, 100, 100, 100, 100],
-        'Reserves and Surplus': [170, 220, 285, 365, 460],
+        'Total Assets':,
+        'Current Assets':,
+        'Non-current Assets':,
+        'Cash and Cash Equivalents':,
+        'Inventory':,
+        'Trade Receivables':,
+        'Property Plant and Equipment':,
+
+        'Total Liabilities':,
+        'Current Liabilities':,
+        'Non-current Liabilities':,
+        'Short-term Borrowings':,
+        'Long-term Debt':,
+        'Trade Payables':,
+
+        'Total Equity':,
+        'Share Capital':,
+        'Reserves and Surplus':,
 
         # Income Statement Items
-        'Revenue': [350, 380, 450, 540, 650],
-        'Cost of Goods Sold': [210, 220, 252, 297, 351],
-        'Gross Profit': [140, 160, 198, 243, 299],
+        'Revenue':,
+        'Cost of Goods Sold':,
+        'Gross Profit':,
         'Operating Expenses': [80, 88, 103, 121.5, 143],
         'Operating Income': [60, 72, 95, 121.5, 156],
         'EBIT': [60, 72, 95, 121.5, 156],
@@ -5223,17 +4708,16 @@ def generate_indian_tech_company() -> pd.DataFrame:
         'Net Income': [36.4, 44.24, 59.71, 77.42, 100.66],
 
         # Cash Flow Items
-        'Operating Cash Flow': [55, 66, 88, 110, 140],
+        'Operating Cash Flow':,
         'Investing Cash Flow': [-30, -35, -42, -50, -60],
         'Financing Cash Flow': [-15, -18, -22, -27, -33],
-        'Capital Expenditure': [28, 32, 38, 45, 53],
-        'Free Cash Flow': [27, 34, 50, 65, 87],
-        'Depreciation': [15, 18, 21, 25, 30],
+        'Capital Expenditure':,
+        'Free Cash Flow':,
+        'Depreciation':,
     }
 
     df = pd.DataFrame(data, index=list(data.keys()), columns=years)
     return df
-
 
 @staticmethod
 def generate_us_manufacturing() -> pd.DataFrame:
@@ -5242,47 +4726,48 @@ def generate_us_manufacturing() -> pd.DataFrame:
 
     data = {
         # Balance Sheet Items (in millions USD)
-        'Total Assets': [1200, 1150, 1250, 1350, 1450],
-        'Current Assets': [450, 430, 480, 520, 560],
-        'Non-current Assets': [750, 720, 770, 830, 890],
-        'Cash and Cash Equivalents': [80, 75, 90, 105, 120],
-        'Inventory': [180, 170, 190, 210, 230],
-        'Trade Receivables': [150, 145, 160, 175, 190],
-        'Property Plant and Equipment': [600, 580, 620, 660, 700],
-        'Total Liabilities': [720, 690, 740, 790, 840],
-        'Current Liabilities': [300, 280, 310, 330, 350],
-        'Non-current Liabilities': [420, 410, 430, 460, 490],
-        'Short-term Borrowings': [100, 90, 105, 115, 125],
-        'Long-term Debt': [350, 340, 355, 380, 405],
-        'Trade Payables': [120, 115, 125, 135, 145],
-        'Total Equity': [480, 460, 510, 560, 610],
-        'Share Capital': [200, 200, 200, 200, 200],
-        'Retained Earnings': [280, 260, 310, 360, 410],
+        'Total Assets':,
+        'Current Assets':,
+        'Non-current Assets':,
+        'Cash and Cash Equivalents':,
+        'Inventory':,
+        'Trade Receivables':,
+        'Property Plant and Equipment':,
+
+        'Total Liabilities':,
+        'Current Liabilities':,
+        'Non-current Liabilities':,
+        'Short-term Borrowings':,
+        'Long-term Debt':,
+        'Trade Payables':,
+
+        'Total Equity':,
+        'Share Capital':,
+        'Retained Earnings':,
 
         # Income Statement Items
-        'Revenue': [950, 880, 1020, 1150, 1280],
-        'Cost of Goods Sold': [680, 640, 720, 800, 880],
-        'Gross Profit': [270, 240, 300, 350, 400],
-        'Operating Expenses': [180, 170, 190, 210, 230],
-        'Operating Income': [90, 70, 110, 140, 170],
-        'EBIT': [90, 70, 110, 140, 170],
+        'Revenue':,
+        'Cost of Goods Sold':,
+        'Gross Profit':,
+        'Operating Expenses':,
+        'Operating Income':,
+        'EBIT':,
         'Interest Expense': [28, 27, 28.5, 30.5, 32.5],
         'Income Before Tax': [62, 43, 81.5, 109.5, 137.5],
         'Tax Expense': [15.5, 10.75, 20.38, 27.38, 34.38],
         'Net Income': [46.5, 32.25, 61.12, 82.12, 103.12],
 
         # Cash Flow Items
-        'Operating Cash Flow': [110, 90, 130, 160, 195],
+        'Operating Cash Flow':,
         'Investing Cash Flow': [-80, -60, -90, -110, -130],
         'Financing Cash Flow': [-20, -25, -30, -35, -40],
-        'Capital Expenditure': [75, 55, 85, 105, 125],
-        'Free Cash Flow': [35, 35, 45, 55, 70],
-        'Depreciation': [45, 48, 52, 58, 65],
+        'Capital Expenditure':,
+        'Free Cash Flow':,
+        'Depreciation':,
     }
 
     df = pd.DataFrame(data, index=list(data.keys()), columns=years)
     return df
-
 
 @staticmethod
 def generate_european_retail() -> pd.DataFrame:
@@ -5291,52 +4776,51 @@ def generate_european_retail() -> pd.DataFrame:
 
     data = {
         # Balance Sheet Items (in millions EUR)
-        'Total Assets': [800, 750, 820, 880, 950],
-        'Current Assets': [400, 380, 420, 450, 490],
-        'Non-current Assets': [400, 370, 400, 430, 460],
-        'Cash and Cash Equivalents': [60, 55, 70, 85, 100],
-        'Inventory': [200, 190, 210, 225, 245],
-        'Trade Receivables': [80, 75, 85, 90, 95],
-        'Property Plant and Equipment': [350, 325, 350, 375, 400],
-        'Total Liabilities': [480, 450, 490, 520, 560],
-        'Current Liabilities': [250, 235, 260, 275, 295],
-        'Non-current Liabilities': [230, 215, 230, 245, 265],
-        'Short-term Borrowings': [80, 75, 85, 90, 95],
-        'Long-term Debt': [180, 170, 180, 190, 205],
-        'Trade Payables': [130, 125, 135, 145, 155],
-        'Total Equity': [320, 300, 330, 360, 390],
-        'Share Capital': [150, 150, 150, 150, 150],
-        'Retained Earnings': [170, 150, 180, 210, 240],
+        'Total Assets':,
+        'Current Assets':,
+        'Non-current Assets':,
+        'Cash and Cash Equivalents':,
+        'Inventory':,
+        'Trade Receivables':,
+        'Property Plant and Equipment':,
+
+        'Total Liabilities':,
+        'Current Liabilities':,
+        'Non-current Liabilities':,
+        'Short-term Borrowings':,
+        'Long-term Debt':,
+        'Trade Payables':,
+
+        'Total Equity':,
+        'Share Capital':,
+        'Retained Earnings':,
 
         # Income Statement Items
-        'Revenue': [1200, 1050, 1300, 1450, 1600],
-        'Cost of Goods Sold': [840, 750, 900, 1000, 1100],
-        'Gross Profit': [360, 300, 400, 450, 500],
-        'Operating Expenses': [280, 260, 300, 330, 360],
-        'Operating Income': [80, 40, 100, 120, 140],
-        'EBIT': [80, 40, 100, 120, 140],
+        'Revenue':,
+        'Cost of Goods Sold':,
+        'Gross Profit':,
+        'Operating Expenses':,
+        'Operating Income':,
+        'EBIT':,
         'Interest Expense': [18, 17, 18, 19, 20.5],
         'Income Before Tax': [62, 23, 82, 101, 119.5],
         'Tax Expense': [18.6, 6.9, 24.6, 30.3, 35.85],
         'Net Income': [43.4, 16.1, 57.4, 70.7, 83.65],
 
         # Cash Flow Items
-        'Operating Cash Flow': [95, 60, 115, 135, 160],
+        'Operating Cash Flow':,
         'Investing Cash Flow': [-50, -30, -60, -70, -85],
         'Financing Cash Flow': [-30, -25, -35, -40, -45],
-        'Capital Expenditure': [45, 25, 55, 65, 80],
-        'Free Cash Flow': [50, 35, 60, 70, 80],
-        'Depreciation': [25, 27, 30, 33, 36],
+        'Capital Expenditure':,
+        'Free Cash Flow':,
+        'Depreciation':,
     }
 
     df = pd.DataFrame(data, index=list(data.keys()), columns=years)
     return df
 
-
 #--- 29. Error Recovery Mechanisms ---
-class ErrorRecoveryManager:
-    """Manage error recovery and fallback strategies"""
-
+class ErrorRecoveryManager: """Manage error recovery and fallback strategies"""
 
 def __init__(self):
     self.error_counts = defaultdict(int)
@@ -5345,7 +4829,6 @@ def __init__(self):
         'model_load_failed': self._recover_model_load,
         'memory_exceeded': self._recover_memory
     }
-
 
 def handle_error(self, error_type: str, context: Dict[str, Any]) -> bool:
     """Handle error with appropriate recovery strategy"""
@@ -5356,22 +4839,16 @@ def handle_error(self, error_type: str, context: Dict[str, Any]) -> bool:
 
     return False
 
-
 def _recover_kaggle_api(self, context: Dict[str, Any]) -> bool:
     """Recover from Kaggle API failure"""
-    wait_time = min(2**self.error_counts['kaggle_api_down'], 300)
+    wait_time = min(2 ** self.error_counts['kaggle_api_down'], 300)
     time.sleep(wait_time)
 
-    return context.get('mapper', {}).get('_test_kaggle_connection',
-                                         lambda: False)()
-
+    return context.get('mapper', {}).get('_test_kaggle_connection', lambda: False)()
 
 def _recover_model_load(self, context: Dict[str, Any]) -> bool:
     """Recover from model loading failure"""
-    alternative_models = [
-        'all-MiniLM-L6-v2', 'paraphrase-MiniLM-L3-v2',
-        'distilbert-base-nli-mean-tokens'
-    ]
+    alternative_models = ['all-MiniLM-L6-v2', 'paraphrase-MiniLM-L3-v2', 'distilbert-base-nli-mean-tokens']
 
     for model in alternative_models:
         try:
@@ -5382,7 +4859,6 @@ def _recover_model_load(self, context: Dict[str, Any]) -> bool:
 
     return False
 
-
 def _recover_memory(self, context: Dict[str, Any]) -> bool:
     """Recover from memory issues"""
     if 'mapper' in context:
@@ -5392,11 +4868,8 @@ def _recover_memory(self, context: Dict[str, Any]) -> bool:
 
     return True
 
-
 #--- 30. Main Application Class ---
-class FinancialAnalyticsPlatform:
-    """Main application with advanced architecture and all integrations"""
-
+class FinancialAnalyticsPlatform: """Main application with advanced architecture and all integrations"""
 
 def __init__(self):
     # Initialize session state for persistent data
@@ -5428,12 +4901,10 @@ def __init__(self):
     # Initialize compression handler
     self.compression_handler = CompressionHandler(self.logger)
 
-
 def __del__(self):
     """Cleanup resources"""
     if hasattr(self, 'compression_handler'):
         self.compression_handler.cleanup()
-
 
 def _initialize_session_state(self):
     """Initialize all session state variables"""
@@ -5468,7 +4939,6 @@ def _initialize_session_state(self):
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 def _initialize_components(self) -> Dict[str, Component]:
     """Initialize all components with dependency injection"""
     components = {
@@ -5486,22 +4956,18 @@ def _initialize_components(self) -> Dict[str, Component]:
         except Exception as e:
             self.logger.error(f"Failed to initialize {name}: {e}")
             # Try error recovery
-            self.error_recovery.handle_error(f"{name}_init_failed",
-                                             {'component': component})
+            self.error_recovery.handle_error(f"{name}_init_failed", {'component': component})
 
     return components
-
 
 # State helper methods
 def get_state(self, key: str, default: Any = None) -> Any:
     """Get value from session state"""
     return SimpleState.get(key, default)
 
-
 def set_state(self, key: str, value: Any):
     """Set value in session state"""
     SimpleState.set(key, value)
-
 
 def _clear_all_caches(self):
     """Clear all caches"""
@@ -5516,13 +4982,11 @@ def _clear_all_caches(self):
     # Force garbage collection
     gc.collect()
 
-
 def _reset_configuration(self):
     """Reset configuration to defaults"""
     self.set_state('config_overrides', {})
     self.config = Configuration()
     st.success("Configuration reset to defaults!")
-
 
 def _export_logs(self):
     """Export application logs"""
@@ -5542,14 +5006,13 @@ def _export_logs(self):
             st.download_button(
                 label="Download Logs",
                 data=zip_buffer.getvalue(),
-                file_name=
-                f"logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                mime="application/zip")
+                file_name=f"logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip"
+            )
         else:
             st.warning("No log files found")
     except Exception as e:
         st.error(f"Failed to export logs: {e}")
-
 
 def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
     """Master parsing method with all enhancements"""
@@ -5565,9 +5028,7 @@ def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
             with open(file, 'rb') as f:
                 content = f.read()
 
-        self.logger.info(
-            f"Parsing {filename} ({len(content)} bytes, extension: {file_ext})"
-        )
+        self.logger.info(f"Parsing {filename} ({len(content)} bytes, extension: {file_ext})")
 
         # Main parsing logic
         df = None
@@ -5587,8 +5048,7 @@ def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
             return df
 
         # Fallback parsing
-        self.logger.warning(
-            f"Main parsing failed for {filename}, trying fallback")
+        self.logger.warning(f"Main parsing failed for {filename}, trying fallback")
         df = self._handle_parsing_fallback(file, filename)
 
         if df is not None:
@@ -5598,50 +5058,38 @@ def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
         return None
 
     except Exception as e:
-        self.logger.error(f"Critical parsing error for {filename}: {e}",
-                          exc_info=True)
+        self.logger.error(f"Critical parsing error for {filename}: {e}", exc_info=True)
         return None
 
-
-def _parse_xls_file(self, content: bytes,
-                    filename: str) -> Optional[pd.DataFrame]:
+def _parse_xls_file(self, content: bytes, filename: str) -> Optional[pd.DataFrame]:
     """Parse .xls files (could be Excel or HTML)"""
     try:
         # Detect if it's actually HTML
         text_content = content.decode('utf-8', errors='ignore')
 
-        if '<html>' in text_content.lower() or '<table>' in text_content.lower(
-        ):
+        if '<html>' in text_content.lower() or '<table>' in text_content.lower():
             self.logger.info(f"Detected HTML content in {filename}")
             return self._parse_html_file(content, filename)
         else:
             # Try as actual Excel
             self.logger.info(f"Parsing {filename} as Excel (.xls)")
-            return pd.read_excel(io.BytesIO(content),
-                                 index_col=0,
-                                 engine='xlrd')
+            return pd.read_excel(io.BytesIO(content), index_col=0, engine='xlrd')
 
     except Exception as e:
         self.logger.warning(f"XLS parsing failed for {filename}: {e}")
         # Try HTML parsing as fallback
         return self._parse_html_file(content, filename)
 
-
-def _parse_xlsx_file(self, content: bytes,
-                     filename: str) -> Optional[pd.DataFrame]:
+def _parse_xlsx_file(self, content: bytes, filename: str) -> Optional[pd.DataFrame]:
     """Parse .xlsx files"""
     try:
         self.logger.info(f"Parsing {filename} as Excel (.xlsx)")
-        return pd.read_excel(io.BytesIO(content),
-                             index_col=0,
-                             engine='openpyxl')
+        return pd.read_excel(io.BytesIO(content), index_col=0, engine='openpyxl')
     except Exception as e:
         self.logger.error(f"XLSX parsing failed for {filename}: {e}")
         return None
 
-
-def _parse_csv_file(self, content: bytes,
-                    filename: str) -> Optional[pd.DataFrame]:
+def _parse_csv_file(self, content: bytes, filename: str) -> Optional[pd.DataFrame]:
     """Parse CSV files"""
     try:
         self.logger.info(f"Parsing {filename} as CSV")
@@ -5652,17 +5100,13 @@ def _parse_csv_file(self, content: bytes,
         self.logger.error(f"CSV parsing failed for {filename}: {e}")
         return None
 
-
-def _parse_html_file(self, content: bytes,
-                     filename: str) -> Optional[pd.DataFrame]:
+def _parse_html_file(self, content: bytes, filename: str) -> Optional[pd.DataFrame]:
     """Parse HTML content from financial exports with enhanced detection"""
     try:
         # Decode content
         if isinstance(content, bytes):
             # Try multiple encodings
-            for encoding in [
-                    'utf-8', 'latin-1', 'cp1252', 'iso-8859-1', 'utf-16'
-            ]:
+            for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1', 'utf-16']:
                 try:
                     text_content = content.decode(encoding)
                     break
@@ -5678,34 +5122,23 @@ def _parse_html_file(self, content: bytes,
         # Try pandas HTML parser first (most reliable)
         try:
             # Use multiple parsing strategies
-            parsing_strategies = [{
-                'attrs': None,
-                'header': 0
-            }, {
-                'attrs': None,
-                'header': None
-            }, {
-                'attrs': {
-                    'class': 'data'
-                },
-                'header': 0
-            }, {
-                'attrs': {
-                    'border': '1'
-                },
-                'header': 0
-            }]
+            parsing_strategies = [
+                {'attrs': None, 'header': 0},
+                {'attrs': None, 'header': None},
+                {'attrs': {'class': 'data'}, 'header': 0},
+                {'attrs': {'border': '1'}, 'header': 0}
+            ]
 
             tables = None
             for strategy in parsing_strategies:
                 try:
-                    tables = pd.read_html(io.StringIO(text_content),
-                                          attrs=strategy['attrs'],
-                                          header=strategy['header'])
+                    tables = pd.read_html(
+                        io.StringIO(text_content),
+                        attrs=strategy['attrs'],
+                        header=strategy['header']
+                    )
                     if tables:
-                        self.logger.info(
-                            f"Successfully parsed {len(tables)} tables using strategy: {strategy}"
-                        )
+                        self.logger.info(f"Successfully parsed {len(tables)} tables using strategy: {strategy}")
                         break
                 except Exception:
                     continue
@@ -5713,38 +5146,31 @@ def _parse_html_file(self, content: bytes,
             if tables:
                 # Find the largest table (usually the main financial data)
                 main_table = max(tables, key=lambda x: x.size)
-                self.logger.info(
-                    f"Selected main table with shape: {main_table.shape}")
+                self.logger.info(f"Selected main table with shape: {main_table.shape}")
 
                 # Clean and process the table
                 return self._clean_financial_table(main_table, filename)
 
         except Exception as e:
-            self.logger.warning(
-                f"Pandas HTML parser failed for {filename}: {e}")
+            self.logger.warning(f"Pandas HTML parser failed for {filename}: {e}")
 
         # Fallback to BeautifulSoup parsing
         if BEAUTIFULSOUP_AVAILABLE:
             self.logger.info(f"Trying BeautifulSoup fallback for {filename}")
             return self._parse_with_beautifulsoup(text_content, filename)
         else:
-            self.logger.warning(
-                "BeautifulSoup not available for fallback parsing")
+            self.logger.warning("BeautifulSoup not available for fallback parsing")
 
         return None
 
     except Exception as e:
-        self.logger.error(f"HTML parsing failed for {filename}: {e}",
-                          exc_info=True)
+        self.logger.error(f"HTML parsing failed for {filename}: {e}", exc_info=True)
         return None
 
-
-def _clean_financial_table(self, df: pd.DataFrame,
-                           filename: str) -> pd.DataFrame:
+def _clean_financial_table(self, df: pd.DataFrame, filename: str) -> pd.DataFrame:
     """Clean and standardize financial table format with enhanced logic"""
     try:
-        self.logger.info(
-            f"Cleaning table from {filename}, initial shape: {df.shape}")
+        self.logger.info(f"Cleaning table from {filename}, initial shape: {df.shape}")
 
         # Make a copy
         cleaned_df = df.copy()
@@ -5752,9 +5178,7 @@ def _clean_financial_table(self, df: pd.DataFrame,
         # 1. Remove completely empty rows and columns
         initial_shape = cleaned_df.shape
         cleaned_df = cleaned_df.dropna(how='all').dropna(axis=1, how='all')
-        self.logger.info(
-            f"After removing empty rows/cols: {initial_shape} -> {cleaned_df.shape}"
-        )
+        self.logger.info(f"After removing empty rows/cols: {initial_shape} -> {cleaned_df.shape}")
 
         # 2. Find the row that contains year headers (enhanced detection)
         year_row_idx = None
@@ -5770,8 +5194,7 @@ def _clean_financial_table(self, df: pd.DataFrame,
             for pattern in year_patterns:
                 if re.search(pattern, row_str, re.IGNORECASE):
                     year_row_idx = idx
-                    self.logger.info(
-                        f"Found year row at index {idx}: {row_str[:100]}")
+                    self.logger.info(f"Found year row at index {idx}: {row_str[:100]}")
                     break
             if year_row_idx is not None:
                 break
@@ -5786,8 +5209,7 @@ def _clean_financial_table(self, df: pd.DataFrame,
                     # Extract year from cell with multiple patterns
                     year_match = None
                     for pattern in year_patterns:
-                        year_match = re.search(pattern, str(col),
-                                               re.IGNORECASE)
+                        year_match = re.search(pattern, str(col), re.IGNORECASE)
                         if year_match:
                             # Extract just the year part
                             year_str = year_match.group(0)
@@ -5808,8 +5230,7 @@ def _clean_financial_table(self, df: pd.DataFrame,
             cleaned_df.columns = new_columns[:len(cleaned_df.columns)]
 
             # Remove the year row and everything above it
-            cleaned_df = cleaned_df.iloc[year_row_idx +
-                                         1:].reset_index(drop=True)
+            cleaned_df = cleaned_df.iloc[year_row_idx + 1:].reset_index(drop=True)
             self.logger.info(f"After header processing: {cleaned_df.shape}")
 
         # 3. Set first column as index (metric names)
@@ -5826,46 +5247,38 @@ def _clean_financial_table(self, df: pd.DataFrame,
                 cleaned_series = cleaned_df[col].astype(str)
 
                 # Remove common formatting
-                cleaned_series = cleaned_series.str.replace(
-                    ',', '')  # Remove commas
-                cleaned_series = cleaned_series.str.replace(
-                    '(', '-')  # Convert (123) to -123
+                cleaned_series = cleaned_series.str.replace(',', '')  # Remove commas
+                cleaned_series = cleaned_series.str.replace('(', '-')  # Convert (123) to -123
                 cleaned_series = cleaned_series.str.replace(')', '')
-                cleaned_series = cleaned_series.str.replace(
-                    '₹', '')  # Remove currency symbols
+                cleaned_series = cleaned_series.str.replace('₹', '')  # Remove currency symbols
                 cleaned_series = cleaned_series.str.replace('$', '')
                 cleaned_series = cleaned_series.str.strip()
 
                 # Convert to numeric
-                cleaned_df[col] = pd.to_numeric(cleaned_series,
-                                                errors='coerce')
+                cleaned_df[col] = pd.to_numeric(cleaned_series, errors='coerce')
 
         # 5. Remove rows where all values are NaN
         cleaned_df = cleaned_df.dropna(how='all')
 
         # 6. Clean index names (remove extra spaces, special characters)
         cleaned_df.index = cleaned_df.index.map(
-            lambda x: re.sub(r'\s+', ' ',
-                             str(x).strip()) if pd.notna(x) else 'Unknown')
+            lambda x: re.sub(r'\s+', ' ', str(x).strip()) if pd.notna(x) else 'Unknown'
+        )
 
         # 7. Remove duplicate index entries
         cleaned_df = cleaned_df[~cleaned_df.index.duplicated(keep='first')]
 
-        self.logger.info(
-            f"Final cleaned table from {filename}: {cleaned_df.shape}")
+        self.logger.info(f"Final cleaned table from {filename}: {cleaned_df.shape}")
         self.logger.info(f"Columns: {list(cleaned_df.columns)}")
         self.logger.info(f"Sample metrics: {list(cleaned_df.index[:5])}")
 
         return cleaned_df
 
     except Exception as e:
-        self.logger.error(f"Error cleaning table from {filename}: {e}",
-                          exc_info=True)
+        self.logger.error(f"Error cleaning table from {filename}: {e}", exc_info=True)
         return df  # Return original if cleaning fails
 
-
-def _parse_with_beautifulsoup(self, html_content: str,
-                              filename: str) -> Optional[pd.DataFrame]:
+def _parse_with_beautifulsoup(self, html_content: str, filename: str) -> Optional[pd.DataFrame]:
     """Fallback parser using BeautifulSoup"""
     try:
         from bs4 import BeautifulSoup
@@ -5895,14 +5308,13 @@ def _parse_with_beautifulsoup(self, html_content: str,
             return None
 
         # Convert to DataFrame
-        df = pd.DataFrame(rows[1:], columns=rows[0] if rows else None)
+        df = pd.DataFrame(rows[1:], columns=rows if rows else None)
 
         return self._clean_financial_table(df, filename)
 
     except Exception as e:
         self.logger.error(f"BeautifulSoup parsing failed for {filename}: {e}")
         return None
-
 
 def _detect_file_encoding(self, content: bytes) -> str:
     """Detect file encoding for better text parsing"""
@@ -5923,7 +5335,6 @@ def _detect_file_encoding(self, content: bytes) -> str:
     except Exception:
         return 'utf-8'
 
-
 def _validate_financial_data(self, df: pd.DataFrame, filename: str) -> bool:
     """Validate that the parsed data looks like financial data"""
     try:
@@ -5939,13 +5350,10 @@ def _validate_financial_data(self, df: pd.DataFrame, filename: str) -> bool:
         ]
 
         index_text = ' '.join(str(idx).lower() for idx in df.index)
-        keyword_matches = sum(1 for keyword in financial_keywords
-                              if keyword in index_text)
+        keyword_matches = sum(1 for keyword in financial_keywords if keyword in index_text)
 
         if keyword_matches < 2:
-            self.logger.warning(
-                f"Low financial keyword matches in {filename}: {keyword_matches}"
-            )
+            self.logger.warning(f"Low financial keyword matches in {filename}: {keyword_matches}")
             return False
 
         # Check for numeric data
@@ -5955,25 +5363,19 @@ def _validate_financial_data(self, df: pd.DataFrame, filename: str) -> bool:
             return False
 
         # Check for year-like columns
-        year_cols = [
-            col for col in df.columns if re.search(r'20\d{2}', str(col))
-        ]
+        year_cols = [col for col in df.columns if re.search(r'20\d{2}', str(col))]
         if len(year_cols) == 0:
             self.logger.warning(f"No year columns found in {filename}")
             return False
 
-        self.logger.info(
-            f"Validation passed for {filename}: {keyword_matches} keywords, {len(numeric_cols)} numeric cols, {len(year_cols)} year cols"
-        )
+        self.logger.info(f"Validation passed for {filename}: {keyword_matches} keywords, {len(numeric_cols)} numeric cols, {len(year_cols)} year cols")
         return True
 
     except Exception as e:
         self.logger.error(f"Validation error for {filename}: {e}")
         return False
 
-
-def _handle_parsing_fallback(self, file,
-                             filename: str) -> Optional[pd.DataFrame]:
+def _handle_parsing_fallback(self, file, filename: str) -> Optional[pd.DataFrame]:
     """Last resort parsing attempts"""
     try:
         self.logger.info(f"Attempting fallback parsing for {filename}")
@@ -6005,17 +5407,12 @@ def _handle_parsing_fallback(self, file,
                         parts = line.split(sep)
                         line_lengths.append(len(parts))
 
-                if line_lengths and len(
-                        set(line_lengths)) <= 2:  # Consistent structure
+                if line_lengths and len(set(line_lengths)) <= 2:  # Consistent structure
                     # Try to parse as CSV with this separator
-                    df = pd.read_csv(io.StringIO(text_content),
-                                     sep=sep,
-                                     index_col=0)
+                    df = pd.read_csv(io.StringIO(text_content), sep=sep, index_col=0)
 
                     if self._validate_financial_data(df, filename):
-                        self.logger.info(
-                            f"Fallback parsing successful with separator '{sep}'"
-                        )
+                        self.logger.info(f"Fallback parsing successful with separator '{sep}'")
                         return df
 
             except Exception:
@@ -6026,7 +5423,6 @@ def _handle_parsing_fallback(self, file,
     except Exception as e:
         self.logger.error(f"Fallback parsing failed for {filename}: {e}")
         return None
-
 
 def _handle_parsing_error(self, filename: str, error: Exception) -> None:
     """Provide helpful error messages and suggestions"""
@@ -6039,7 +5435,7 @@ def _handle_parsing_error(self, filename: str, error: Exception) -> None:
             **This error usually means:**
             - The file has a .xls extension but contains HTML data (common with Indian financial exports)
             - The file might be corrupted
-            
+
             **Try these solutions:**
             1. **Rename the file**: Change .xls to .html and re-upload
             2. **Open in Excel**: Open the file in Excel and save as .xlsx
@@ -6052,7 +5448,7 @@ def _handle_parsing_error(self, filename: str, error: Exception) -> None:
         with st.expander("💡 How to fix this"):
             st.write("""
             **This means the file doesn't contain recognizable table data.**
-            
+
             **Try these solutions:**
             1. **Check file content**: Open the file to verify it contains financial data
             2. **Different format**: Try exporting in a different format (CSV, Excel)
@@ -6064,7 +5460,7 @@ def _handle_parsing_error(self, filename: str, error: Exception) -> None:
         with st.expander("💡 How to fix this"):
             st.write("""
             **This is a character encoding problem.**
-            
+
             **Try these solutions:**
             1. **Save as UTF-8**: Open in Excel/Notepad and save with UTF-8 encoding
             2. **Remove special characters**: Clean any unusual symbols from the data
@@ -6082,7 +5478,6 @@ def _handle_parsing_error(self, filename: str, error: Exception) -> None:
             4. **Try sample data**: Test with our sample datasets first
             5. **Contact support**: If issues persist, please contact support
             """)
-
 
 def test_parsing_capabilities(self):
     """Test the parsing system with various file types"""
@@ -6119,27 +5514,21 @@ def test_parsing_capabilities(self):
 
         # Test 2: Year detection
         if df is not None:
-            year_cols = [
-                col for col in df.columns if re.search(r'20\d{2}', str(col))
-            ]
+            year_cols = [col for col in df.columns if re.search(r'20\d{2}', str(col))]
             if len(year_cols) >= 2:
                 test_results['year_detection'] = True
                 self.logger.info("✅ Year detection test passed")
 
         # Test 3: Metric cleaning
         if df is not None:
-            clean_metrics = [
-                idx for idx in df.index
-                if isinstance(idx, str) and len(idx.strip()) > 0
-            ]
+            clean_metrics = [idx for idx in df.index if isinstance(idx, str) and len(idx.strip()) > 0]
             if len(clean_metrics) >= 2:
                 test_results['metric_cleaning'] = True
                 self.logger.info("✅ Metric cleaning test passed")
 
         # Test 4: CSV parsing
         csv_content = """Metric,2023,2022,2021
-Total Revenue,150000,125000,100000 Net Profit,15000,12500,10000 Total Assets,500000,450000,400000""".encode(
-            'utf-8')
+Total Revenue,150000,125000,100000 Net Profit,15000,12500,10000 Total Assets,500000,450000,400000""".encode('utf-8')
 
         temp_csv = io.BytesIO(csv_content)
         temp_csv.name = "test_file.csv"
@@ -6152,8 +5541,7 @@ Total Revenue,150000,125000,100000 Net Profit,15000,12500,10000 Total Assets,500
         # Test 5: Encoding handling
         try:
             # Test with different encodings
-            unicode_content = "Metric,2023\nRevenue ₹,150000\nProfit ₹,15000".encode(
-                'utf-8')
+            unicode_content = "Metric,2023\nRevenue ₹,150000\nProfit ₹,15000".encode('utf-8')
             temp_unicode = io.BytesIO(unicode_content)
             temp_unicode.name = "test_unicode.csv"
 
@@ -6168,8 +5556,7 @@ Total Revenue,150000,125000,100000 Net Profit,15000,12500,10000 Total Assets,500
         passed_tests = sum(test_results.values())
         total_tests = len(test_results)
 
-        self.logger.info(
-            f"Parsing tests summary: {passed_tests}/{total_tests} passed")
+        self.logger.info(f"Parsing tests summary: {passed_tests}/{total_tests} passed")
 
         if passed_tests >= total_tests * 0.8:  # 80% pass rate
             self.logger.info("✅ Parsing system is working well")
@@ -6181,7 +5568,6 @@ Total Revenue,150000,125000,100000 Net Profit,15000,12500,10000 Total Assets,500
     except Exception as e:
         self.logger.error(f"Parsing test failed: {e}")
         return False
-
 
 def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
     """Complete enhanced file processing with all improvements"""
@@ -6208,13 +5594,11 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                 try:
                     # Update progress
                     progress_bar.progress((i + 1) / total_files)
-                    status_text.text(
-                        f"Processing {file.name} ({i+1}/{total_files})")
+                    status_text.text(f"Processing {file.name} ({i+1}/{total_files})")
 
                     # Handle compressed files
                     if file.name.lower().endswith(('.zip', '.7z')):
-                        extracted_files = self.compression_handler.extract_compressed_file(
-                            file)
+                        extracted_files = self.compression_handler.extract_compressed_file(file)
 
                         for extracted_name, extracted_content in extracted_files:
                             temp_file = io.BytesIO(extracted_content)
@@ -6225,35 +5609,23 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                                 if df is not None and not df.empty:
                                     all_dataframes.append(df)
                                     file_info.append({
-                                        'name':
-                                        extracted_name,
-                                        'source':
-                                        f"{file.name} (compressed)",
-                                        'shape':
-                                        df.shape,
-                                        'columns':
-                                        list(df.columns),
-                                        'metrics_count':
-                                        len(df.index),
-                                        'status':
-                                        'success'
+                                        'name': extracted_name,
+                                        'source': f"{file.name} (compressed)",
+                                        'shape': df.shape,
+                                        'columns': list(df.columns),
+                                        'metrics_count': len(df.index),
+                                        'status': 'success'
                                     })
                                 else:
-                                    processing_errors.append(
-                                        f"No data in {extracted_name}")
+                                    processing_errors.append(f"No data in {extracted_name}")
                                     file_info.append({
-                                        'name':
-                                        extracted_name,
-                                        'source':
-                                        f"{file.name} (compressed)",
-                                        'status':
-                                        'failed',
-                                        'error':
-                                        'No data extracted'
+                                        'name': extracted_name,
+                                        'source': f"{file.name} (compressed)",
+                                        'status': 'failed',
+                                        'error': 'No data extracted'
                                     })
                             except Exception as e:
-                                processing_errors.append(
-                                    f"Error in {extracted_name}: {str(e)}")
+                                processing_errors.append(f"Error in {extracted_name}: {str(e)}")
                                 self._handle_parsing_error(extracted_name, e)
                     else:
                         # Handle regular files
@@ -6270,8 +5642,7 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                                     'status': 'success'
                                 })
                             else:
-                                processing_errors.append(
-                                    f"No data in {file.name}")
+                                processing_errors.append(f"No data in {file.name}")
                                 file_info.append({
                                     'name': file.name,
                                     'source': 'direct upload',
@@ -6279,16 +5650,12 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                                     'error': 'No data extracted'
                                 })
                         except Exception as e:
-                            processing_errors.append(
-                                f"Error in {file.name}: {str(e)}")
+                            processing_errors.append(f"Error in {file.name}: {str(e)}")
                             self._handle_parsing_error(file.name, e)
 
                 except Exception as e:
-                    self.logger.error(
-                        f"Critical error processing {file.name}: {e}",
-                        exc_info=True)
-                    processing_errors.append(
-                        f"Critical error in {file.name}: {str(e)}")
+                    self.logger.error(f"Critical error processing {file.name}: {e}", exc_info=True)
+                    processing_errors.append(f"Critical error in {file.name}: {str(e)}")
 
             # Clear progress indicators
             progress_bar.empty()
@@ -6296,14 +5663,10 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
 
         # Show results
         if all_dataframes:
-            success_count = len([
-                info for info in file_info if info.get('status') == 'success'
-            ])
+            success_count = len([info for info in file_info if info.get('status') == 'success'])
             total_count = len(file_info)
 
-            st.success(
-                f"✅ Successfully processed {success_count}/{total_count} files"
-            )
+            st.success(f"✅ Successfully processed {success_count}/{total_count} files")
 
             # Show detailed results
             with st.expander("📊 Processing Results", expanded=True):
@@ -6318,21 +5681,19 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                     return ''
 
                 if 'status' in results_df.columns:
-                    styled_df = results_df.style.applymap(highlight_status,
-                                                          subset=['status'])
+                    styled_df = results_df.style.applymap(highlight_status, subset=['status'])
                     st.dataframe(styled_df, use_container_width=True)
                 else:
                     st.dataframe(results_df, use_container_width=True)
 
             # Merge and process data
             if len(all_dataframes) == 1:
-                final_df = all_dataframes[0]
+                final_df = all_dataframes
             else:
                 final_df = self._merge_dataframes(all_dataframes)
 
             # Validate and process
-            processed_df, validation_result = self.components[
-                'processor'].process(final_df, "uploaded_data")
+            processed_df, validation_result = self.components['processor'].process(final_df, "uploaded_data")
 
             # Store results
             self.set_state('analysis_data', processed_df)
@@ -6345,9 +5706,7 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
                     st.write(f"• {warning}")
 
             if validation_result.corrections:
-                st.info(
-                    f"🔧 Applied {len(validation_result.corrections)} auto-corrections"
-                )
+                st.info(f"🔧 Applied {len(validation_result.corrections)} auto-corrections")
                 with st.expander("View corrections"):
                     for correction in validation_result.corrections:
                         st.write(f"• {correction}")
@@ -6366,24 +5725,18 @@ def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
             st.info("💡 **Suggestions:**")
             st.write("1. Try uploading sample data first to test the system")
             st.write("2. Ensure your files contain financial statement data")
-            st.write(
-                "3. Check that data is in tabular format (rows = metrics, columns = years)"
-            )
-            st.write(
-                "4. For Indian data exports, files with .xls extension often work better"
-            )
+            st.write("3. Check that data is in tabular format (rows = metrics, columns = years)")
+            st.write("4. For Indian data exports, files with .xls extension often work better")
 
             return False
 
     except Exception as e:
-        self.logger.error(f"Critical error in file processing: {e}",
-                          exc_info=True)
+        self.logger.error(f"Critical error in file processing: {e}", exc_info=True)
         st.error(f"Critical system error: {str(e)}")
         return False
     finally:
         # Always cleanup
         self.compression_handler.cleanup()
-
 
 def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
     """Enhanced dataframe merging with intelligent handling"""
@@ -6392,8 +5745,7 @@ def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
 
         # Log shapes for debugging
         for i, df in enumerate(dataframes):
-            self.logger.info(
-                f"DataFrame {i}: {df.shape}, columns: {list(df.columns)}")
+            self.logger.info(f"DataFrame {i}: {df.shape}, columns: {list(df.columns)}")
 
         # Strategy 1: If all dataframes have similar column structure, concatenate
         if len(set(tuple(df.columns) for df in dataframes)) == 1:
@@ -6404,7 +5756,7 @@ def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
             return merged_df
 
         # Strategy 2: Merge on index (metrics) with outer join
-        merged_df = dataframes[0].copy()
+        merged_df = dataframes.copy()
 
         for i, df in enumerate(dataframes[1:], 1):
             try:
@@ -6412,12 +5764,11 @@ def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
                 aligned_df = self._align_dataframe_columns(df, merged_df)
 
                 # Merge on index
-                merged_df = pd.merge(merged_df,
-                                     aligned_df,
-                                     left_index=True,
-                                     right_index=True,
-                                     how='outer',
-                                     suffixes=('', f'_file{i}'))
+                merged_df = pd.merge(
+                    merged_df, aligned_df,
+                    left_index=True, right_index=True,
+                    how='outer', suffixes=('', f'_file{i}')
+                )
 
                 self.logger.info(f"After merging file {i}: {merged_df.shape}")
 
@@ -6437,9 +5788,7 @@ def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
         # Fallback: return the largest dataframe
         return max(dataframes, key=lambda x: x.size)
 
-
-def _align_dataframe_columns(self, df: pd.DataFrame,
-                             reference_df: pd.DataFrame) -> pd.DataFrame:
+def _align_dataframe_columns(self, df: pd.DataFrame, reference_df: pd.DataFrame) -> pd.DataFrame:
     """Align column names between dataframes (especially for years)"""
     try:
         aligned_df = df.copy()
@@ -6482,7 +5831,6 @@ def _align_dataframe_columns(self, df: pd.DataFrame,
     except Exception as e:
         self.logger.warning(f"Column alignment failed: {e}")
         return df
-
 
 def _clean_merged_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
     """Clean the merged dataframe"""
@@ -6532,7 +5880,7 @@ def _clean_merged_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
                 other_columns.append(col)
 
         # Sort year columns by year
-        year_columns.sort(key=lambda x: x[1])
+        year_columns.sort(key=lambda x: x)
         sorted_columns = [col for col, _ in year_columns] + other_columns
 
         cleaned_df = cleaned_df[sorted_columns]
@@ -6544,7 +5892,6 @@ def _clean_merged_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         self.logger.error(f"Error cleaning merged dataframe: {e}")
         return df
 
-
 @error_boundary()
 def run(self):
     """Main application entry point"""
@@ -6554,7 +5901,8 @@ def run(self):
             page_title="Elite Financial Analytics Platform v5.1",
             page_icon="💹",
             layout="wide",
-            initial_sidebar_state="expanded")
+            initial_sidebar_state="expanded"
+        )
 
         # Apply custom CSS
         self._apply_custom_css()
@@ -6582,7 +5930,6 @@ def run(self):
         if self.config.get('app.debug', False):
             st.exception(e)
 
-
 def _apply_custom_css(self):
     """Apply custom CSS styling"""
     st.markdown("""
@@ -6597,25 +5944,25 @@ def _apply_custom_css(self):
         padding: 2rem 0;
         margin-bottom: 2rem;
     }
-    
+
     .sidebar .sidebar-content {
         background-color: #f8f9fa;
     }
-    
+
     .stMetric {
         background-color: #ffffff;
         padding: 1rem;
         border-radius: 0.5rem;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
-    
+
     .insight-card {
         padding: 1rem;
         margin: 0.5rem 0;
         border-radius: 0.5rem;
         border-left: 4px solid;
     }
-    
+
     .quality-badge {
         display: inline-block;
         padding: 0.25rem 0.75rem;
@@ -6623,7 +5970,7 @@ def _apply_custom_css(self):
         font-weight: 600;
         font-size: 0.875rem;
     }
-    
+
     .skeleton {
         background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
         background-size: 200% 100%;
@@ -6632,12 +5979,12 @@ def _apply_custom_css(self):
         margin: 10px 0;
         border-radius: 4px;
     }
-    
+
     @keyframes loading {
         0% { background-position: 200% 0; }
         100% { background-position: -200% 0; }
     }
-    
+
     .collaboration-indicator {
         position: fixed;
         top: 10px;
@@ -6649,7 +5996,7 @@ def _apply_custom_css(self):
         font-size: 12px;
         z-index: 1000;
     }
-    
+
     .kaggle-status {
         position: fixed;
         top: 60px;
@@ -6661,17 +6008,17 @@ def _apply_custom_css(self):
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         z-index: 1000;
     }
-    
+
     .kaggle-status.error {
         border-color: #f44336;
     }
-    
+
     .kaggle-metric {
         display: inline-block;
         margin: 0 10px;
         font-size: 14px;
     }
-    
+
     .api-health {
         width: 10px;
         height: 10px;
@@ -6679,15 +6026,15 @@ def _apply_custom_css(self):
         display: inline-block;
         margin-right: 5px;
     }
-    
+
     .api-health.healthy {
         background-color: #4CAF50;
     }
-    
+
     .api-health.unhealthy {
         background-color: #f44336;
     }
-    
+
     .api-metrics-panel {
         position: fixed;
         top: 120px;
@@ -6700,14 +6047,14 @@ def _apply_custom_css(self):
         z-index: 999;
         max-width: 300px;
     }
-    
+
     .progress-tracker {
         background: #f5f5f5;
         border-radius: 5px;
         padding: 10px;
         margin: 10px 0;
     }
-    
+
     .progress-bar {
         background: linear-gradient(90deg, #4CAF50, #8BC34A);
         height: 8px;
@@ -6715,15 +6062,14 @@ def _apply_custom_css(self):
         transition: width 0.3s ease;
     }
     </style>
-    """,
-                unsafe_allow_html=True)
-
+    """, unsafe_allow_html=True)
 
 def _render_header(self):
     """Render application header with enhanced status indicators"""
     st.markdown(
         '<h1 class="main-header">💹 Elite Financial Analytics Platform v5.1</h1>',
-        unsafe_allow_html=True)
+        unsafe_allow_html=True
+    )
 
     # Collaboration indicator
     if self.get_state('collaboration_session'):
@@ -6732,52 +6078,53 @@ def _render_header(self):
         if activity:
             st.markdown(
                 f'<div class="collaboration-indicator">👥 {len(activity["active_users"])} users online</div>',
-                unsafe_allow_html=True)
+                unsafe_allow_html=True
+            )
 
     # Show Kaggle API status if enabled
-    if self.config.get('ui.show_kaggle_status',
-                       True) and self.get_state('kaggle_api_enabled'):
+    if self.config.get('ui.show_kaggle_status', True) and self.get_state('kaggle_api_enabled'):
         self._render_kaggle_status_badge()
 
     # Show API metrics panel if enabled
-    if self.config.get('ui.show_api_metrics', True) and self.get_state(
-            'api_metrics_visible', False):
+    if self.config.get('ui.show_api_metrics', True) and self.get_state('api_metrics_visible', False):
         self._render_api_metrics_panel()
 
     # Show system status
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        components_status = sum(1 for c in self.components.values()
-                                if c._initialized)
+        components_status = sum(1 for c in self.components.values() if c._initialized)
         self.ui_factory.create_metric_card(
             "Components",
             f"{components_status}/{len(self.components)}",
-            help="Active system components")
+            help="Active system components"
+        )
 
     with col2:
-        mode = self.config.get('app.display_mode',
-                               Configuration.DisplayMode.LITE)
-        self.ui_factory.create_metric_card("Mode",
-                                           mode.name,
-                                           help="Current operating mode")
+        mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
+        self.ui_factory.create_metric_card(
+            "Mode",
+            mode.name,
+            help="Current operating mode"
+        )
 
     with col3:
         if 'mapper' in self.components:
-            cache_stats = self.components['mapper'].embeddings_cache.get_stats(
-            )
+            cache_stats = self.components['mapper'].embeddings_cache.get_stats()
             hit_rate = cache_stats.get('hit_rate', 0)
-            self.ui_factory.create_metric_card("Cache Hit Rate",
-                                               f"{hit_rate:.1f}%",
-                                               help="AI cache performance")
+            self.ui_factory.create_metric_card(
+                "Cache Hit Rate",
+                f"{hit_rate:.1f}%",
+                help="AI cache performance"
+            )
 
     with col4:
         version = self.config.get('app.version', 'Unknown')
-        self.ui_factory.create_metric_card("Version",
-                                           version,
-                                           help="Platform version")
-
-
+        self.ui_factory.create_metric_card(
+            "Version",
+            version,
+            help="Platform version"
+        )
 def _render_kaggle_status_badge(self):
     """Render floating Kaggle API status badge with enhanced metrics"""
     if 'mapper' in self.components:
@@ -6788,10 +6135,8 @@ def _render_kaggle_status_badge(self):
             stats = status.get('api_stats', {})
 
             # Get GPU info from the actual response
-            gpu_name = info.get('gpu_name',
-                                info.get('system', {}).get('gpu_name', 'GPU'))
-            model = info.get('model',
-                             info.get('system', {}).get('model', 'Unknown'))
+            gpu_name = info.get('gpu_name', info.get('system', {}).get('gpu_name', 'GPU'))
+            model = info.get('model', info.get('system', {}).get('model', 'Unknown'))
             version = info.get('version', 'Unknown')
 
             # Check circuit breaker status
@@ -6817,7 +6162,6 @@ def _render_kaggle_status_badge(self):
 
         st.markdown(status_html, unsafe_allow_html=True)
 
-
 def _render_api_metrics_panel(self):
     """Render detailed API metrics panel"""
     if 'mapper' in self.components:
@@ -6834,9 +6178,9 @@ def _render_api_metrics_panel(self):
                 <div style="margin-bottom: 10px;">
                     <strong>{endpoint}</strong><br>
                     <small>
-                    Requests: {metrics['total_requests']} | 
-                    Success: {metrics['success_rate']:.1%} | 
-                    Avg: {metrics['avg_response_time']:.2f}s | 
+                    Requests: {metrics['total_requests']} |
+                    Success: {metrics['success_rate']:.1%} |
+                    Avg: {metrics['avg_response_time']:.2f}s |
                     P95: {metrics['p95_response_time']:.2f}s
                     </small>
                 </div>
@@ -6847,7 +6191,6 @@ def _render_api_metrics_panel(self):
             """
 
             st.markdown(metrics_html, unsafe_allow_html=True)
-
 
 def _render_sidebar(self):
     """Render sidebar with enhanced Kaggle configuration"""
@@ -6860,7 +6203,8 @@ def _render_sidebar(self):
     kaggle_enabled = st.sidebar.checkbox(
         "Enable Kaggle GPU Acceleration",
         value=self.get_state('kaggle_api_enabled', False),
-        help="Use remote GPU for faster processing")
+        help="Use remote GPU for faster processing"
+    )
 
     if kaggle_enabled:
         # Show configuration options
@@ -6870,29 +6214,36 @@ def _render_sidebar(self):
                 "Ngrok URL",
                 value=self.get_state('kaggle_api_url', ''),
                 placeholder="https://xxxx.ngrok-free.app",
-                help="Paste the ngrok URL from your Kaggle notebook")
+                help="Paste the ngrok URL from your Kaggle notebook"
+            )
 
             # Optional API key
-            api_key = st.text_input("API Key (Optional)",
-                                    type="password",
-                                    help="Optional API key for authentication")
+            api_key = st.text_input(
+                "API Key (Optional)",
+                type="password",
+                help="Optional API key for authentication"
+            )
 
             # Advanced settings
             col1, col2 = st.columns(2)
 
             with col1:
-                timeout = st.number_input("Timeout (seconds)",
-                                          min_value=10,
-                                          max_value=300,
-                                          value=30,
-                                          help="Request timeout")
+                timeout = st.number_input(
+                    "Timeout (seconds)",
+                    min_value=10,
+                    max_value=300,
+                    value=30,
+                    help="Request timeout"
+                )
 
             with col2:
-                batch_size = st.number_input("Batch Size",
-                                             min_value=1,
-                                             max_value=100,
-                                             value=50,
-                                             help="Optimal batch size for GPU")
+                batch_size = st.number_input(
+                    "Batch Size",
+                    min_value=1,
+                    max_value=100,
+                    value=50,
+                    help="Optimal batch size for GPU"
+                )
 
             # Circuit breaker settings
             with st.expander("Circuit Breaker Settings"):
@@ -6901,14 +6252,16 @@ def _render_sidebar(self):
                     min_value=1,
                     max_value=20,
                     value=5,
-                    help="Failures before circuit opens")
+                    help="Failures before circuit opens"
+                )
 
                 cb_timeout = st.number_input(
                     "Recovery Timeout (seconds)",
                     min_value=30,
                     max_value=600,
                     value=300,
-                    help="Time before retry after circuit opens")
+                    help="Time before retry after circuit opens"
+                )
 
             # Test connection button
             if st.button("🔌 Test Connection", type="primary"):
@@ -6918,10 +6271,8 @@ def _render_sidebar(self):
                     self.config.set('ai.kaggle_api_key', api_key)
                     self.config.set('ai.kaggle_api_timeout', timeout)
                     self.config.set('ai.kaggle_batch_size', batch_size)
-                    self.config.set('ai.kaggle_circuit_breaker_threshold',
-                                    cb_threshold)
-                    self.config.set('ai.kaggle_circuit_breaker_timeout',
-                                    cb_timeout)
+                    self.config.set('ai.kaggle_circuit_breaker_threshold', cb_threshold)
+                    self.config.set('ai.kaggle_circuit_breaker_timeout', cb_timeout)
                     self.config.set('ai.use_kaggle_api', True)
 
                     # Reinitialize AI mapper
@@ -6934,17 +6285,14 @@ def _render_sidebar(self):
                             status = self.components['mapper'].get_api_status()
 
                             if status['kaggle_available']:
-                                st.success(
-                                    "✅ Successfully connected to Kaggle GPU!")
+                                st.success("✅ Successfully connected to Kaggle GPU!")
 
                                 # Show API info
                                 if status['api_info']:
                                     info = status['api_info']
                                     system_info = info.get('system', {})
-                                    gpu_name = system_info.get(
-                                        'gpu_name', 'Unknown')
-                                    device = system_info.get(
-                                        'device', 'Unknown')
+                                    gpu_name = system_info.get('gpu_name', 'Unknown')
+                                    device = system_info.get('device', 'Unknown')
                                     model = system_info.get('model', 'Unknown')
 
                                     st.info(f"""
@@ -6962,9 +6310,7 @@ def _render_sidebar(self):
                                 self.set_state('kaggle_api_status', 'online')
 
                             else:
-                                st.error(
-                                    "❌ Connection failed. Please check your URL and try again."
-                                )
+                                st.error("❌ Connection failed. Please check your URL and try again.")
                                 self.set_state('kaggle_api_status', 'offline')
                         except Exception as e:
                             st.error(f"❌ Connection error: {str(e)}")
@@ -6979,8 +6325,7 @@ def _render_sidebar(self):
                         try:
                             import requests
                             import urllib3
-                            urllib3.disable_warnings(
-                                urllib3.exceptions.InsecureRequestWarning)
+                            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
                             test_data = {'texts': ['test embedding']}
 
@@ -6992,10 +6337,10 @@ def _render_sidebar(self):
                                     'ngrok-skip-browser-warning': 'true'
                                 },
                                 verify=False,
-                                timeout=10)
+                                timeout=10
+                            )
 
-                            st.write(
-                                f"**Status Code:** {response.status_code}")
+                            st.write(f"**Status Code:** {response.status_code}")
 
                             if response.status_code == 200:
                                 st.success("✅ Embed endpoint is working!")
@@ -7005,65 +6350,38 @@ def _render_sidebar(self):
 
                                     # Show structure of response
                                     if isinstance(result, dict):
-                                        st.write(
-                                            f"- Type: Dictionary with keys: {list(result.keys())}"
-                                        )
+                                        st.write(f"- Type: Dictionary with keys: {list(result.keys())}")
 
                                         # Show sample of embeddings if present
-                                        for key in [
-                                                'embeddings', 'data',
-                                                'vectors', 'output'
-                                        ]:
+                                        for key in ['embeddings', 'data', 'vectors', 'output']:
                                             if key in result:
-                                                st.write(
-                                                    f"- Found embeddings in key: '{key}'"
-                                                )
+                                                st.write(f"- Found embeddings in key: '{key}'")
                                                 embed_data = result[key]
-                                                if isinstance(
-                                                        embed_data, list
-                                                ) and len(embed_data) > 0:
-                                                    st.write(
-                                                        f"  - Number of embeddings: {len(embed_data)}"
-                                                    )
-                                                    st.write(
-                                                        f"  - Embedding dimension: {len(embed_data[0]) if isinstance(embed_data[0], list) else 'N/A'}"
-                                                    )
-                                                    st.write(
-                                                        f"  - First 5 values: {embed_data[0][:5] if isinstance(embed_data[0], list) else str(embed_data[0])[:50]}"
-                                                    )
+                                                if isinstance(embed_data, list) and len(embed_data) > 0:
+                                                    st.write(f"  - Number of embeddings: {len(embed_data)}")
+                                                    st.write(f"  - Embedding dimension: {len(embed_data) if isinstance(embed_data, list) else 'N/A'}")
+                                                    st.write(f"  - First 5 values: {embed_data[:5] if isinstance(embed_data, list) else str(embed_data)[:50]}")
                                                 break
                                     elif isinstance(result, list):
-                                        st.write(
-                                            f"- Type: List with {len(result)} items"
-                                        )
+                                        st.write(f"- Type: List with {len(result)} items")
                                         if len(result) > 0:
-                                            st.write(
-                                                f"- First item type: {type(result[0])}"
-                                            )
-                                            st.write(
-                                                f"- Dimension: {len(result[0]) if isinstance(result[0], list) else 'N/A'}"
-                                            )
+                                            st.write(f"- First item type: {type(result)}")
+                                            st.write(f"- Dimension: {len(result) if isinstance(result, list) else 'N/A'}")
 
                                     # Show full response in expander
                                     with st.expander("View full response"):
                                         st.json(result)
 
                                 except Exception as e:
-                                    st.warning(
-                                        f"Response is not JSON: {response.text[:200]}"
-                                    )
+                                    st.warning(f"Response is not JSON: {response.text[:200]}")
                             else:
                                 st.error(f"❌ Embed endpoint failed")
                                 st.text(f"Response: {response.text[:500]}")
 
                         except requests.exceptions.Timeout:
-                            st.error(
-                                "❌ Request timed out. The endpoint might be slow or unresponsive."
-                            )
+                            st.error("❌ Request timed out. The endpoint might be slow or unresponsive.")
                         except requests.exceptions.ConnectionError:
-                            st.error(
-                                "❌ Connection error. Check if the URL is correct and accessible."
-                            )
+                            st.error("❌ Connection error. Check if the URL is correct and accessible.")
                         except Exception as e:
                             st.error(f"❌ Test failed: {str(e)}")
                             import traceback
@@ -7081,16 +6399,17 @@ def _render_sidebar(self):
                         # Test various endpoints
                         import requests
                         import urllib3
-                        urllib3.disable_warnings(
-                            urllib3.exceptions.InsecureRequestWarning)
+                        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-                        endpoints_to_test = [('/', 'Root'),
-                                             ('/health', 'Health'),
-                                             ('/embed', 'Embed (GET)'),
-                                             ('/api/health', 'API Health'),
-                                             ('/status', 'Status'),
-                                             ('/docs', 'Documentation'),
-                                             ('/version', 'Version')]
+                        endpoints_to_test = [
+                            ('/', 'Root'),
+                            ('/health', 'Health'),
+                            ('/embed', 'Embed (GET)'),
+                            ('/api/health', 'API Health'),
+                            ('/status', 'Status'),
+                            ('/docs', 'Documentation'),
+                            ('/version', 'Version')
+                        ]
 
                         st.write("\n**Endpoint Tests:**")
 
@@ -7101,21 +6420,15 @@ def _render_sidebar(self):
                                     url,
                                     timeout=5,
                                     verify=False,
-                                    headers={
-                                        'ngrok-skip-browser-warning': 'true'
-                                    })
+                                    headers={'ngrok-skip-browser-warning': 'true'}
+                                )
 
                                 if response.status_code == 200:
-                                    st.success(
-                                        f"✅ {name} ({endpoint}): {response.status_code}"
-                                    )
+                                    st.success(f"✅ {name} ({endpoint}): {response.status_code}")
                                 elif response.status_code == 404:
-                                    st.warning(
-                                        f"⚠️ {name} ({endpoint}): Not found")
+                                    st.warning(f"⚠️ {name} ({endpoint}): Not found")
                                 else:
-                                    st.error(
-                                        f"❌ {name} ({endpoint}): {response.status_code}"
-                                    )
+                                    st.error(f"❌ {name} ({endpoint}): {response.status_code}")
 
                             except Exception as e:
                                 st.error(f"❌ {name} ({endpoint}): {str(e)}")
@@ -7123,42 +6436,31 @@ def _render_sidebar(self):
                         # Test POST to embed with different payloads
                         st.write("\n**Embed Endpoint Tests (POST):**")
 
-                        test_payloads = [{
-                            'texts': ['test']
-                        }, {
-                            'text': 'test'
-                        }, {
-                            'inputs': ['test']
-                        }, {
-                            'data': ['test']
-                        }]
+                        test_payloads = [
+                            {'texts': ['test']},
+                            {'text': 'test'},
+                            {'inputs': ['test']},
+                            {'data': ['test']}
+                        ]
 
                         for payload in test_payloads:
                             try:
                                 response = requests.post(
                                     f"{api_url.rstrip('/')}/embed",
                                     json=payload,
-                                    headers={
-                                        'Content-Type': 'application/json',
-                                        'ngrok-skip-browser-warning': 'true'
-                                    },
+                                    headers={'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
                                     verify=False,
-                                    timeout=10)
+                                    timeout=10
+                                )
 
                                 if response.status_code == 200:
-                                    st.success(
-                                        f"✅ Payload format `{list(payload.keys())[0]}`: Success"
-                                    )
+                                    st.success(f"✅ Payload format `{list(payload.keys())[0]}`: Success")
                                     break
                                 else:
-                                    st.warning(
-                                        f"⚠️ Payload format `{list(payload.keys())[0]}`: {response.status_code}"
-                                    )
+                                    st.warning(f"⚠️ Payload format `{list(payload.keys())[0]}`: {response.status_code}")
 
                             except Exception as e:
-                                st.error(
-                                    f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}"
-                                )
+                                st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
                 else:
                     st.warning("Please enter a ngrok URL above")
 
@@ -7166,23 +6468,23 @@ def _render_sidebar(self):
             with st.expander("📚 Setup Guide"):
                 st.markdown("""
                 **How to connect to Kaggle GPU:**
-                
+
                 1. **Run the Kaggle notebook** with the API server code
                 2. **Copy the ngrok URL** shown in the output
                 3. **Paste it above** and click Test Connection
-                
+
                 **Benefits:**
                 - 🚀 10-100x faster embedding generation
                 - 💾 Larger model support (GPU memory)
                 - 🔋 Reduced local CPU/memory usage
                 - 📊 Better accuracy with larger models
-                
+
                 **Advanced Features:**
                 - Circuit breaker for resilience
                 - Request batching and coalescing
                 - Response caching
                 - Connection pooling
-                
+
                 **Troubleshooting:**
                 - Ensure the Kaggle notebook is running
                 - Check that ngrok is not expired (8 hour limit)
@@ -7217,9 +6519,7 @@ def _render_sidebar(self):
                 st.sidebar.text(method)
 
             # Show metrics toggle
-            if st.sidebar.checkbox("Show API Metrics",
-                                   value=self.get_state(
-                                       'api_metrics_visible', False)):
+            if st.sidebar.checkbox("Show API Metrics", value=self.get_state('api_metrics_visible', False)):
                 self.set_state('api_metrics_visible', True)
             else:
                 self.set_state('api_metrics_visible', False)
@@ -7232,8 +6532,10 @@ def _render_sidebar(self):
     st.sidebar.header("📥 Data Input")
 
     input_method = st.sidebar.radio(
-        "Input Method", ["Upload Files", "Sample Data", "Manual Entry"],
-        key="input_method")
+        "Input Method",
+        ["Upload Files", "Sample Data", "Manual Entry"],
+        key="input_method"
+    )
 
     if input_method == "Upload Files":
         self._render_file_upload()
@@ -7247,23 +6549,18 @@ def _render_sidebar(self):
 
     # Performance mode
     mode_options = [m.name for m in Configuration.DisplayMode]
-    current_mode = self.config.get('app.display_mode',
-                                   Configuration.DisplayMode.LITE)
+    current_mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
 
     selected_mode = st.sidebar.selectbox(
         "Performance Mode",
         mode_options,
         index=mode_options.index(current_mode.name),
-        help="FULL: All features | LITE: Balanced | MINIMAL: Fast")
+        help="FULL: All features | LITE: Balanced | MINIMAL: Fast"
+    )
 
     if selected_mode != current_mode.name:
-        self.config.set('app.display_mode',
-                        Configuration.DisplayMode[selected_mode])
-        self.set_state('config_overrides', {
-            'app': {
-                'display_mode': Configuration.DisplayMode[selected_mode]
-            }
-        })
+        self.config.set('app.display_mode', Configuration.DisplayMode[selected_mode])
+        self.set_state('config_overrides', {'app': {'display_mode': Configuration.DisplayMode[selected_mode]}})
 
     # AI Settings
     if selected_mode != "MINIMAL":
@@ -7272,18 +6569,19 @@ def _render_sidebar(self):
         ai_enabled = st.sidebar.checkbox(
             "Enable AI Mapping",
             value=self.config.get('ai.enabled', True),
-            help="Use AI for intelligent metric mapping")
+            help="Use AI for intelligent metric mapping"
+        )
 
         self.config.set('ai.enabled', ai_enabled)
 
         if ai_enabled:
             confidence_threshold = st.sidebar.slider(
                 "Confidence Threshold",
-                0.0,
-                1.0,
+                0.0, 1.0,
                 self.config.get('ai.similarity_threshold', 0.6),
                 0.05,
-                help="Minimum confidence for automatic mapping")
+                help="Minimum confidence for automatic mapping"
+            )
             self.config.set('ai.similarity_threshold', confidence_threshold)
 
     # Collaboration Settings
@@ -7294,7 +6592,8 @@ def _render_sidebar(self):
             if st.sidebar.button("Start Collaborative Session"):
                 session_id = self.collaboration_manager.create_session(
                     self.get_state('analysis_data_id', 'default'),
-                    'current_user')
+                    'current_user'
+                )
                 self.set_state('collaboration_session', session_id)
                 st.sidebar.success(f"Session created: {session_id}")
         else:
@@ -7314,17 +6613,19 @@ def _render_sidebar(self):
         "Display Format",
         ["Indian (₹ Lakhs/Crores)", "International ($ Millions)"],
         index=0 if current_format == 'Indian' else 1,
-        key="number_format_radio")
+        key="number_format_radio"
+    )
 
     self.set_state('number_format_value',
-                   'Indian' if "Indian" in format_option else 'International')
+                  'Indian' if "Indian" in format_option else 'International')
 
     # Advanced options
     with st.sidebar.expander("🔧 Advanced Options"):
         debug_mode = st.sidebar.checkbox(
             "Debug Mode",
             value=self.config.get('app.debug', False),
-            help="Show detailed error information")
+            help="Show detailed error information"
+        )
         self.config.set('app.debug', debug_mode)
 
         if st.sidebar.button("Clear Cache"):
@@ -7345,7 +6646,6 @@ def _render_sidebar(self):
                 for op, stats in list(perf_summary.items())[:5]:
                     st.sidebar.text(f"{op}: {stats['avg_duration']:.3f}s")
 
-
 def _render_file_upload(self):
     """Render file upload interface"""
     allowed_types = self.config.get('app.allowed_file_types', [])
@@ -7357,25 +6657,18 @@ def _render_file_upload(self):
         type=allowed_types,
         accept_multiple_files=True,
         key="file_uploader",
-        help=
-        "You can upload compressed files (.zip, .7z) containing multiple financial statements"
+        help="You can upload compressed files (.zip, .7z) containing multiple financial statements"
     )
 
     if temp_files:
         st.session_state['uploaded_files'] = temp_files
 
         # Count files and show info
-        regular_files = [
-            f for f in temp_files
-            if not f.name.lower().endswith(('.zip', '.7z'))
-        ]
-        compressed_files = [
-            f for f in temp_files if f.name.lower().endswith(('.zip', '.7z'))
-        ]
+        regular_files = [f for f in temp_files if not f.name.lower().endswith(('.zip', '.7z'))]
+        compressed_files = [f for f in temp_files if f.name.lower().endswith(('.zip', '.7z'))]
 
         if compressed_files:
-            st.sidebar.info(
-                f"📦 {len(compressed_files)} compressed file(s) uploaded")
+            st.sidebar.info(f"📦 {len(compressed_files)} compressed file(s) uploaded")
         if regular_files:
             st.sidebar.info(f"📄 {len(regular_files)} regular file(s) uploaded")
 
@@ -7386,7 +6679,8 @@ def _render_file_upload(self):
         st.session_state['simple_parse_mode'] = st.sidebar.checkbox(
             "Use simple parsing mode",
             value=st.session_state['simple_parse_mode'],
-            help="Try this if normal parsing fails")
+            help="Try this if normal parsing fails"
+        )
 
         # Check for 7z files and py7zr availability
         has_7z = any(f.name.lower().endswith('.7z') for f in uploaded_files)
@@ -7401,7 +6695,7 @@ def _render_file_upload(self):
             if not file.name.lower().endswith(('.zip', '.7z')):
                 result = self.components['security'].validate_file_upload(file)
                 if not result.is_valid:
-                    st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
+                    st.sidebar.error(f"❌ {file.name}: {result.errors}")
                     all_valid = False
 
         if all_valid and st.sidebar.button("Process Files", type="primary"):
@@ -7411,34 +6705,35 @@ def _render_file_upload(self):
     with st.sidebar.expander("📋 File Format Guide"):
         st.info("""
         **Supported Financial Data Formats:**
-        
+
         1. **Capitaline Exports**: Both .xls (HTML) and true Excel formats
         2. **Moneycontrol/BSE/NSE**: HTML exports with .xls extension
         3. **Standard CSV/Excel**: With metrics in rows and years in columns
-        4. **Compressed Files**: 
+        4. **Compressed Files**:
            - ZIP files (.zip) containing multiple statements
            - 7Z files (.7z) for maximum compression
-        
-        **💡 Pro Tips**: 
+
+        **💡 Pro Tips**:
         - Compress multiple files into a single ZIP/7Z for faster uploads
         - 7Z typically provides 50-70% better compression than ZIP
         - You can mix different file types in a single compressed file
         """)
 
-
 def _render_sample_data_loader(self):
     """Render sample data loader"""
     sample_options = [
-        "Indian Tech Company (IND-AS)", "US Manufacturing (GAAP)",
+        "Indian Tech Company (IND-AS)",
+        "US Manufacturing (GAAP)",
         "European Retail (IFRS)"
     ]
 
-    selected_sample = st.sidebar.selectbox("Select Sample Dataset",
-                                           sample_options)
+    selected_sample = st.sidebar.selectbox(
+        "Select Sample Dataset",
+        sample_options
+    )
 
     if st.sidebar.button("Load Sample Data", type="primary"):
         self._load_sample_data(selected_sample)
-
 
 def _load_sample_data(self, sample_name: str):
     """Load sample data"""
@@ -7458,8 +6753,7 @@ def _load_sample_data(self, sample_name: str):
                 return
 
             # Process data
-            processed_df, validation_result = self.components[
-                'processor'].process(df, "sample_data")
+            processed_df, validation_result = self.components['processor'].process(df, "sample_data")
 
             # Store in session state
             self.set_state('analysis_data', processed_df)
@@ -7470,7 +6764,6 @@ def _load_sample_data(self, sample_name: str):
 
     except Exception as e:
         st.error(f"Error loading sample data: {str(e)}")
-
 
 def _render_main_content(self):
     """Render main content area"""
@@ -7484,27 +6777,30 @@ def _render_main_content(self):
     else:
         self._render_welcome_screen()
 
-
 def _render_query_bar(self):
     """Render natural language query bar"""
-    col1, col2 = st.columns([5, 1])
+    col1, col2 = st.columns()
 
     with col1:
         query = st.text_input(
             "🔍 Ask a question about your financial data",
             placeholder="e.g., What was the revenue growth last year?",
-            key="nl_query")
+            key="nl_query"
+        )
 
     with col2:
         if st.button("Ask", type="primary", key="ask_button"):
             if query and self.get_state('analysis_data') is not None:
                 with st.spinner("Processing query..."):
-                    analysis = self.components[
-                        'analyzer'].analyze_financial_statements(
-                            self.get_state('analysis_data'))
+                    analysis = self.components['analyzer'].analyze_financial_statements(
+                        self.get_state('analysis_data')
+                    )
 
                     result = self.nl_processor.process_query(
-                        query, self.get_state('analysis_data'), analysis)
+                        query,
+                        self.get_state('analysis_data'),
+                        analysis
+                    )
 
                     # Store in history
                     query_history = self.get_state('query_history', [])
@@ -7517,7 +6813,6 @@ def _render_query_bar(self):
 
                     # Display result
                     self._display_query_result(result)
-
 
 def _display_query_result(self, result: Dict[str, Any]):
     """Display natural language query result"""
@@ -7536,199 +6831,1524 @@ def _display_query_result(self, result: Dict[str, Any]):
         st.subheader("🔮 Forecast Results")
         forecasts = result['data'].get('forecasts', {})
         for metric, forecast in forecasts.items():
-            st.write(f"**{metric}**")
+         st.write(f"**{metric}**")
 
-            # Create forecast chart
-            fig = go.Figure()
+        # Create forecast chart
+        fig = go.Figure()
 
-            # Forecast
-            fig.add_trace(
-                go.Scatter(x=forecast['periods'],
-                           y=forecast['values'],
-                           mode='lines+markers',
-                           name='Forecast',
-                           line=dict(dash='dash')))
+        # Forecast
+        fig.add_trace(go.Scatter(
+            x=forecast['periods'],
+            y=forecast['values'],
+            mode='lines+markers',
+            name='Forecast',
+            line=dict(dash='dash')
+        ))
 
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=300)
+        st.plotly_chart(fig, use_container_width=True)
 
-    elif result['type'] == 'summary':
-        st.subheader("📊 Summary")
-        summary = result['data']
+elif result['type'] == 'summary':
+    st.subheader("📊 Summary")
+    summary = result['data']
 
-        # Display summary metrics
-        cols = st.columns(4)
-        summary_data = summary.get('summary', {})
+    # Display summary metrics
+    cols = st.columns(4)
+    summary_data = summary.get('summary', {})
 
-        if 'total_metrics' in summary_data:
-            cols[0].metric("Total Metrics", summary_data['total_metrics'])
-        if 'year_range' in summary_data:
-            cols[1].metric("Period", summary_data['year_range'])
-        if 'quality_score' in summary:
-            cols[2].metric("Data Quality", f"{summary['quality_score']:.0f}%")
+    if 'total_metrics' in summary_data:
+        cols.metric("Total Metrics", summary_data['total_metrics'])
+    if 'year_range' in summary_data:
+        cols.metric("Period", summary_data['year_range'])
+    if 'quality_score' in summary:
+        cols.metric("Data Quality", f"{summary['quality_score']:.0f}%")
 
-        # Display insights
-        if 'insights' in summary:
-            st.write("**Key Insights:**")
-            for insight in summary['insights']:
-                st.write(f"- {insight}")
+    # Display insights
+    if 'insights' in summary:
+        st.write("**Key Insights:**")
+        for insight in summary['insights']:
+            st.write(f"- {insight}")
 
-    else:
-        st.info(result.get('message', 'Query processed successfully'))
-
-
+else:
+    st.info(result.get('message', 'Query processed successfully'))
+Use code with caution.
 def _render_welcome_screen(self):
-    """Render welcome screen"""
-    st.header("Welcome to Elite Financial Analytics Platform v5.1")
+"""Render welcome screen"""
+st.header("Welcome to Elite Financial Analytics Platform v5.1")
+Generated code
+# Feature cards
+col1,col2,col3 = st.columns(3)
 
-    # Feature cards
-    col1, col2, col3 = st.columns(3)
+with col1:
+    st.info("""
+    ### 📊 Advanced Analytics
+    - Comprehensive ratio analysis
+    - ML-powered forecasting
+    - Anomaly detection
+    - Natural language queries
+    """)
 
-    with col1:
-        st.info("""
-        ### 📊 Advanced Analytics
-        - Comprehensive ratio analysis
-        - ML-powered forecasting
-        - Anomaly detection
-        - Natural language queries
-        """)
+with col2:
+    st.success("""
+    ### 🤖 AI-Powered Features
+    - Intelligent metric mapping
+    - Kaggle GPU acceleration
+    - Pattern recognition
+    - Automated insights
+    """)
 
-    with col2:
-        st.success("""
-        ### 🤖 AI-Powered Features
-        - Intelligent metric mapping
-        - Kaggle GPU acceleration
-        - Pattern recognition
-        - Automated insights
-        """)
+with col3:
+    st.warning("""
+    ### 👥 Collaboration
+    - Real-time collaboration
+    - Share analyses
+    - Export to multiple formats
+    - Interactive tutorials
+    """)
 
-    with col3:
-        st.warning("""
-        ### 👥 Collaboration
-        - Real-time collaboration
-        - Share analyses
-        - Export to multiple formats
-        - Interactive tutorials
-        """)
+# Quick start guide
+with st.expander("🚀 Quick Start Guide", expanded=True):
+    st.markdown("""
+    1. **Upload Data**: Use the sidebar to upload financial statements
+    2. **Configure Kaggle GPU**: Optional - for faster AI processing
+    3. **AI Mapping**: Let AI automatically map your metrics or do it manually
+    4. **Analyze**: Explore comprehensive analysis with ratios, trends, and forecasts
+    5. **Query**: Ask questions in natural language about your data
+    6. **Collaborate**: Share your analysis with team members
+    7. **Export**: Generate professional reports in various formats
 
-    # Quick start guide
-    with st.expander("🚀 Quick Start Guide", expanded=True):
-        st.markdown("""
-        1. **Upload Data**: Use the sidebar to upload financial statements
-        2. **Configure Kaggle GPU**: Optional - for faster AI processing
-        3. **AI Mapping**: Let AI automatically map your metrics or do it manually
-        4. **Analyze**: Explore comprehensive analysis with ratios, trends, and forecasts
-        5. **Query**: Ask questions in natural language about your data
-        6. **Collaborate**: Share your analysis with team members
-        7. **Export**: Generate professional reports in various formats
-        
-        **New in v5.1:**
-        - 🖥️ **Enhanced Kaggle GPU Integration**: Circuit breaker, request coalescing
-        - 🚀 Improved performance monitoring and API metrics
-        - 💬 Better error recovery and fallback strategies
-        - 👥 Enhanced collaboration features
-        - 📈 Advanced caching with memory buffers
-        - 🔒 Robust security features
-        - 📦 Support for compressed files (ZIP/7Z)
-        """)
+    **New in v5.1:**
+    - 🖥️ **Enhanced Kaggle GPU Integration**: Circuit breaker, request coalescing
+    - 🚀 Improved performance monitoring and API metrics
+    - 💬 Better error recovery and fallback strategies
+    - 👥 Enhanced collaboration features
+    - 📈 Advanced caching with memory buffers
+    - 🔒 Robust security features
+    - 📦 Support for compressed files (ZIP/7Z)
+    """)
 
-    # Sample data quick access
-    st.subheader("🎯 Try with Sample Data")
-    col1, col2, col3 = st.columns(3)
+# Sample data quick access
+st.subheader("🎯 Try with Sample Data")
+col1, col2, col3 = st.columns(3)
 
-    with col1:
-        if st.button("Indian Tech Company", key="sample_indian"):
-            self._load_sample_data("Indian Tech Company (IND-AS)")
+with col1:
+    if st.button("Indian Tech Company", key="sample_indian"):
+        self._load_sample_data("Indian Tech Company (IND-AS)")
 
-    with col2:
-        if st.button("US Manufacturing", key="sample_us"):
-            self._load_sample_data("US Manufacturing (GAAP)")
+with col2:
+    if st.button("US Manufacturing", key="sample_us"):
+        self._load_sample_data("US Manufacturing (GAAP)")
 
-    with col3:
-        if st.button("European Retail", key="sample_eu"):
-            self._load_sample_data("European Retail (IFRS)")
-
-
+with col3:
+    if st.button("European Retail", key="sample_eu"):
+        self._load_sample_data("European Retail (IFRS)")
+Use code with caution.
 def _render_analysis_interface(self):
-    """Render main analysis interface"""
-    data = self.get_state('analysis_data')
+"""Render main analysis interface"""
+data = self.get_state('analysis_data')
+Generated code
+if data is None:
+    self._render_welcome_screen()
+    return
 
-    if data is None:
-        self._render_welcome_screen()
-        return
+# Analysis tabs
+tabs = st.tabs([
+    "📊 Overview",
+    "📈 Financial Ratios",
+    "📉 Trends & Forecasting",
+    "🎯 Penman-Nissim",
+    "🏭 Industry Comparison",
+    "🔍 Data Explorer",
+    "📄 Reports",
+    "🤖 ML Insights"
+])
 
-    # Analysis tabs
-    tabs = st.tabs([
-        "📊 Overview", "📈 Financial Ratios", "📉 Trends & Forecasting",
-        "🎯 Penman-Nissim", "🏭 Industry Comparison", "🔍 Data Explorer",
-        "📄 Reports", "🤖 ML Insights"
-    ])
+with tabs:
+    self._render_overview_tab(data)
 
-    with tabs[0]:
-        self._render_overview_tab(data)
+with tabs:
+    self._render_ratios_tab(data)
 
-    with tabs[1]:
-        self._render_ratios_tab(data)
+with tabs:
+    self._render_trends_tab(data)
 
-    with tabs[2]:
-        self._render_trends_tab(data)
+with tabs:
+    self._render_penman_nissim_tab(data)
 
-    with tabs[3]:
-        self._render_penman_nissim_tab(data)
+with tabs:
+    self._render_industry_tab(data)
 
-    with tabs[4]:
-        self._render_industry_tab(data)
+with tabs:
+    self._render_data_explorer_tab(data)
 
-    with tabs[5]:
-        self._render_data_explorer_tab(data)
+with tabs:
+    self._render_reports_tab(data)
 
-    with tabs[6]:
-        self._render_reports_tab(data)
-
-    with tabs[7]:
-        self._render_ml_insights_tab(data)
-
-
+with tabs:
+    self._render_ml_insights_tab(data)
+Use code with caution.
 @error_boundary()
 def _render_overview_tab(self, data: pd.DataFrame):
-    """Render overview tab with key metrics and insights"""
-    st.header("Financial Overview")
+"""Render overview tab with key metrics and insights"""
+st.header("Financial Overview")
+Generated code
+# Show progress tracking if available
+if 'mapper' in self.components and hasattr(self.components['mapper'], 'progress_tracker'):
+    self._render_progress_tracking()
 
-    # Show progress tracking if available
-    if 'mapper' in self.components and hasattr(self.components['mapper'],
-                                               'progress_tracker'):
-        self._render_progress_tracking()
+# Analyze data
+with performance_monitor.measure("overview_analysis"):
+    analysis = self.components['analyzer'].analyze_financial_statements(data)
 
-    # Analyze data
-    with performance_monitor.measure("overview_analysis"):
-        analysis = self.components['analyzer'].analyze_financial_statements(
-            data)
+# Summary metrics
+col1, col2, col3, col4 = st.columns(4)
 
-    # Summary metrics
-    col1, col2, col3, col4 = st.columns(4)
+with col1:
+    self.ui_factory.create_metric_card(
+        "Total Metrics",
+        analysis['summary']['total_metrics']
+    )
+
+with col2:
+    self.ui_factory.create_metric_card(
+        "Years Covered",
+        analysis['summary']['years_covered']
+    )
+
+with col3:
+    self.ui_factory.create_metric_card(
+        "Data Completeness",
+        f"{analysis['summary']['completeness']:.1f}%"
+    )
+
+with col4:
+    quality_score = analysis['quality_score']
+    self.ui_factory.create_data_quality_badge(quality_score)
+
+# Key insights
+st.subheader("Key Insights")
+
+insights = analysis.get('insights', [])
+if insights:
+    for i, insight in enumerate(insights[:8]):
+        if "⚠️" in insight:
+            insight_type = "warning"
+        elif "📉" in insight:
+            insight_type = "error"
+        elif "🚀" in insight or "📊" in insight:
+            insight_type = "success"
+        else:
+            insight_type = "info"
+
+        self.ui_factory.create_insight_card(insight, insight_type)
+else:
+    st.info("No specific insights available yet. Complete the analysis to see insights.")
+
+# Anomaly detection
+if 'anomalies' in analysis:
+    anomalies = analysis['anomalies']
+    total_anomalies = sum(len(v) for v in anomalies.values())
+
+    if total_anomalies > 0:
+        st.subheader("🔍 Anomaly Detection")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric("Value Anomalies", len(anomalies.get('value_anomalies', [])))
+
+        with col2:
+            st.metric("Trend Anomalies", len(anomalies.get('trend_anomalies', [])))
+
+        with col3:
+            st.metric("Ratio Anomalies", len(anomalies.get('ratio_anomalies', [])))
+
+        with st.expander("View Anomaly Details"):
+            for anomaly_type, items in anomalies.items():
+                if items:
+                    st.write(f"**{anomaly_type.replace('_', ' ').title()}:**")
+                    anomaly_df = pd.DataFrame(items)
+                    st.dataframe(anomaly_df, use_container_width=True)
+
+# Quick visualizations
+st.subheader("Quick Visualizations")
+
+metrics = analysis.get('metrics', {})
+
+if metrics:
+    col1, col2 = st.columns(2)
 
     with col1:
-        self.ui_factory.create_metric_card(
-            "Total Metrics", analysis['summary']['total_metrics'])
+        revenue_data = metrics.get('revenue', [])
+        if revenue_data:
+            self._render_metric_chart(revenue_data, "Revenue Trend")
 
     with col2:
-        self.ui_factory.create_metric_card(
-            "Years Covered", analysis['summary']['years_covered'])
+        profit_data = metrics.get('net_income', [])
+        if profit_data:
+            self._render_metric_chart(profit_data, "Net Income Trend")
+Use code with caution.
+def _render_progress_tracking(self):
+"""Render progress tracking for long operations"""
+progress_tracker = self.components['mapper'].progress_tracker
+Generated code
+# Get active operations
+active_operations = []
+for op_id, op_data in progress_tracker.operations.items():
+    if op_data['status'] == 'running':
+        active_operations.append((op_id, op_data))
+
+if active_operations:
+    st.markdown("""
+    <div class="progress-tracker">
+        <strong>Processing Operations:</strong>
+    </div>
+    """, unsafe_allow_html=True)
+
+    for op_id, op_data in active_operations:
+        progress = op_data['completed'] / op_data['total']
+        st.markdown(f"""
+        <div style="margin: 5px 0;">
+            <small>{op_data['description']}</small>
+            <div style="background: #e0e0e0; border-radius: 4px; height: 8px;">
+                <div class="progress-bar" style="width: {progress * 100}%;"></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+Use code with caution.
+def _render_metric_chart(self, metric_data: Dict, title: str):
+"""Render a simple metric chart"""
+values = metric_data.get('values', {})
+Generated code
+if values:
+    years = list(values.keys())
+    amounts = list(values.values())
+
+    formatter = get_number_formatter(self.get_state('number_format_value'))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=years,
+        y=amounts,
+        mode='lines+markers',
+        name=metric_data.get('name', 'Value'),
+        line=dict(width=3),
+        marker=dict(size=8),
+        hovertemplate='%{x}: %{y:,.0f}<extra></extra>'
+    ))
+
+    if len(years) > 2:
+        z = np.polyfit(range(len(years)), amounts, 1)
+        p = np.poly1d(z)
+
+        fig.add_trace(go.Scatter(
+            x=years,
+            y=p(range(len(years))),
+            mode='lines',
+            name='Trend',
+            line=dict(dash='dash', width=2),
+            opacity=0.7
+        ))
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Year",
+        yaxis_title="Amount",
+        hovermode='x unified',
+        height=400
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+Use code with caution.
+@error_boundary()
+def _render_ratios_tab(self, data: pd.DataFrame):
+"""Render financial ratios tab with manual mapping support"""
+st.header("📈 Financial Ratio Analysis")
+Generated code
+if not self.get_state('metric_mappings'):
+    st.warning("Please map metrics first to calculate ratios")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("🤖 Auto-map with AI", type="primary", key="ai_map_ratios"):
+            self._perform_ai_mapping(data)
+
+    with col2:
+        if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
+            self.set_state('show_manual_mapping', True)
+
+    if self.get_state('show_manual_mapping', False):
+        manual_mapper = ManualMappingInterface(data)
+        mappings = manual_mapper.render()
+
+        if st.button("✅ Apply Mappings", type="primary", key="apply_manual_mappings"):
+            self.set_state('metric_mappings', mappings)
+            st.success(f"Applied {len(mappings)} mappings!")
+            self.set_state('show_manual_mapping', False)
+
+    return
+
+mappings = self.get_state('metric_mappings')
+mapped_df = data.rename(index=mappings)
+
+with st.spinner("Calculating ratios..."):
+    with performance_monitor.measure("ratio_calculation"):
+        analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
+        ratios = analysis.get('ratios', {})
+
+if not ratios:
+    st.error("Unable to calculate ratios. Please check your mappings.")
+    if st.button("🔄 Re-map Metrics"):
+        self.set_state('metric_mappings', None)
+    return
+
+formatter = get_number_formatter(self.get_state('number_format_value'))
+
+for category, ratio_df in ratios.items():
+    if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+        st.subheader(f"{category} Ratios")
+
+        format_str = "{:,.2f}"
+
+        try:
+            st.dataframe(
+                ratio_df.style.format(format_str, na_rep="-")
+                .background_gradient(cmap='RdYlGn', axis=1),
+                use_container_width=True
+            )
+        except Exception as e:
+            self.logger.error(f"Error formatting ratios: {e}")
+            st.dataframe(ratio_df, use_container_width=True)
+
+        if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
+            metrics_to_plot = st.multiselect(
+                f"Select {category} metrics:",
+                ratio_df.index.tolist(),
+                default=ratio_df.index[:2].tolist() if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
+                key=f"select_{category}"
+            )
+
+            if metrics_to_plot:
+                fig = go.Figure()
+
+                for metric in metrics_to_plot:
+                    fig.add_trace(go.Scatter(
+                        x=ratio_df.columns,
+                        y=ratio_df.loc[metric],
+                        mode='lines+markers',
+                        name=metric,
+                        line=dict(width=2),
+                        marker=dict(size=8)
+                    ))
+
+                fig.update_layout(
+                    title=f"{category} Ratios Trend",
+                    xaxis_title="Year",
+                    yaxis_title="Value",
+                    hovermode='x unified',
+                    height=400,
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    )
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+Use code with caution.
+def _perform_ai_mapping(self, data: pd.DataFrame):
+"""Perform AI mapping of metrics with progress tracking"""
+try:
+with st.spinner("AI is mapping your metrics..."):
+source_metrics = [str(m) for m in data.index.tolist()]
+Generated code
+# Check if Kaggle is available
+        kaggle_available = False
+        if 'mapper' in self.components:
+            status = self.components['mapper'].get_api_status()
+            kaggle_available = status['kaggle_available']
+
+        if kaggle_available:
+            st.info("🚀 Using Kaggle GPU for faster mapping...")
+
+        if 'mapper' in self.components:
+            mapping_result = self.components['mapper'].map_metrics_with_confidence_levels(
+                source_metrics
+            )
+
+            self.set_state('ai_mapping_result', mapping_result)
+
+            # Auto-apply high confidence mappings
+            auto_mappings = mapping_result.get('high_confidence', {})
+            if auto_mappings:
+                final_mappings = {source: data['target'] for source, data in auto_mappings.items()}
+                self.set_state('metric_mappings', final_mappings)
+
+                st.success(f"✅ AI mapped {len(final_mappings)} metrics with high confidence!")
+                st.info(f"Method: {mapping_result.get('method', 'unknown')}")
+
+                # Show medium and low confidence for review
+                medium_conf = mapping_result.get('medium_confidence', {})
+                low_conf = mapping_result.get('low_confidence', {})
+
+                if medium_conf or low_conf:
+                    st.info(f"Review {len(medium_conf) + len(low_conf)} additional suggested mappings below")
+
+                    # Show confidence breakdown
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("High Confidence", len(auto_mappings))
+                    with col2:
+                        st.metric("Medium Confidence", len(medium_conf))
+                    with col3:
+                        st.metric("Low Confidence", len(low_conf))
+            else:
+                st.warning("No high-confidence mappings found. Please review suggestions or use manual mapping.")
+
+        else:
+            st.error("AI mapper not available")
+
+except Exception as e:
+    st.error(f"AI mapping failed: {str(e)}")
+Use code with caution.
+@error_boundary()
+def _render_trends_tab(self, data: pd.DataFrame):
+"""Render trends and analysis tab"""
+st.header("📉 Trend Analysis & ML Forecasting")
+Generated code
+analysis = self.components['analyzer'].analyze_financial_statements(data)
+trends = analysis.get('trends', {})
+
+if not trends or 'error' in trends:
+    st.error("Insufficient data for trend analysis. Need at least 2 years of data.")
+    return
+
+# Trend summary
+st.subheader("Trend Summary")
+
+trend_data = []
+for metric, trend_info in trends.items():
+    if isinstance(trend_info, dict) and 'direction' in trend_info:
+        trend_data.append({
+            'Metric': metric,
+            'Direction': trend_info['direction'],
+            'CAGR %': trend_info.get('cagr', None),
+            'Volatility %': trend_info.get('volatility', None),
+            'R²': trend_info.get('r_squared', None),
+            'Trend Strength': 'Strong' if trend_info.get('r_squared', 0) > 0.8 else 'Moderate' if trend_info.get('r_squared', 0) > 0.5 else 'Weak'
+        })
+
+if trend_data:
+    trend_df = pd.DataFrame(trend_data)
+
+    st.dataframe(
+        trend_df.style.format({
+            'CAGR %': '{:.1f}',
+            'Volatility %': '{:.1f}',
+            'R²': '{:.3f}'
+        }, na_rep='-')
+        .background_gradient(subset=['CAGR %'], cmap='RdYlGn')
+        .background_gradient(subset=['R²'], cmap='Blues'),
+        use_container_width=True
+    )
+
+# ML Forecasting Section
+st.subheader("🤖 ML-Powered Forecasting")
+
+if self.config.get('app.enable_ml_features', True):
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        forecast_periods = st.selectbox(
+            "Forecast Periods",
+           ,
+            index=2,
+            help="Number of future periods to forecast"
+        )
+
+    with col2:
+        model_type = st.selectbox(
+            "Model Type",
+            ['auto', 'linear', 'polynomial', 'exponential'],
+            index=0,
+            help="ML model for forecasting"
+        )
 
     with col3:
-        self.ui_factory.create_metric_card(
-            "Data Completeness", f"{analysis['summary']['completeness']:.1f}%")
+        if st.button("🚀 Generate Forecast", type="primary"):
+            with st.spinner("Training ML models and generating forecasts..."):
+                try:
+                    forecast_results = self.ml_forecaster.forecast_metrics(
+                        data,
+                        periods=forecast_periods,
+                        model_type=model_type
+                    )
 
-    with col4:
-        quality_score = analysis['quality_score']
-        self.ui_factory.create_data_quality_badge(quality_score)
+                    self.set_state('ml_forecast_results', forecast_results)
 
-    # Key insights
-    st.subheader("Key Insights")
+                    if 'error' not in forecast_results:
+                        st.success(f"✅ Forecast generated using {forecast_results['model_type']} model")
+                    else:
+                        st.error(f"Forecast failed: {forecast_results['error']}")
 
-    insights = analysis.get('insights', [])
-    if insights:
-        for i, insight in enumerate(insights[:8]):
+                except Exception as e:
+                    st.error(f"Forecasting error: {str(e)}")
+
+    # Display forecast results
+    forecast_results = self.get_state('ml_forecast_results')
+    if forecast_results and 'error' not in forecast_results:
+        st.subheader("📈 Forecast Results")
+
+        forecasts = forecast_results.get('forecasts', {})
+        confidence_intervals = forecast_results.get('confidence_intervals', {})
+
+        for metric, forecast in forecasts.items():
+            st.write(f"**{metric} Forecast**")
+
+            # Create forecast visualization
+            fig = go.Figure()
+
+            # Historical data (last few points for context)
+            if metric in data.index:
+                hist_series = data.loc[metric].dropna()
+                hist_years = hist_series.index.tolist()
+                hist_values = hist_series.values.tolist()
+
+                fig.add_trace(go.Scatter(
+                    x=hist_years,
+                    y=hist_values,
+                    mode='lines+markers',
+                    name='Historical',
+                    line=dict(color='blue', width=2)
+                ))
+
+            # Forecast
+            forecast_periods = forecast['periods']
+            forecast_values = forecast['values']
+
+            fig.add_trace(go.Scatter(
+                x=forecast_periods,
+                y=forecast_values,
+                mode='lines+markers',
+                name='Forecast',
+                line=dict(color='red', dash='dash', width=2)
+            ))
+
+            # Confidence intervals
+            if metric in confidence_intervals:
+                intervals = confidence_intervals[metric]
+
+                fig.add_trace(go.Scatter(
+                    x=forecast_periods + forecast_periods[::-1],
+                    y=intervals['upper'] + intervals['lower'][::-1],
+                    fill='toself',
+                    fillcolor='rgba(255,0,0,0.2)',
+                    line=dict(color='rgba(255,255,255,0)'),
+                    name='95% Confidence',
+                    showlegend=True
+                ))
+
+            fig.update_layout(
+                title=f"{metric} - Historical vs Forecast",
+                xaxis_title="Period",
+                yaxis_title="Value",
+                hovermode='x unified',
+                height=400
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Show accuracy metrics
+        accuracy_metrics = forecast_results.get('accuracy_metrics', {})
+        if accuracy_metrics:
+            st.subheader("🎯 Model Accuracy")
+
+            accuracy_data = []
+            for metric, accuracy in accuracy_metrics.items():
+                accuracy_data.append({
+                    'Metric': metric,
+                    'RMSE': accuracy.get('rmse', 0),
+                    'MAE': accuracy.get('mae', 0),
+                    'MAPE %': accuracy.get('mape', 0) if accuracy.get('mape') else 'N/A'
+                })
+
+            if accuracy_data:
+                accuracy_df = pd.DataFrame(accuracy_data)
+                st.dataframe(accuracy_df, use_container_width=True)
+
+# Interactive visualization
+st.subheader("📊 Interactive Trend Visualization")
+
+numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
+selected_metrics = st.multiselect(
+    "Select metrics to visualize:",
+    numeric_metrics,
+    default=numeric_metrics[:3] if len(numeric_metrics) >= 3 else numeric_metrics
+)
+
+if selected_metrics:
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        show_trend_lines = st.checkbox("Show Trend Lines", value=True)
+
+    with col2:
+        normalize = st.checkbox("Normalize Values", value=False)
+
+    with col3:
+        chart_type = st.selectbox("Chart Type", ["Line", "Bar", "Area"])
+
+    fig = go.Figure()
+
+    for i, metric in enumerate(selected_metrics):
+        values = data.loc[metric]
+
+        if normalize:
+            values = (values / values.iloc) * 100
+
+        if chart_type == "Line":
+            fig.add_trace(go.Scatter(
+                x=data.columns,
+                y=values,
+                mode='lines+markers',
+                name=metric,
+                line=dict(width=2),
+                marker=dict(size=8)
+            ))
+        elif chart_type == "Bar":
+            fig.add_trace(go.Bar(
+                x=data.columns,
+                y=values,
+                name=metric
+            ))
+        elif chart_type == "Area":
+            fig.add_trace(go.Scatter(
+                x=data.columns,
+                y=values,
+                mode='lines',
+                name=metric,
+                fill='tonexty' if i > 0 else 'tozeroy',
+                line=dict(width=2)
+            ))
+
+        if show_trend_lines and metric in trends:
+            trend_info = trends[metric]
+            if 'slope' in trend_info and 'intercept' in trend_info:
+                x_numeric = np.arange(len(data.columns))
+                y_trend = trend_info['slope'] * x_numeric + trend_info['intercept']
+
+                if normalize and values.iloc != 0:
+                    y_trend = (y_trend / values.iloc) * 100
+
+                fig.add_trace(go.Scatter(
+                    x=data.columns,
+                    y=y_trend,
+                    mode='lines',
+                    name=f"{metric} (Trend)",
+                    line=dict(width=2, dash='dash'),
+                    opacity=0.7
+                ))
+
+    fig.update_layout(
+        title="Metric Trends Analysis",
+        xaxis_title="Year",
+        yaxis_title="Value" + (" (Base 100)" if normalize else ""),
+        hovermode='x unified',
+        height=500,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
+    )
+
+    if chart_type == "Bar":
+        fig.update_layout(barmode='group')
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# Statistical Analysis
+st.subheader("📈 Statistical Analysis")
+
+if selected_metrics and len(selected_metrics) > 1:
+    corr_data = data.loc[selected_metrics].T.corr()
+
+    fig_corr = go.Figure(data=go.Heatmap(
+        z=corr_data.values,
+        x=corr_data.columns,
+        y=corr_data.index,
+        colorscale='RdBu',
+        zmid=0,
+        text=np.round(corr_data.values, 2),
+        texttemplate='%{text}',
+        textfont={"size": 10},
+        hoverongaps=False
+    ))
+
+    fig_corr.update_layout(
+        title="Correlation Matrix",
+        height=400
+    )
+
+    st.plotly_chart(fig_corr, use_container_width=True)
+Use code with caution.
+@error_boundary()
+def _render_penman_nissim_tab(self, data: pd.DataFrame):
+"""Render Penman-Nissim analysis tab"""
+st.header("🎯 Penman-Nissim Analysis")
+Generated code
+if not self.get_state('pn_mappings'):
+    st.info("Configure Penman-Nissim mappings to proceed")
+
+    with st.expander("⚙️ Configure P-N Mappings", expanded=True):
+        available_metrics = [''] + [str(m) for m in data.index.tolist()]
+
+        mapping_fields = {
+            'Balance Sheet': [
+                ('Total Assets', 'pn_total_assets'),
+                ('Total Liabilities', 'pn_total_liabilities'),
+                ('Total Equity', 'pn_total_equity'),
+                ('Current Assets', 'pn_current_assets'),
+                ('Current Liabilities', 'pn_current_liabilities'),
+            ],
+            'Income Statement': [
+                ('Revenue', 'pn_revenue'),
+                ('Operating Income/EBIT', 'pn_operating_income'),
+                ('Net Income', 'pn_net_income'),
+                ('Interest Expense', 'pn_interest'),
+                ('Tax Expense', 'pn_tax'),
+            ],
+            'Cash Flow': [
+                ('Operating Cash Flow', 'pn_ocf'),
+                ('Capital Expenditure', 'pn_capex'),
+                ('Depreciation', 'pn_depreciation'),
+                ('Income Before Tax', 'pn_ibt'),
+            ]
+        }
+
+        mappings = {}
+        cols = st.columns(3)
+
+        for i, (category, fields) in enumerate(mapping_fields.items()):
+            with cols[i]:
+                st.markdown(f"**{category} Items**")
+                for field_name, field_key in fields:
+                    selected = st.selectbox(
+                        field_name,
+                        available_metrics,
+                        key=field_key
+                    )
+                    if selected:
+                        mappings[selected] = field_name
+
+        mappings = {k: v for k, v in mappings.items() if k}
+
+        if st.button("Apply P-N Mappings", type="primary"):
+            if len(mappings) >= 8:
+                self.set_state('pn_mappings', mappings)
+                st.success("Mappings applied successfully!")
+            else:
+                st.error("Please provide at least 8 mappings for analysis")
+
+    return
+
+if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
+    mappings = self.get_state('pn_mappings')
+
+    with st.spinner("Running Penman-Nissim analysis..."):
+        try:
+            analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+            results = analyzer.calculate_all()
+
+            if 'error' in results:
+                st.error(f"Analysis failed: {results['error']}")
+                return
+
+            self.set_state('pn_results', results)
+            st.success("Analysis completed successfully!")
+
+        except Exception as e:
+            st.error(f"Analysis failed: {str(e)}")
+            if self.config.get('app.debug', False):
+                st.exception(e)
+            return
+
+if self.get_state('pn_results'):
+    results = self.get_state('pn_results')
+
+    st.subheader("Key Penman-Nissim Metrics")
+
+    if 'ratios' in results:
+        ratios_df = results['ratios']
+
+        key_ratios = [
+            ('Return on Net Operating Assets (RNOA) %', 'RNOA', 'success'),
+            ('Financial Leverage (FLEV)', 'FLEV', 'info'),
+            ('Net Borrowing Cost (NBC) %', 'NBC', 'warning'),
+            ('Operating Profit Margin (OPM) %', 'OPM', 'primary')
+        ]
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        for i, (ratio_name, short_name, color) in enumerate(key_ratios):
+            if ratio_name in ratios_df.index:
+                col = [col1, col2, col3, col4][i]
+                with col:
+                    latest_value = ratios_df.loc[ratio_name].iloc[-1]
+                    prev_value = ratios_df.loc[ratio_name].iloc[-2] if len(ratios_df.columns) > 1 else None
+
+                    delta = None
+                    if prev_value is not None:
+                        delta = latest_value - prev_value
+
+                    self.ui_factory.create_metric_card(
+                        short_name,
+                        f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}",
+                        delta=delta,
+                        help=self._get_pn_ratio_help(short_name)
+                    )
+
+    # Reformulated statements
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if 'reformulated_balance_sheet' in results:
+            st.subheader("Reformulated Balance Sheet")
+            ref_bs = results['reformulated_balance_sheet']
+
+            st.dataframe(
+                ref_bs.style.format("{:,.0f}"),
+                use_container_width=True
+            )
+
+    with col2:
+        if 'reformulated_income_statement' in results:
+            st.subheader("Reformulated Income Statement")
+            ref_is = results['reformulated_income_statement']
+
+            st.dataframe(
+                ref_is.style.format("{:,.0f}"),
+                use_container_width=True
+            )
+
+    # Value Drivers
+    if 'value_drivers' in results:
+        st.subheader("Value Drivers Analysis")
+
+        drivers_df = results['value_drivers']
+
+        fig = go.Figure()
+
+        for driver in drivers_df.index:
+            fig.add_trace(go.Scatter(
+                x=drivers_df.columns,
+                y=drivers_df.loc[driver],
+                mode='lines+markers',
+                name=driver
+            ))
+
+        fig.update_layout(
+            title="Value Drivers Trend",
+            xaxis_title="Year",
+            yaxis_title="Value (%)",
+            hovermode='x unified',
+            height=400
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Free Cash Flow
+    if 'free_cash_flow' in results:
+        st.subheader("Free Cash Flow Analysis")
+        fcf_df = results['free_cash_flow']
+
+        if len(fcf_df.columns) > 0:
+            latest_year = fcf_df.columns[-1]
+
+            if 'Operating Cash Flow' in fcf_df.index and 'Free Cash Flow' in fcf_df.index:
+                ocf = fcf_df.loc['Operating Cash Flow', latest_year]
+                fcf = fcf_df.loc['Free Cash Flow', latest_year]
+                capex = ocf - fcf
+
+                fig = go.Figure(go.Waterfall(
+                    name="",
+                    orientation="v",
+                    measure=["relative", "relative", "total"],
+                    x=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"],
+                    y=[ocf, -capex, fcf],
+                    connector={"line": {"color": "rgb(63, 63, 63)"}},
+                ))
+
+                fig.update_layout(
+                    title=f"Free Cash Flow Waterfall - {latest_year}",
+                    height=400
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+    # Insights
+    st.subheader("Penman-Nissim Insights")
+
+    insights = []
+
+    if 'ratios' in results:
+        ratios_df = results['ratios']
+
+        if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
+            rnoa_latest = ratios_df.loc['Return on Net Operating Assets (RNOA) %'].iloc[-1]
+            if rnoa_latest > 15:
+                insights.append("✅ Strong operating performance with RNOA above 15%")
+            elif rnoa_latest < 8:
+                insights.append("⚠️ Low RNOA indicates operational efficiency concerns")
+
+        if 'Spread %' in ratios_df.index:
+            spread = ratios_df.loc['Spread %'].iloc[-1]
+            if spread > 0:
+                insights.append(f"✅ Positive spread ({spread:.1f}%) - operations earn more than borrowing cost")
+            else:
+                insights.append(f"⚠️ Negative spread ({spread:.1f}%) - borrowing cost exceeds operating returns")
+
+    for insight in insights:
+        self.ui_factory.create_insight_card(insight, "info")
+Use code with caution.
+def _get_pn_ratio_help(self, ratio: str) -> str:
+"""Get help text for Penman-Nissim ratios"""
+help_texts = {
+'RNOA': "Return on Net Operating Assets - measures operating efficiency",
+'FLEV': "Financial Leverage - ratio of financial obligations to equity",
+'NBC': "Net Borrowing Cost - effective interest rate on net debt",
+'OPM': "Operating Profit Margin - operating profitability",
+'NOAT': "Net Operating Asset Turnover - efficiency in using assets",
+'Spread': "RNOA - NBC, positive spread creates value through leverage"
+}
+return help_texts.get(ratio, "Financial ratio")
+@error_boundary()
+def _render_industry_tab(self, data: pd.DataFrame):
+"""Render industry comparison tab - COMPLETE IMPLEMENTATION"""
+st.header("🏭 Industry Comparison")
+Generated code
+# Industry selection
+industries = [
+    "Technology", "Healthcare", "Financial Services", "Retail",
+    "Manufacturing", "Energy", "Real Estate", "Consumer Goods",
+    "Telecommunications", "Utilities", "Materials", "Industrials"
+]
+
+col1, col2 = st.columns(2)
+
+with col1:
+    selected_industry = st.selectbox(
+        "Select Industry for Comparison",
+        industries,
+        key="industry_selection"
+    )
+
+with col2:
+    comparison_year = st.selectbox(
+        "Select Year for Comparison",
+        data.columns.tolist(),
+        index=len(data.columns)-1 if len(data.columns) > 0 else 0,
+        key="comparison_year"
+    )
+
+# Generate industry benchmarks (simplified for demo)
+st.subheader(f"📊 {selected_industry} Industry Benchmarks")
+
+# Mock industry data - in production, this would come from a database
+industry_benchmarks = self._generate_industry_benchmarks(selected_industry)
+
+# Compare company metrics with industry averages
+if self.get_state('metric_mappings'):
+    mappings = self.get_state('metric_mappings')
+    mapped_df = data.rename(index=mappings)
+
+    # Calculate company ratios
+    analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
+    company_ratios = analysis.get('ratios', {})
+
+    # Display comparison
+    for category, ratio_df in company_ratios.items():
+        if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+            st.subheader(f"{category} Ratios Comparison")
+
+            # Get latest year data
+            if comparison_year in ratio_df.columns:
+                company_values = ratio_df[comparison_year]
+                industry_values = industry_benchmarks.get(category, {})
+
+                comparison_data = []
+                for ratio_name in company_values.index:
+                    company_val = company_values[ratio_name]
+                    industry_avg = industry_values.get(ratio_name, None)
+
+                    if pd.notna(company_val) and industry_avg is not None:
+                        comparison_data.append({
+                            'Ratio': ratio_name,
+                            'Company': company_val,
+                            'Industry Average': industry_avg,
+                            'Difference': company_val - industry_avg,
+                            'Performance': 'Above Average' if company_val > industry_avg else 'Below Average'
+                        })
+
+                if comparison_data:
+                    comparison_df = pd.DataFrame(comparison_data)
+
+                    # Create visualization
+                    fig = go.Figure()
+
+                    # Company values
+                    fig.add_trace(go.Bar(
+                        x=comparison_df['Ratio'],
+                        y=comparison_df['Company'],
+                        name='Company',
+                        marker_color='blue'
+                    ))
+
+                    # Industry averages
+                    fig.add_trace(go.Bar(
+                        x=comparison_df['Ratio'],
+                        y=comparison_df['Industry Average'],
+                        name='Industry Average',
+                        marker_color='orange'
+                    ))
+
+                    fig.update_layout(
+                        title=f"{category} - Company vs Industry",
+                        xaxis_title="Ratios",
+                        yaxis_title="Value",
+                        barmode='group',
+                        height=400
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Show detailed comparison table
+                    st.dataframe(
+                        comparison_df.style.format({
+                            'Company': '{:.2f}',
+                            'Industry Average': '{:.2f}',
+                            'Difference': '{:.2f}'
+                        }),
+                        use_container_width=True
+                    )
+else:
+    st.warning("Please complete metric mapping in the Financial Ratios tab first")
+
+# Industry insights
+st.subheader("💡 Industry Insights")
+
+industry_insights = {
+    "Technology": [
+        "Tech companies typically have higher profit margins due to scalable software models",
+        "R&D spending is usually 10-20% of revenue",
+        "Working capital requirements are generally low",
+        "Growth rates are typically higher but more volatile"
+    ],
+    "Manufacturing": [
+        "Asset-heavy industry with lower asset turnover ratios",
+        "Inventory management is crucial for profitability",
+        "Cyclical nature affects financial performance",
+        "Leverage ratios tend to be higher due to capital requirements"
+    ],
+    "Retail": [
+        "Inventory turnover is a key performance metric",
+        "Seasonal variations significantly impact performance",
+        "Profit margins are typically lower but volumes are higher",
+        "Working capital management is critical"
+    ],
+    "Financial Services": [
+        "Leverage ratios are naturally higher due to business model",
+        "Net interest margin is a key profitability metric",
+        "Asset quality indicators are crucial",
+        "Regulatory capital requirements affect operations"
+    ]
+}
+
+insights = industry_insights.get(selected_industry, [
+    f"Industry-specific insights for {selected_industry} sector",
+    "Compare your metrics with industry peers",
+    "Focus on key performance indicators for your sector",
+    "Consider industry trends and cycles in your analysis"
+])
+
+for insight in insights:
+    self.ui_factory.create_insight_card(insight, "info")
+Use code with caution.
+def _generate_industry_benchmarks(self, industry: str) -> Dict[str, Dict[str, float]]:
+"""Generate mock industry benchmarks - in production, would fetch from database"""
+benchmarks = {
+"Technology": {
+"Profitability": {
+"Net Profit Margin %": 15.2,
+"Return on Assets %": 8.5,
+"Return on Equity %": 18.3,
+"ROCE %": 12.7
+},
+"Liquidity": {
+"Current Ratio": 2.1,
+"Quick Ratio": 1.8,
+"Cash Ratio": 0.9
+},
+"Leverage": {
+"Debt to Equity": 0.3,
+"Debt Ratio": 0.25,
+"Interest Coverage": 12.5
+},
+"Efficiency": {
+"Asset Turnover": 0.6,
+"Inventory Turnover": 8.2,
+"Receivables Turnover": 6.8
+}
+},
+"Manufacturing": {
+"Profitability": {
+"Net Profit Margin %": 8.5,
+"Return on Assets %": 5.2,
+"Return on Equity %": 12.1,
+"ROCE %": 8.9
+},
+"Liquidity": {
+"Current Ratio": 1.5,
+"Quick Ratio": 1.1,
+"Cash Ratio": 0.3
+},
+"Leverage": {
+"Debt to Equity": 0.8,
+"Debt Ratio": 0.45,
+"Interest Coverage": 5.2
+},
+"Efficiency": {
+"Asset Turnover": 1.2,
+"Inventory Turnover": 6.5,
+"Receivables Turnover": 8.1
+}
+},
+"Retail": {
+"Profitability": {
+"Net Profit Margin %": 4.8,
+"Return on Assets %": 6.2,
+"Return on Equity %": 15.5,
+"ROCE %": 9.8
+},
+"Liquidity": {
+"Current Ratio": 1.3,
+"Quick Ratio": 0.8,
+"Cash Ratio": 0.2
+},
+"Leverage": {
+"Debt to Equity": 0.6,
+"Debt Ratio": 0.38,
+"Interest Coverage": 4.5
+},
+"Efficiency": {
+"Asset Turnover": 2.1,
+"Inventory Turnover": 12.3,
+"Receivables Turnover": 15.2
+}
+}
+}
+Generated code
+return benchmarks.get(industry, benchmarks["Technology"])
+Use code with caution.
+@error_boundary()
+def _render_data_explorer_tab(self, data: pd.DataFrame):
+"""Render data explorer tab"""
+st.header("🔍 Data Explorer")
+Generated code
+# Data overview
+st.subheader("📊 Data Overview")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("Total Rows", data.shape)
+
+with col2:
+    st.metric("Total Columns", data.shape)
+
+with col3:
+    missing_pct = (data.isnull().sum().sum() / data.size) * 100
+    st.metric("Missing Data %", f"{missing_pct:.1f}")
+
+with col4:
+    numeric_cols = data.select_dtypes(include=[np.number]).shape
+    st.metric("Numeric Columns", numeric_cols)
+
+# Raw data view
+st.subheader("📋 Raw Data")
+
+# Data filtering options
+col1, col2 = st.columns(2)
+
+with col1:
+    search_term = st.text_input(
+        "🔍 Search metrics",
+        placeholder="Type to filter rows...",
+        help="Search in metric names"
+    )
+
+with col2:
+    selected_years = st.multiselect(
+        "📅 Select years",
+        data.columns.tolist(),
+        default=data.columns.tolist(),
+        help="Filter by specific years"
+    )
+
+# Apply filters
+filtered_data = data.copy()
+
+if search_term:
+    mask = filtered_data.index.str.contains(search_term, case=False, na=False)
+    filtered_data = filtered_data[mask]
+
+if selected_years:
+    filtered_data = filtered_data[selected_years]
+
+# Display filtered data
+st.dataframe(
+    filtered_data.style.format("{:,.0f}", na_rep="-")
+    .background_gradient(cmap='RdYlGn', axis=1),
+    use_container_width=True,
+    height=400
+)
+
+# Data statistics
+st.subheader("📈 Data Statistics")
+
+numeric_data = filtered_data.select_dtypes(include=[np.number])
+
+if not numeric_data.empty:
+    stats_df = numeric_data.describe().T
+    stats_df = stats_df.round(2)
+
+    st.dataframe(stats_df, use_container_width=True)
+
+    # Missing data analysis
+    st.subheader("🕳️ Missing Data Analysis")
+
+    missing_data = data.isnull().sum()
+    missing_data = missing_data[missing_data > 0].sort_values(ascending=False)
+
+    if not missing_data.empty:
+        fig = go.Figure(go.Bar(
+            x=missing_data.values,
+            y=missing_data.index,
+            orientation='h',
+            marker_color='red'
+        ))
+
+        fig.update_layout(
+            title="Missing Values by Column",
+            xaxis_title="Number of Missing Values",
+            yaxis_title="Columns",
+            height=400
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.success("✅ No missing data found!")
+
+# Data export
+st.subheader("💾 Export Filtered Data")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("📋 Copy to Clipboard"):
+        st.code(filtered_data.to_csv())
+
+with col2:
+    csv_data = filtered_data.to_csv().encode('utf-8')
+    st.download_button(
+        label="📁 Download CSV",
+        data=csv_data,
+        file_name=f"financial_data_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv"
+    )
+
+with col3:
+    excel_data = io.BytesIO()
+    filtered_data.to_excel(excel_data, engine='xlsxwriter')
+    excel_data.seek(0)
+
+    st.download_button(
+        label="📊 Download Excel",
+        data=excel_data.getvalue(),
+        file_name=f"financial_data_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+Use code with caution.
+@error_boundary()
+def _render_reports_tab(self, data: pd.DataFrame):
+"""Render reports tab"""
+st.header("📄 Financial Analysis Reports")
+Generated code
+# Report configuration
+st.subheader("⚙️ Report Configuration")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    company_name = st.text_input(
+        "Company Name",
+        value=self.get_state('company_name', 'Your Company'),
+        help="Name to appear on the report"
+    )
+
+with col2:
+    report_format = st.selectbox(
+        "Report Format",
+        ["Excel", "Markdown", "PDF", "PowerPoint"],
+        help="Choose output format"
+    )
+
+# Report sections
+st.subheader("📋 Report Sections")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    include_overview = st.checkbox("Executive Summary", value=True)
+    include_ratios = st.checkbox("Financial Ratios", value=True)
+    include_trends = st.checkbox("Trend Analysis", value=True)
+    include_forecasts = st.checkbox("ML Forecasts", value=False)
+
+with col2:
+    include_pn = st.checkbox("Penman-Nissim Analysis", value=False)
+    include_industry = st.checkbox("Industry Comparison", value=False)
+    include_raw_data = st.checkbox("Raw Data", value=False)
+    include_charts = st.checkbox("Charts and Visualizations", value=True)
+
+# Generate report
+if st.button("🚀 Generate Report", type="primary"):
+    with st.spinner(f"Generating {report_format} report..."):
+        try:
+            # Compile analysis data
+            analysis = self.components['analyzer'].analyze_financial_statements(data)
+
+            # Add additional sections based on selections
+            if include_pn and self.get_state('pn_results'):
+                analysis['penman_nissim'] = self.get_state('pn_results')
+
+            if include_forecasts and self.get_state('ml_forecast_results'):
+                analysis['forecasts'] = self.get_state('ml_forecast_results')
+
+            if include_raw_data:
+                analysis['filtered_data'] = data
+
+            analysis['company_name'] = company_name
+
+            # Generate report based on format
+            if report_format == "Excel":
+                report_data = self.export_manager.export_to_excel(analysis, f"{company_name}_analysis.xlsx")
+
+                st.download_button(
+                    label="📊 Download Excel Report",
+                    data=report_data,
+                    file_name=f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+
+                st.success("✅ Excel report generated successfully!")
+
+            elif report_format == "Markdown":
+                report_content = self.export_manager.export_to_markdown(analysis)
+
+                st.download_button(
+                    label="📝 Download Markdown Report",
+                    data=report_content.encode('utf-8'),
+                    file_name=f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.md",
+                    mime="text/markdown"
+                )
+
+                # Show preview
+                with st.expander("📖 Report Preview"):
+                    st.markdown(report_content)
+
+                st.success("✅ Markdown report generated successfully!")
+
+            elif report_format == "PDF":
+                st.warning("PDF export is coming soon. Please use Excel or Markdown for now.")
+
+            elif report_format == "PowerPoint":
+                st.warning("PowerPoint export is coming soon. Please use Excel or Markdown for now.")
+
+        except Exception as e:
+            st.error(f"Report generation failed: {str(e)}")
+
+# Report templates
+st.subheader("📋 Report Templates")
+
+templates = {
+    "Executive Summary": {
+        "description": "High-level overview for executives",
+        "sections": ["Overview", "Key Metrics", "Insights"]
+    },
+    "Detailed Analysis": {
+        "description": "Comprehensive financial analysis",
+        "sections": ["All sections", "Charts", "Raw Data"]
+    },
+    "Investor Presentation": {
+        "description": "Investor-focused metrics and trends",
+        "sections": ["Ratios", "Trends", "Forecasts", "Industry Comparison"]
+    },
+    "Audit Support": {
+        "description": "Detailed data for audit purposes",
+        "sections": ["Raw Data", "Calculations", "Validation Results"]
+    }
+}
+
+for template_name, template_info in templates.items():
+    with st.expander(f"📄 {template_name}"):
+        st.write(f"**Description:** {template_info['description']}")
+        st.write(f"**Sections:** {', '.join(template_info['sections'])}")
+
+        if st.button(f"Use {template_name} Template", key=f"template_{template_name}"):
+            st.info(f"Applied {template_name} template settings")
+Use code with caution.
+@error_boundary()
+def _render_ml_insights_tab(self, data: pd.DataFrame):
+"""Render ML insights and advanced analytics tab"""
+st.header("🤖 ML Insights & Advanced Analytics")
+Generated code
+if not self.config.get('app.enable_ml_features', True):
+    st.warning("ML features are disabled. Enable them in the sidebar settings.")
+    return
+
+# Check if AI features are using Kaggle
+using_kaggle = False
+if 'mapper' in self.components:
+    status = self.components['mapper'].get_api_status()
+    using_kaggle = status['kaggle_available']
+
+if using_kaggle:
+    st.info("🚀 Using Kaggle GPU for enhanced ML processing")
+
+# AI-powered insights
+st.subheader("🧠 AI-Powered Financial Insights")
+
+with st.spinner("AI is analyzing your financial data..."):
+    analysis = self.components['analyzer'].analyze_financial_statements(data)
+
+# Display AI insights with confidence scores
+insights = analysis.get('insights', [])
+
+if insights:
+    st.write("**AI has identified the following insights:**")
+
+    for i, insight in enumerate(insights):
+        # Simulate confidence score
+        confidence = np.random.uniform(0.7, 0.95)
+
+        col1, col2 = st.columns()
+
+        with col1:
             if "⚠️" in insight:
                 insight_type = "warning"
             elif "📉" in insight:
@@ -7739,1732 +8359,356 @@ def _render_overview_tab(self, data: pd.DataFrame):
                 insight_type = "info"
 
             self.ui_factory.create_insight_card(insight, insight_type)
-    else:
-        st.info(
-            "No specific insights available yet. Complete the analysis to see insights."
-        )
-
-    # Anomaly detection
-    if 'anomalies' in analysis:
-        anomalies = analysis['anomalies']
-        total_anomalies = sum(len(v) for v in anomalies.values())
-
-        if total_anomalies > 0:
-            st.subheader("🔍 Anomaly Detection")
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric("Value Anomalies",
-                          len(anomalies.get('value_anomalies', [])))
-
-            with col2:
-                st.metric("Trend Anomalies",
-                          len(anomalies.get('trend_anomalies', [])))
-
-            with col3:
-                st.metric("Ratio Anomalies",
-                          len(anomalies.get('ratio_anomalies', [])))
-
-            with st.expander("View Anomaly Details"):
-                for anomaly_type, items in anomalies.items():
-                    if items:
-                        st.write(
-                            f"**{anomaly_type.replace('_', ' ').title()}:**")
-                        anomaly_df = pd.DataFrame(items)
-                        st.dataframe(anomaly_df, use_container_width=True)
-
-    # Quick visualizations
-    st.subheader("Quick Visualizations")
-
-    metrics = analysis.get('metrics', {})
-
-    if metrics:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            revenue_data = metrics.get('revenue', [])
-            if revenue_data:
-                self._render_metric_chart(revenue_data[0], "Revenue Trend")
 
         with col2:
-            profit_data = metrics.get('net_income', [])
-            if profit_data:
-                self._render_metric_chart(profit_data[0], "Net Income Trend")
-
-
-def _render_progress_tracking(self):
-    """Render progress tracking for long operations"""
-    progress_tracker = self.components['mapper'].progress_tracker
-
-    # Get active operations
-    active_operations = []
-    for op_id, op_data in progress_tracker.operations.items():
-        if op_data['status'] == 'running':
-            active_operations.append((op_id, op_data))
-
-    if active_operations:
-        st.markdown("""
-        <div class="progress-tracker">
-            <strong>Processing Operations:</strong>
-        </div>
-        """,
-                    unsafe_allow_html=True)
-
-        for op_id, op_data in active_operations:
-            progress = op_data['completed'] / op_data['total']
-            st.markdown(f"""
-            <div style="margin: 5px 0;">
-                <small>{op_data['description']}</small>
-                <div style="background: #e0e0e0; border-radius: 4px; height: 8px;">
-                    <div class="progress-bar" style="width: {progress * 100}%;"></div>
-                </div>
-            </div>
-            """,
-                        unsafe_allow_html=True)
-
-
-def _render_metric_chart(self, metric_data: Dict, title: str):
-    """Render a simple metric chart"""
-    values = metric_data.get('values', {})
-
-    if values:
-        years = list(values.keys())
-        amounts = list(values.values())
-
-        formatter = get_number_formatter(self.get_state('number_format_value'))
-
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(x=years,
-                       y=amounts,
-                       mode='lines+markers',
-                       name=metric_data.get('name', 'Value'),
-                       line=dict(width=3),
-                       marker=dict(size=8),
-                       hovertemplate='%{x}: %{y:,.0f}<extra></extra>'))
-
-        if len(years) > 2:
-            z = np.polyfit(range(len(years)), amounts, 1)
-            p = np.poly1d(z)
-
-            fig.add_trace(
-                go.Scatter(x=years,
-                           y=p(range(len(years))),
-                           mode='lines',
-                           name='Trend',
-                           line=dict(dash='dash', width=2),
-                           opacity=0.7))
-
-        fig.update_layout(title=title,
-                          xaxis_title="Year",
-                          yaxis_title="Amount",
-                          hovermode='x unified',
-                          height=400)
-
-        st.plotly_chart(fig, use_container_width=True)
-
-
-@error_boundary()
-def _render_ratios_tab(self, data: pd.DataFrame):
-    """Render financial ratios tab with manual mapping support"""
-    st.header("📈 Financial Ratio Analysis")
-
-    if not self.get_state('metric_mappings'):
-        st.warning("Please map metrics first to calculate ratios")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if st.button("🤖 Auto-map with AI",
-                         type="primary",
-                         key="ai_map_ratios"):
-                self._perform_ai_mapping(data)
-
-        with col2:
-            if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
-                self.set_state('show_manual_mapping', True)
-
-        if self.get_state('show_manual_mapping', False):
-            manual_mapper = ManualMappingInterface(data)
-            mappings = manual_mapper.render()
-
-            if st.button("✅ Apply Mappings",
-                         type="primary",
-                         key="apply_manual_mappings"):
-                self.set_state('metric_mappings', mappings)
-                st.success(f"Applied {len(mappings)} mappings!")
-                self.set_state('show_manual_mapping', False)
-
-        return
-
-    mappings = self.get_state('metric_mappings')
-    mapped_df = data.rename(index=mappings)
-
-    with st.spinner("Calculating ratios..."):
-        with performance_monitor.measure("ratio_calculation"):
-            analysis = self.components[
-                'analyzer'].analyze_financial_statements(mapped_df)
-            ratios = analysis.get('ratios', {})
-
-    if not ratios:
-        st.error("Unable to calculate ratios. Please check your mappings.")
-        if st.button("🔄 Re-map Metrics"):
-            self.set_state('metric_mappings', None)
-        return
-
-    formatter = get_number_formatter(self.get_state('number_format_value'))
-
-    for category, ratio_df in ratios.items():
-        if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-            st.subheader(f"{category} Ratios")
-
-            format_str = "{:,.2f}"
-
-            try:
-                st.dataframe(ratio_df.style.format(
-                    format_str, na_rep="-").background_gradient(cmap='RdYlGn',
-                                                                axis=1),
-                             use_container_width=True)
-            except Exception as e:
-                self.logger.error(f"Error formatting ratios: {e}")
-                st.dataframe(ratio_df, use_container_width=True)
-
-            if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
-                metrics_to_plot = st.multiselect(
-                    f"Select {category} metrics:",
-                    ratio_df.index.tolist(),
-                    default=ratio_df.index[:2].tolist()
-                    if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
-                    key=f"select_{category}")
-
-                if metrics_to_plot:
-                    fig = go.Figure()
-
-                    for metric in metrics_to_plot:
-                        fig.add_trace(
-                            go.Scatter(x=ratio_df.columns,
-                                       y=ratio_df.loc[metric],
-                                       mode='lines+markers',
-                                       name=metric,
-                                       line=dict(width=2),
-                                       marker=dict(size=8)))
-
-                    fig.update_layout(title=f"{category} Ratios Trend",
-                                      xaxis_title="Year",
-                                      yaxis_title="Value",
-                                      hovermode='x unified',
-                                      height=400,
-                                      legend=dict(orientation="h",
-                                                  yanchor="bottom",
-                                                  y=1.02,
-                                                  xanchor="right",
-                                                  x=1))
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-
-def _perform_ai_mapping(self, data: pd.DataFrame):
-    """Perform AI mapping of metrics with progress tracking"""
-    try:
-        with st.spinner("AI is mapping your metrics..."):
-            source_metrics = [str(m) for m in data.index.tolist()]
-
-            # Check if Kaggle is available
-            kaggle_available = False
-            if 'mapper' in self.components:
-                status = self.components['mapper'].get_api_status()
-                kaggle_available = status['kaggle_available']
-
-            if kaggle_available:
-                st.info("🚀 Using Kaggle GPU for faster mapping...")
-
-            if 'mapper' in self.components:
-                mapping_result = self.components[
-                    'mapper'].map_metrics_with_confidence_levels(
-                        source_metrics)
-
-                self.set_state('ai_mapping_result', mapping_result)
-
-                # Auto-apply high confidence mappings
-                auto_mappings = mapping_result.get('high_confidence', {})
-                if auto_mappings:
-                    final_mappings = {
-                        source: data['target']
-                        for source, data in auto_mappings.items()
-                    }
-                    self.set_state('metric_mappings', final_mappings)
-
-                    st.success(
-                        f"✅ AI mapped {len(final_mappings)} metrics with high confidence!"
-                    )
-                    st.info(
-                        f"Method: {mapping_result.get('method', 'unknown')}")
-
-                    # Show medium and low confidence for review
-                    medium_conf = mapping_result.get('medium_confidence', {})
-                    low_conf = mapping_result.get('low_confidence', {})
-
-                    if medium_conf or low_conf:
-                        st.info(
-                            f"Review {len(medium_conf) + len(low_conf)} additional suggested mappings below"
-                        )
-
-                        # Show confidence breakdown
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("High Confidence", len(auto_mappings))
-                        with col2:
-                            st.metric("Medium Confidence", len(medium_conf))
-                        with col3:
-                            st.metric("Low Confidence", len(low_conf))
-                else:
-                    st.warning(
-                        "No high-confidence mappings found. Please review suggestions or use manual mapping."
-                    )
-
-            else:
-                st.error("AI mapper not available")
-
-    except Exception as e:
-        st.error(f"AI mapping failed: {str(e)}")
-
-
-@error_boundary()
-def _render_trends_tab(self, data: pd.DataFrame):
-    """Render trends and analysis tab"""
-    st.header("📉 Trend Analysis & ML Forecasting")
-
-    analysis = self.components['analyzer'].analyze_financial_statements(data)
-    trends = analysis.get('trends', {})
-
-    if not trends or 'error' in trends:
-        st.error(
-            "Insufficient data for trend analysis. Need at least 2 years of data."
-        )
-        return
-
-    # Trend summary
-    st.subheader("Trend Summary")
-
-    trend_data = []
-    for metric, trend_info in trends.items():
-        if isinstance(trend_info, dict) and 'direction' in trend_info:
-            trend_data.append({
-                'Metric':
-                metric,
-                'Direction':
-                trend_info['direction'],
-                'CAGR %':
-                trend_info.get('cagr', None),
-                'Volatility %':
-                trend_info.get('volatility', None),
-                'R²':
-                trend_info.get('r_squared', None),
-                'Trend Strength':
-                'Strong' if trend_info.get('r_squared', 0) > 0.8 else
-                'Moderate' if trend_info.get('r_squared', 0) > 0.5 else 'Weak'
-            })
-
-    if trend_data:
-        trend_df = pd.DataFrame(trend_data)
-
-        st.dataframe(trend_df.style.format(
-            {
-                'CAGR %': '{:.1f}',
-                'Volatility %': '{:.1f}',
-                'R²': '{:.3f}'
-            },
-            na_rep='-').background_gradient(subset=['CAGR %'],
-                                            cmap='RdYlGn').background_gradient(
-                                                subset=['R²'], cmap='Blues'),
-                     use_container_width=True)
-
-    # ML Forecasting Section
-    st.subheader("🤖 ML-Powered Forecasting")
-
-    if self.config.get('app.enable_ml_features', True):
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            forecast_periods = st.selectbox(
-                "Forecast Periods", [1, 2, 3, 4, 5],
-                index=2,
-                help="Number of future periods to forecast")
-
-        with col2:
-            model_type = st.selectbox(
-                "Model Type", ['auto', 'linear', 'polynomial', 'exponential'],
-                index=0,
-                help="ML model for forecasting")
-
-        with col3:
-            if st.button("🚀 Generate Forecast", type="primary"):
-                with st.spinner(
-                        "Training ML models and generating forecasts..."):
-                    try:
-                        forecast_results = self.ml_forecaster.forecast_metrics(
-                            data,
-                            periods=forecast_periods,
-                            model_type=model_type)
-
-                        self.set_state('ml_forecast_results', forecast_results)
-
-                        if 'error' not in forecast_results:
-                            st.success(
-                                f"✅ Forecast generated using {forecast_results['model_type']} model"
-                            )
-                        else:
-                            st.error(
-                                f"Forecast failed: {forecast_results['error']}"
-                            )
-
-                    except Exception as e:
-                        st.error(f"Forecasting error: {str(e)}")
-
-        # Display forecast results
-        forecast_results = self.get_state('ml_forecast_results')
-        if forecast_results and 'error' not in forecast_results:
-            st.subheader("📈 Forecast Results")
-
-            forecasts = forecast_results.get('forecasts', {})
-            confidence_intervals = forecast_results.get(
-                'confidence_intervals', {})
-
-            for metric, forecast in forecasts.items():
-                st.write(f"**{metric} Forecast**")
-
-                # Create forecast visualization
-                fig = go.Figure()
-
-                # Historical data (last few points for context)
-                if metric in data.index:
-                    hist_series = data.loc[metric].dropna()
-                    hist_years = hist_series.index.tolist()
-                    hist_values = hist_series.values.tolist()
-
-                    fig.add_trace(
-                        go.Scatter(x=hist_years,
-                                   y=hist_values,
-                                   mode='lines+markers',
-                                   name='Historical',
-                                   line=dict(color='blue', width=2)))
-
-                # Forecast
-                forecast_periods = forecast['periods']
-                forecast_values = forecast['values']
-
-                fig.add_trace(
-                    go.Scatter(x=forecast_periods,
-                               y=forecast_values,
-                               mode='lines+markers',
-                               name='Forecast',
-                               line=dict(color='red', dash='dash', width=2)))
-
-                # Confidence intervals
-                if metric in confidence_intervals:
-                    intervals = confidence_intervals[metric]
-
-                    fig.add_trace(
-                        go.Scatter(x=forecast_periods + forecast_periods[::-1],
-                                   y=intervals['upper'] +
-                                   intervals['lower'][::-1],
-                                   fill='toself',
-                                   fillcolor='rgba(255,0,0,0.2)',
-                                   line=dict(color='rgba(255,255,255,0)'),
-                                   name='95% Confidence',
-                                   showlegend=True))
-
-                fig.update_layout(title=f"{metric} - Historical vs Forecast",
-                                  xaxis_title="Period",
-                                  yaxis_title="Value",
-                                  hovermode='x unified',
-                                  height=400)
-
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Show accuracy metrics
-            accuracy_metrics = forecast_results.get('accuracy_metrics', {})
-            if accuracy_metrics:
-                st.subheader("🎯 Model Accuracy")
-
-                accuracy_data = []
-                for metric, accuracy in accuracy_metrics.items():
-                    accuracy_data.append({
-                        'Metric':
-                        metric,
-                        'RMSE':
-                        accuracy.get('rmse', 0),
-                        'MAE':
-                        accuracy.get('mae', 0),
-                        'MAPE %':
-                        accuracy.get('mape', 0)
-                        if accuracy.get('mape') else 'N/A'
-                    })
-
-                if accuracy_data:
-                    accuracy_df = pd.DataFrame(accuracy_data)
-                    st.dataframe(accuracy_df, use_container_width=True)
-
-    # Interactive visualization
-    st.subheader("📊 Interactive Trend Visualization")
-
-    numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
-    selected_metrics = st.multiselect(
-        "Select metrics to visualize:",
-        numeric_metrics,
-        default=numeric_metrics[:3]
-        if len(numeric_metrics) >= 3 else numeric_metrics)
-
-    if selected_metrics:
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            show_trend_lines = st.checkbox("Show Trend Lines", value=True)
-
-        with col2:
-            normalize = st.checkbox("Normalize Values", value=False)
-
-        with col3:
-            chart_type = st.selectbox("Chart Type", ["Line", "Bar", "Area"])
-
-        fig = go.Figure()
-
-        for i, metric in enumerate(selected_metrics):
-            values = data.loc[metric]
-
-            if normalize:
-                values = (values / values.iloc[0]) * 100
-
-            if chart_type == "Line":
-                fig.add_trace(
-                    go.Scatter(x=data.columns,
-                               y=values,
-                               mode='lines+markers',
-                               name=metric,
-                               line=dict(width=2),
-                               marker=dict(size=8)))
-            elif chart_type == "Bar":
-                fig.add_trace(go.Bar(x=data.columns, y=values, name=metric))
-            elif chart_type == "Area":
-                fig.add_trace(
-                    go.Scatter(x=data.columns,
-                               y=values,
-                               mode='lines',
-                               name=metric,
-                               fill='tonexty' if i > 0 else 'tozeroy',
-                               line=dict(width=2)))
-
-            if show_trend_lines and metric in trends:
-                trend_info = trends[metric]
-                if 'slope' in trend_info and 'intercept' in trend_info:
-                    x_numeric = np.arange(len(data.columns))
-                    y_trend = trend_info['slope'] * x_numeric + trend_info[
-                        'intercept']
-
-                    if normalize and values.iloc[0] != 0:
-                        y_trend = (y_trend / values.iloc[0]) * 100
-
-                    fig.add_trace(
-                        go.Scatter(x=data.columns,
-                                   y=y_trend,
-                                   mode='lines',
-                                   name=f"{metric} (Trend)",
-                                   line=dict(width=2, dash='dash'),
-                                   opacity=0.7))
-
-        fig.update_layout(title="Metric Trends Analysis",
-                          xaxis_title="Year",
-                          yaxis_title="Value" +
-                          (" (Base 100)" if normalize else ""),
-                          hovermode='x unified',
-                          height=500,
-                          legend=dict(orientation="h",
-                                      yanchor="bottom",
-                                      y=1.02,
-                                      xanchor="right",
-                                      x=1))
-
-        if chart_type == "Bar":
-            fig.update_layout(barmode='group')
-
-        st.plotly_chart(fig, use_container_width=True)
-
-    # Statistical Analysis
-    st.subheader("📈 Statistical Analysis")
-
-    if selected_metrics and len(selected_metrics) > 1:
-        corr_data = data.loc[selected_metrics].T.corr()
-
-        fig_corr = go.Figure(
-            data=go.Heatmap(z=corr_data.values,
-                            x=corr_data.columns,
-                            y=corr_data.index,
-                            colorscale='RdBu',
-                            zmid=0,
-                            text=np.round(corr_data.values, 2),
-                            texttemplate='%{text}',
-                            textfont={"size": 10},
-                            hoverongaps=False))
-
-        fig_corr.update_layout(title="Correlation Matrix", height=400)
-
-        st.plotly_chart(fig_corr, use_container_width=True)
-
-
-@error_boundary()
-def _render_penman_nissim_tab(self, data: pd.DataFrame):
-    """Render Penman-Nissim analysis tab"""
-    st.header("🎯 Penman-Nissim Analysis")
-
-    if not self.get_state('pn_mappings'):
-        st.info("Configure Penman-Nissim mappings to proceed")
-
-        with st.expander("⚙️ Configure P-N Mappings", expanded=True):
-            available_metrics = [''] + [str(m) for m in data.index.tolist()]
-
-            mapping_fields = {
-                'Balance Sheet': [
-                    ('Total Assets', 'pn_total_assets'),
-                    ('Total Liabilities', 'pn_total_liabilities'),
-                    ('Total Equity', 'pn_total_equity'),
-                    ('Current Assets', 'pn_current_assets'),
-                    ('Current Liabilities', 'pn_current_liabilities'),
-                ],
-                'Income Statement': [
-                    ('Revenue', 'pn_revenue'),
-                    ('Operating Income/EBIT', 'pn_operating_income'),
-                    ('Net Income', 'pn_net_income'),
-                    ('Interest Expense', 'pn_interest'),
-                    ('Tax Expense', 'pn_tax'),
-                ],
-                'Cash Flow': [
-                    ('Operating Cash Flow', 'pn_ocf'),
-                    ('Capital Expenditure', 'pn_capex'),
-                    ('Depreciation', 'pn_depreciation'),
-                    ('Income Before Tax', 'pn_ibt'),
-                ]
-            }
-
-            mappings = {}
-            cols = st.columns(3)
-
-            for i, (category, fields) in enumerate(mapping_fields.items()):
-                with cols[i]:
-                    st.markdown(f"**{category} Items**")
-                    for field_name, field_key in fields:
-                        selected = st.selectbox(field_name,
-                                                available_metrics,
-                                                key=field_key)
-                        if selected:
-                            mappings[selected] = field_name
-
-            mappings = {k: v for k, v in mappings.items() if k}
-
-            if st.button("Apply P-N Mappings", type="primary"):
-                if len(mappings) >= 8:
-                    self.set_state('pn_mappings', mappings)
-                    st.success("Mappings applied successfully!")
-                else:
-                    st.error("Please provide at least 8 mappings for analysis")
-
-        return
-
-    if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
-        mappings = self.get_state('pn_mappings')
-
-        with st.spinner("Running Penman-Nissim analysis..."):
-            try:
-                analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
-                results = analyzer.calculate_all()
-
-                if 'error' in results:
-                    st.error(f"Analysis failed: {results['error']}")
-                    return
-
-                self.set_state('pn_results', results)
-                st.success("Analysis completed successfully!")
-
-            except Exception as e:
-                st.error(f"Analysis failed: {str(e)}")
-                if self.config.get('app.debug', False):
-                    st.exception(e)
-                return
-
-    if self.get_state('pn_results'):
-        results = self.get_state('pn_results')
-
-        st.subheader("Key Penman-Nissim Metrics")
-
-        if 'ratios' in results:
-            ratios_df = results['ratios']
-
-            key_ratios = [
-                ('Return on Net Operating Assets (RNOA) %', 'RNOA', 'success'),
-                ('Financial Leverage (FLEV)', 'FLEV', 'info'),
-                ('Net Borrowing Cost (NBC) %', 'NBC', 'warning'),
-                ('Operating Profit Margin (OPM) %', 'OPM', 'primary')
-            ]
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            for i, (ratio_name, short_name, color) in enumerate(key_ratios):
-                if ratio_name in ratios_df.index:
-                    col = [col1, col2, col3, col4][i]
-                    with col:
-                        latest_value = ratios_df.loc[ratio_name].iloc[-1]
-                        prev_value = ratios_df.loc[ratio_name].iloc[-2] if len(
-                            ratios_df.columns) > 1 else None
-
-                        delta = None
-                        if prev_value is not None:
-                            delta = latest_value - prev_value
-
-                        self.ui_factory.create_metric_card(
-                            short_name,
-                            f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}",
-                            delta=delta,
-                            help=self._get_pn_ratio_help(short_name))
-
-        # Reformulated statements
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if 'reformulated_balance_sheet' in results:
-                st.subheader("Reformulated Balance Sheet")
-                ref_bs = results['reformulated_balance_sheet']
-
-                st.dataframe(ref_bs.style.format("{:,.0f}"),
-                             use_container_width=True)
-
-        with col2:
-            if 'reformulated_income_statement' in results:
-                st.subheader("Reformulated Income Statement")
-                ref_is = results['reformulated_income_statement']
-
-                st.dataframe(ref_is.style.format("{:,.0f}"),
-                             use_container_width=True)
-
-        # Value Drivers
-        if 'value_drivers' in results:
-            st.subheader("Value Drivers Analysis")
-
-            drivers_df = results['value_drivers']
-
-            fig = go.Figure()
-
-            for driver in drivers_df.index:
-                fig.add_trace(
-                    go.Scatter(x=drivers_df.columns,
-                               y=drivers_df.loc[driver],
-                               mode='lines+markers',
-                               name=driver))
-
-            fig.update_layout(title="Value Drivers Trend",
-                              xaxis_title="Year",
-                              yaxis_title="Value (%)",
-                              hovermode='x unified',
-                              height=400)
-
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Free Cash Flow
-        if 'free_cash_flow' in results:
-            st.subheader("Free Cash Flow Analysis")
-            fcf_df = results['free_cash_flow']
-
-            if len(fcf_df.columns) > 0:
-                latest_year = fcf_df.columns[-1]
-
-                if 'Operating Cash Flow' in fcf_df.index and 'Free Cash Flow' in fcf_df.index:
-                    ocf = fcf_df.loc['Operating Cash Flow', latest_year]
-                    fcf = fcf_df.loc['Free Cash Flow', latest_year]
-                    capex = ocf - fcf
-
-                    fig = go.Figure(
-                        go.Waterfall(
-                            name="",
-                            orientation="v",
-                            measure=["relative", "relative", "total"],
-                            x=[
-                                "Operating Cash Flow", "Capital Expenditure",
-                                "Free Cash Flow"
-                            ],
-                            y=[ocf, -capex, fcf],
-                            connector={"line": {
-                                "color": "rgb(63, 63, 63)"
-                            }},
-                        ))
-
-                    fig.update_layout(
-                        title=f"Free Cash Flow Waterfall - {latest_year}",
-                        height=400)
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-        # Insights
-        st.subheader("Penman-Nissim Insights")
-
-        insights = []
-
-        if 'ratios' in results:
-            ratios_df = results['ratios']
-
-            if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
-                rnoa_latest = ratios_df.loc[
-                    'Return on Net Operating Assets (RNOA) %'].iloc[-1]
-                if rnoa_latest > 15:
-                    insights.append(
-                        "✅ Strong operating performance with RNOA above 15%")
-                elif rnoa_latest < 8:
-                    insights.append(
-                        "⚠️ Low RNOA indicates operational efficiency concerns"
-                    )
-
-            if 'Spread %' in ratios_df.index:
-                spread = ratios_df.loc['Spread %'].iloc[-1]
-                if spread > 0:
-                    insights.append(
-                        f"✅ Positive spread ({spread:.1f}%) - operations earn more than borrowing cost"
-                    )
-                else:
-                    insights.append(
-                        f"⚠️ Negative spread ({spread:.1f}%) - borrowing cost exceeds operating returns"
-                    )
-
-        for insight in insights:
-            self.ui_factory.create_insight_card(insight, "info")
-
-
-def _get_pn_ratio_help(self, ratio: str) -> str:
-    """Get help text for Penman-Nissim ratios"""
-    help_texts = {
-        'RNOA':
-        "Return on Net Operating Assets - measures operating efficiency",
-        'FLEV':
-        "Financial Leverage - ratio of financial obligations to equity",
-        'NBC': "Net Borrowing Cost - effective interest rate on net debt",
-        'OPM': "Operating Profit Margin - operating profitability",
-        'NOAT': "Net Operating Asset Turnover - efficiency in using assets",
-        'Spread': "RNOA - NBC, positive spread creates value through leverage"
-    }
-    return help_texts.get(ratio, "Financial ratio")
-
-
-@error_boundary()
-def _render_industry_tab(self, data: pd.DataFrame):
-    """Render industry comparison tab - COMPLETE IMPLEMENTATION"""
-    st.header("🏭 Industry Comparison")
-
-    # Industry selection
-    industries = [
-        "Technology", "Healthcare", "Financial Services", "Retail",
-        "Manufacturing", "Energy", "Real Estate", "Consumer Goods",
-        "Telecommunications", "Utilities", "Materials", "Industrials"
-    ]
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        selected_industry = st.selectbox("Select Industry for Comparison",
-                                         industries,
-                                         key="industry_selection")
-
-    with col2:
-        comparison_year = st.selectbox("Select Year for Comparison",
-                                       data.columns.tolist(),
-                                       index=len(data.columns) -
-                                       1 if len(data.columns) > 0 else 0,
-                                       key="comparison_year")
-
-    # Generate industry benchmarks (simplified for demo)
-    st.subheader(f"📊 {selected_industry} Industry Benchmarks")
-
-    # Mock industry data - in production, this would come from a database
-    industry_benchmarks = self._generate_industry_benchmarks(selected_industry)
-
-    # Compare company metrics with industry averages
-    if self.get_state('metric_mappings'):
-        mappings = self.get_state('metric_mappings')
-        mapped_df = data.rename(index=mappings)
-
-        # Calculate company ratios
-        analysis = self.components['analyzer'].analyze_financial_statements(
-            mapped_df)
-        company_ratios = analysis.get('ratios', {})
-
-        # Display comparison
-        for category, ratio_df in company_ratios.items():
-            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
-                st.subheader(f"{category} Ratios Comparison")
-
-                # Get latest year data
-                if comparison_year in ratio_df.columns:
-                    company_values = ratio_df[comparison_year]
-                    industry_values = industry_benchmarks.get(category, {})
-
-                    comparison_data = []
-                    for ratio_name in company_values.index:
-                        company_val = company_values[ratio_name]
-                        industry_avg = industry_values.get(ratio_name, None)
-
-                        if pd.notna(company_val) and industry_avg is not None:
-                            comparison_data.append({
-                                'Ratio':
-                                ratio_name,
-                                'Company':
-                                company_val,
-                                'Industry Average':
-                                industry_avg,
-                                'Difference':
-                                company_val - industry_avg,
-                                'Performance':
-                                'Above Average' if company_val > industry_avg
-                                else 'Below Average'
-                            })
-
-                    if comparison_data:
-                        comparison_df = pd.DataFrame(comparison_data)
-
-                        # Create visualization
-                        fig = go.Figure()
-
-                        # Company values
-                        fig.add_trace(
-                            go.Bar(x=comparison_df['Ratio'],
-                                   y=comparison_df['Company'],
-                                   name='Company',
-                                   marker_color='blue'))
-
-                        # Industry averages
-                        fig.add_trace(
-                            go.Bar(x=comparison_df['Ratio'],
-                                   y=comparison_df['Industry Average'],
-                                   name='Industry Average',
-                                   marker_color='orange'))
-
-                        fig.update_layout(
-                            title=f"{category} - Company vs Industry",
-                            xaxis_title="Ratios",
-                            yaxis_title="Value",
-                            barmode='group',
-                            height=400)
-
-                        st.plotly_chart(fig, use_container_width=True)
-
-                        # Show detailed comparison table
-                        st.dataframe(comparison_df.style.format({
-                            'Company':
-                            '{:.2f}',
-                            'Industry Average':
-                            '{:.2f}',
-                            'Difference':
-                            '{:.2f}'
-                        }),
-                                     use_container_width=True)
-    else:
-        st.warning(
-            "Please complete metric mapping in the Financial Ratios tab first")
-
-    # Industry insights
-    st.subheader("💡 Industry Insights")
-
-    industry_insights = {
-        "Technology": [
-            "Tech companies typically have higher profit margins due to scalable software models",
-            "R&D spending is usually 10-20% of revenue",
-            "Working capital requirements are generally low",
-            "Growth rates are typically higher but more volatile"
-        ],
-        "Manufacturing": [
-            "Asset-heavy industry with lower asset turnover ratios",
-            "Inventory management is crucial for profitability",
-            "Cyclical nature affects financial performance",
-            "Leverage ratios tend to be higher due to capital requirements"
-        ],
-        "Retail": [
-            "Inventory turnover is a key performance metric",
-            "Seasonal variations significantly impact performance",
-            "Profit margins are typically lower but volumes are higher",
-            "Working capital management is critical"
-        ],
-        "Financial Services": [
-            "Leverage ratios are naturally higher due to business model",
-            "Net interest margin is a key profitability metric",
-            "Asset quality indicators are crucial",
-            "Regulatory capital requirements affect operations"
-        ]
-    }
-
-    insights = industry_insights.get(selected_industry, [
-        f"Industry-specific insights for {selected_industry} sector",
-        "Compare your metrics with industry peers",
-        "Focus on key performance indicators for your sector",
-        "Consider industry trends and cycles in your analysis"
-    ])
-
-    for insight in insights:
-        self.ui_factory.create_insight_card(insight, "info")
-
-
-def _generate_industry_benchmarks(
-        self, industry: str) -> Dict[str, Dict[str, float]]:
-    """Generate mock industry benchmarks - in production, would fetch from database"""
-    benchmarks = {
-        "Technology": {
-            "Profitability": {
-                "Net Profit Margin %": 15.2,
-                "Return on Assets %": 8.5,
-                "Return on Equity %": 18.3,
-                "ROCE %": 12.7
-            },
-            "Liquidity": {
-                "Current Ratio": 2.1,
-                "Quick Ratio": 1.8,
-                "Cash Ratio": 0.9
-            },
-            "Leverage": {
-                "Debt to Equity": 0.3,
-                "Debt Ratio": 0.25,
-                "Interest Coverage": 12.5
-            },
-            "Efficiency": {
-                "Asset Turnover": 0.6,
-                "Inventory Turnover": 8.2,
-                "Receivables Turnover": 6.8
-            }
-        },
-        "Manufacturing": {
-            "Profitability": {
-                "Net Profit Margin %": 8.5,
-                "Return on Assets %": 5.2,
-                "Return on Equity %": 12.1,
-                "ROCE %": 8.9
-            },
-            "Liquidity": {
-                "Current Ratio": 1.5,
-                "Quick Ratio": 1.1,
-                "Cash Ratio": 0.3
-            },
-            "Leverage": {
-                "Debt to Equity": 0.8,
-                "Debt Ratio": 0.45,
-                "Interest Coverage": 5.2
-            },
-            "Efficiency": {
-                "Asset Turnover": 1.2,
-                "Inventory Turnover": 6.5,
-                "Receivables Turnover": 8.1
-            }
-        },
-        "Retail": {
-            "Profitability": {
-                "Net Profit Margin %": 4.8,
-                "Return on Assets %": 6.2,
-                "Return on Equity %": 15.5,
-                "ROCE %": 9.8
-            },
-            "Liquidity": {
-                "Current Ratio": 1.3,
-                "Quick Ratio": 0.8,
-                "Cash Ratio": 0.2
-            },
-            "Leverage": {
-                "Debt to Equity": 0.6,
-                "Debt Ratio": 0.38,
-                "Interest Coverage": 4.5
-            },
-            "Efficiency": {
-                "Asset Turnover": 2.1,
-                "Inventory Turnover": 12.3,
-                "Receivables Turnover": 15.2
-            }
-        }
-    }
-
-    return benchmarks.get(industry, benchmarks["Technology"])
-
-
-@error_boundary()
-def _render_data_explorer_tab(self, data: pd.DataFrame):
-    """Render data explorer tab"""
-    st.header("🔍 Data Explorer")
-
-    # Data overview
-    st.subheader("📊 Data Overview")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("Total Rows", data.shape[0])
-
-    with col2:
-        st.metric("Total Columns", data.shape[1])
-
-    with col3:
-        missing_pct = (data.isnull().sum().sum() / data.size) * 100
-        st.metric("Missing Data %", f"{missing_pct:.1f}")
-
-    with col4:
-        numeric_cols = data.select_dtypes(include=[np.number]).shape[1]
-        st.metric("Numeric Columns", numeric_cols)
-
-    # Raw data view
-    st.subheader("📋 Raw Data")
-
-    # Data filtering options
-    col1, col2 = st.columns(2)
-
-    with col1:
-        search_term = st.text_input("🔍 Search metrics",
-                                    placeholder="Type to filter rows...",
-                                    help="Search in metric names")
-
-    with col2:
-        selected_years = st.multiselect("📅 Select years",
-                                        data.columns.tolist(),
-                                        default=data.columns.tolist(),
-                                        help="Filter by specific years")
-
-    # Apply filters
-    filtered_data = data.copy()
-
-    if search_term:
-        mask = filtered_data.index.str.contains(search_term,
-                                                case=False,
-                                                na=False)
-        filtered_data = filtered_data[mask]
-
-    if selected_years:
-        filtered_data = filtered_data[selected_years]
-
-    # Display filtered data
-    st.dataframe(filtered_data.style.format(
-        "{:,.0f}", na_rep="-").background_gradient(cmap='RdYlGn', axis=1),
-                 use_container_width=True,
-                 height=400)
-
-    # Data statistics
-    st.subheader("📈 Data Statistics")
-
-    numeric_data = filtered_data.select_dtypes(include=[np.number])
-
-    if not numeric_data.empty:
-        stats_df = numeric_data.describe().T
-        stats_df = stats_df.round(2)
-
-        st.dataframe(stats_df, use_container_width=True)
-
-        # Missing data analysis
-        st.subheader("🕳️ Missing Data Analysis")
-
-        missing_data = data.isnull().sum()
-        missing_data = missing_data[missing_data > 0].sort_values(
-            ascending=False)
-
-        if not missing_data.empty:
-            fig = go.Figure(
-                go.Bar(x=missing_data.values,
-                       y=missing_data.index,
-                       orientation='h',
-                       marker_color='red'))
-
-            fig.update_layout(title="Missing Values by Column",
-                              xaxis_title="Number of Missing Values",
-                              yaxis_title="Columns",
-                              height=400)
-
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.success("✅ No missing data found!")
-
-    # Data export
-    st.subheader("💾 Export Filtered Data")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if st.button("📋 Copy to Clipboard"):
-            st.code(filtered_data.to_csv())
-
-    with col2:
-        csv_data = filtered_data.to_csv().encode('utf-8')
-        st.download_button(
-            label="📁 Download CSV",
-            data=csv_data,
-            file_name=f"financial_data_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv")
-
-    with col3:
-        excel_data = io.BytesIO()
-        filtered_data.to_excel(excel_data, engine='xlsxwriter')
-        excel_data.seek(0)
-
-        st.download_button(
-            label="📊 Download Excel",
-            data=excel_data.getvalue(),
-            file_name=
-            f"financial_data_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime=
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-
-@error_boundary()
-def _render_reports_tab(self, data: pd.DataFrame):
-    """Render reports tab"""
-    st.header("📄 Financial Analysis Reports")
-
-    # Report configuration
-    st.subheader("⚙️ Report Configuration")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        company_name = st.text_input("Company Name",
-                                     value=self.get_state(
-                                         'company_name', 'Your Company'),
-                                     help="Name to appear on the report")
-
-    with col2:
-        report_format = st.selectbox(
-            "Report Format", ["Excel", "Markdown", "PDF", "PowerPoint"],
-            help="Choose output format")
-
-    # Report sections
-    st.subheader("📋 Report Sections")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        include_overview = st.checkbox("Executive Summary", value=True)
-        include_ratios = st.checkbox("Financial Ratios", value=True)
-        include_trends = st.checkbox("Trend Analysis", value=True)
-        include_forecasts = st.checkbox("ML Forecasts", value=False)
-
-    with col2:
-        include_pn = st.checkbox("Penman-Nissim Analysis", value=False)
-        include_industry = st.checkbox("Industry Comparison", value=False)
-        include_raw_data = st.checkbox("Raw Data", value=False)
-        include_charts = st.checkbox("Charts and Visualizations", value=True)
-
-    # Generate report
-    if st.button("🚀 Generate Report", type="primary"):
-        with st.spinner(f"Generating {report_format} report..."):
-            try:
-                # Compile analysis data
-                analysis = self.components[
-                    'analyzer'].analyze_financial_statements(data)
-
-                # Add additional sections based on selections
-                if include_pn and self.get_state('pn_results'):
-                    analysis['penman_nissim'] = self.get_state('pn_results')
-
-                if include_forecasts and self.get_state('ml_forecast_results'):
-                    analysis['forecasts'] = self.get_state(
-                        'ml_forecast_results')
-
-                if include_raw_data:
-                    analysis['filtered_data'] = data
-
-                analysis['company_name'] = company_name
-
-                # Generate report based on format
-                if report_format == "Excel":
-                    report_data = self.export_manager.export_to_excel(
-                        analysis, f"{company_name}_analysis.xlsx")
-
-                    st.download_button(
-                        label="📊 Download Excel Report",
-                        data=report_data,
-                        file_name=
-                        f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                        mime=
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-
-                    st.success("✅ Excel report generated successfully!")
-
-                elif report_format == "Markdown":
-                    report_content = self.export_manager.export_to_markdown(
-                        analysis)
-
-                    st.download_button(
-                        label="📝 Download Markdown Report",
-                        data=report_content.encode('utf-8'),
-                        file_name=
-                        f"{company_name}_financial_analysis_{datetime.now().strftime('%Y%m%d')}.md",
-                        mime="text/markdown")
-
-                    # Show preview
-                    with st.expander("📖 Report Preview"):
-                        st.markdown(report_content)
-
-                    st.success("✅ Markdown report generated successfully!")
-
-                elif report_format == "PDF":
-                    st.warning(
-                        "PDF export is coming soon. Please use Excel or Markdown for now."
-                    )
-
-                elif report_format == "PowerPoint":
-                    st.warning(
-                        "PowerPoint export is coming soon. Please use Excel or Markdown for now."
-                    )
-
-            except Exception as e:
-                st.error(f"Report generation failed: {str(e)}")
-
-    # Report templates
-    st.subheader("📋 Report Templates")
-
-    templates = {
-        "Executive Summary": {
-            "description": "High-level overview for executives",
-            "sections": ["Overview", "Key Metrics", "Insights"]
-        },
-        "Detailed Analysis": {
-            "description": "Comprehensive financial analysis",
-            "sections": ["All sections", "Charts", "Raw Data"]
-        },
-        "Investor Presentation": {
-            "description": "Investor-focused metrics and trends",
-            "sections":
-            ["Ratios", "Trends", "Forecasts", "Industry Comparison"]
-        },
-        "Audit Support": {
-            "description": "Detailed data for audit purposes",
-            "sections": ["Raw Data", "Calculations", "Validation Results"]
-        }
-    }
-
-    for template_name, template_info in templates.items():
-        with st.expander(f"📄 {template_name}"):
-            st.write(f"**Description:** {template_info['description']}")
-            st.write(f"**Sections:** {', '.join(template_info['sections'])}")
-
-            if st.button(f"Use {template_name} Template",
-                         key=f"template_{template_name}"):
-                st.info(f"Applied {template_name} template settings")
-
-
-@error_boundary()
-def _render_ml_insights_tab(self, data: pd.DataFrame):
-    """Render ML insights and advanced analytics tab"""
-    st.header("🤖 ML Insights & Advanced Analytics")
-
-    if not self.config.get('app.enable_ml_features', True):
-        st.warning(
-            "ML features are disabled. Enable them in the sidebar settings.")
-        return
-
-    # Check if AI features are using Kaggle
-    using_kaggle = False
-    if 'mapper' in self.components:
-        status = self.components['mapper'].get_api_status()
-        using_kaggle = status['kaggle_available']
-
-    if using_kaggle:
-        st.info("🚀 Using Kaggle GPU for enhanced ML processing")
-
-    # AI-powered insights
-    st.subheader("🧠 AI-Powered Financial Insights")
-
-    with st.spinner("AI is analyzing your financial data..."):
-        analysis = self.components['analyzer'].analyze_financial_statements(
-            data)
-
-    # Display AI insights with confidence scores
-    insights = analysis.get('insights', [])
-
-    if insights:
-        st.write("**AI has identified the following insights:**")
-
-        for i, insight in enumerate(insights):
-            # Simulate confidence score
-            confidence = np.random.uniform(0.7, 0.95)
-
-            col1, col2 = st.columns([4, 1])
-
-            with col1:
-                if "⚠️" in insight:
-                    insight_type = "warning"
-                elif "📉" in insight:
-                    insight_type = "error"
-                elif "🚀" in insight or "📊" in insight:
-                    insight_type = "success"
-                else:
-                    insight_type = "info"
-
-                self.ui_factory.create_insight_card(insight, insight_type)
-
-            with col2:
-                st.metric("Confidence", f"{confidence:.0%}")
-
-    # Anomaly detection with ML
-    st.subheader("🔍 Advanced Anomaly Detection")
-
-    anomalies = analysis.get('anomalies', {})
-    total_anomalies = sum(len(v) for v in anomalies.values())
-
-    if total_anomalies > 0:
-        st.warning(
-            f"Detected {total_anomalies} potential anomalies in your data")
-
-        # Anomaly visualization
-        fig = go.Figure()
-
-        categories = list(anomalies.keys())
-        counts = [len(anomalies[cat]) for cat in categories]
-
-        fig.add_trace(
-            go.Bar(x=categories,
-                   y=counts,
-                   marker_color=['red', 'orange', 'yellow'][:len(categories)]))
-
-        fig.update_layout(title="Anomalies by Category",
-                          xaxis_title="Anomaly Type",
-                          yaxis_title="Count",
-                          height=300)
-
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.success("✅ No significant anomalies detected")
-
-    # Predictive analytics
-    st.subheader("🔮 Predictive Analytics")
-
-    if st.button("🚀 Run Predictive Analysis", type="primary"):
-        with st.spinner("Running ML models for predictive analysis..."):
-            try:
-                # Run ML forecasting
-                forecast_results = self.ml_forecaster.forecast_metrics(
-                    data, periods=3, model_type='auto')
-
-                if 'error' not in forecast_results:
-                    st.success("✅ Predictive analysis completed")
-
-                    # Display key predictions
-                    forecasts = forecast_results.get('forecasts', {})
-
-                    st.write("**Key Financial Predictions (Next 3 Periods):**")
-
-                    for metric, forecast in list(forecasts.items())[:3]:
-                        col1, col2, col3 = st.columns(3)
-
-                        with col1:
-                            st.write(f"**{metric}**")
-
-                        with col2:
-                            current_value = forecast['last_actual']
-                            predicted_value = forecast['values'][-1]
-                            growth = (
-                                (predicted_value / current_value) - 1) * 100
-
-                            st.metric(
-                                "Predicted Growth",
-                                f"{growth:+.1f}%",
-                                delta=f"{predicted_value - current_value:,.0f}"
-                            )
-
-                        with col3:
-                            # Get accuracy from previous results
-                            accuracy = forecast_results.get(
-                                'accuracy_metrics', {}).get(metric, {})
-                            mape = accuracy.get('mape', 0)
-
-                            if mape and mape < 20:
-                                confidence_text = "High"
-                                confidence_color = "success"
-                            elif mape and mape < 40:
-                                confidence_text = "Medium"
-                                confidence_color = "warning"
-                            else:
-                                confidence_text = "Low"
-                                confidence_color = "error"
-
-                            st.markdown(
-                                f"**Confidence:** :{confidence_color}[{confidence_text}]"
-                            )
-                else:
-                    st.error(
-                        f"Predictive analysis failed: {forecast_results['error']}"
-                    )
-
-            except Exception as e:
-                st.error(f"Predictive analysis error: {str(e)}")
-
-    # Pattern recognition
-    st.subheader("🎯 Financial Pattern Recognition")
-
-    # Analyze patterns in the data
-    patterns = self._detect_financial_patterns(data)
-
-    if patterns:
-        st.write("**Detected Financial Patterns:**")
-
-        for pattern in patterns:
-            self.ui_factory.create_insight_card(pattern['description'],
-                                                pattern['type'])
-
-    # Risk analysis
-    st.subheader("⚠️ Risk Analysis")
-
-    risk_metrics = self._calculate_risk_metrics(data)
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        volatility = risk_metrics.get('volatility', 0)
-        st.metric("Revenue Volatility",
-                  f"{volatility:.1f}%",
-                  help="Standard deviation of revenue growth")
-
-    with col2:
-        trend_stability = risk_metrics.get('trend_stability', 0)
-        st.metric("Trend Stability",
-                  f"{trend_stability:.0%}",
-                  help="Consistency of growth trends")
-
-    with col3:
-        outlier_risk = risk_metrics.get('outlier_risk', 0)
-        st.metric("Outlier Risk",
-                  f"{outlier_risk:.0%}",
-                  help="Percentage of outlier values")
-
-    # Performance monitoring
-    if self.config.get('app.debug', False):
-        st.subheader("🔧 Performance Monitoring")
-
-        perf_summary = performance_monitor.get_performance_summary()
-
-        if perf_summary:
-            perf_data = []
-            for operation, stats in perf_summary.items():
-                perf_data.append({
-                    'Operation': operation,
-                    'Total Calls': stats['total_calls'],
-                    'Avg Duration (s)': stats['avg_duration'],
-                    'Max Duration (s)': stats['max_duration'],
-                    'Total Time (s)': stats['total_time']
-                })
-
-            if perf_data:
-                perf_df = pd.DataFrame(perf_data)
-                st.dataframe(perf_df, use_container_width=True)
-
-        # Cache statistics
-        if 'mapper' in self.components:
-            cache_stats = self.components['mapper'].embeddings_cache.get_stats(
+            st.metric("Confidence", f"{confidence:.0%}")
+
+# Anomaly detection with ML
+st.subheader("🔍 Advanced Anomaly Detection")
+
+anomalies = analysis.get('anomalies', {})
+total_anomalies = sum(len(v) for v in anomalies.values())
+
+if total_anomalies > 0:
+    st.warning(f"Detected {total_anomalies} potential anomalies in your data")
+
+    # Anomaly visualization
+    fig = go.Figure()
+
+    categories = list(anomalies.keys())
+    counts = [len(anomalies[cat]) for cat in categories]
+
+    fig.add_trace(go.Bar(
+        x=categories,
+        y=counts,
+        marker_color=['red', 'orange', 'yellow'][:len(categories)]
+    ))
+
+    fig.update_layout(
+        title="Anomalies by Category",
+        xaxis_title="Anomaly Type",
+        yaxis_title="Count",
+        height=300
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.success("✅ No significant anomalies detected")
+
+# Predictive analytics
+st.subheader("🔮 Predictive Analytics")
+
+if st.button("🚀 Run Predictive Analysis", type="primary"):
+    with st.spinner("Running ML models for predictive analysis..."):
+        try:
+            # Run ML forecasting
+            forecast_results = self.ml_forecaster.forecast_metrics(
+                data,
+                periods=3,
+                model_type='auto'
             )
 
-            col1, col2, col3 = st.columns(3)
+            if 'error' not in forecast_results:
+                st.success("✅ Predictive analysis completed")
 
-            with col1:
-                st.metric("Cache Entries", cache_stats.get('entries', 0))
+                # Display key predictions
+                forecasts = forecast_results.get('forecasts', {})
 
-            with col2:
-                st.metric("Cache Hit Rate",
-                          f"{cache_stats.get('hit_rate', 0):.1f}%")
+                st.write("**Key Financial Predictions (Next 3 Periods):**")
 
-            with col3:
-                cache_size_mb = cache_stats.get('size_bytes',
-                                                0) / (1024 * 1024)
-                st.metric("Cache Size", f"{cache_size_mb:.1f} MB")
+                for metric, forecast in list(forecasts.items())[:3]:
+                    col1, col2, col3 = st.columns(3)
 
+                    with col1:
+                        st.write(f"**{metric}**")
 
-def _detect_financial_patterns(self,
-                               data: pd.DataFrame) -> List[Dict[str, str]]:
-    """Detect patterns in financial data"""
-    patterns = []
+                    with col2:
+                        current_value = forecast['last_actual']
+                        predicted_value = forecast['values'][-1]
+                        growth = ((predicted_value / current_value) - 1) * 100
 
-    # Analyze revenue patterns
-    revenue_metrics = [
-        idx for idx in data.index if 'revenue' in str(idx).lower()
-    ]
-    if revenue_metrics:
-        revenue_series = data.loc[revenue_metrics[0]].dropna()
+                        st.metric(
+                            "Predicted Growth",
+                            f"{growth:+.1f}%",
+                            delta=f"{predicted_value - current_value:,.0f}"
+                        )
 
-        # Check for seasonality (simple check)
-        if len(revenue_series) >= 4:
-            growth_rates = revenue_series.pct_change().dropna()
+                    with col3:
+                        # Get accuracy from previous results
+                        accuracy = forecast_results.get('accuracy_metrics', {}).get(metric, {})
+                        mape = accuracy.get('mape', 0)
 
-            if growth_rates.std() < 0.1:  # Low volatility
-                patterns.append({
-                    'description':
-                    '📈 Stable revenue growth pattern detected - consistent performance',
-                    'type': 'success'
-                })
-            elif growth_rates.std() > 0.3:  # High volatility
-                patterns.append({
-                    'description':
-                    '⚠️ Volatile revenue pattern - consider investigating causes',
-                    'type': 'warning'
-                })
+                        if mape and mape < 20:
+                            confidence_text = "High"
+                            confidence_color = "success"
+                        elif mape and mape < 40:
+                            confidence_text = "Medium"
+                            confidence_color = "warning"
+                        else:
+                            confidence_text = "Low"
+                            confidence_color = "error"
 
-    # Check for improvement trends
-    analysis = self.components['analyzer'].analyze_financial_statements(data)
-    trends = analysis.get('trends', {})
+                        st.markdown(f"**Confidence:** :{confidence_color}[{confidence_text}]")
+            else:
+                st.error(f"Predictive analysis failed: {forecast_results['error']}")
 
-    improving_metrics = 0
-    declining_metrics = 0
+        except Exception as e:
+            st.error(f"Predictive analysis error: {str(e)}")
 
-    for metric, trend in trends.items():
-        if isinstance(trend, dict):
-            if trend.get('direction') == 'increasing':
-                improving_metrics += 1
-            elif trend.get('direction') == 'decreasing':
-                declining_metrics += 1
+# Pattern recognition
+st.subheader("🎯 Financial Pattern Recognition")
 
-    if improving_metrics > declining_metrics * 2:
-        patterns.append({
-            'description': '🚀 Overall improving trend across multiple metrics',
-            'type': 'success'
-        })
-    elif declining_metrics > improving_metrics * 2:
-        patterns.append({
-            'description':
-            '📉 Concerning declining trend across multiple metrics',
-            'type': 'error'
-        })
+# Analyze patterns in the data
+patterns = self._detect_financial_patterns(data)
 
-    return patterns
+if patterns:
+    st.write("**Detected Financial Patterns:**")
 
+    for pattern in patterns:
+        self.ui_factory.create_insight_card(pattern['description'], pattern['type'])
 
-def _calculate_risk_metrics(self, data: pd.DataFrame) -> Dict[str, float]:
-    """Calculate risk-related metrics"""
-    risk_metrics = {}
+# Risk analysis
+st.subheader("⚠️ Risk Analysis")
 
-    # Revenue volatility
-    revenue_metrics = [
-        idx for idx in data.index if 'revenue' in str(idx).lower()
-    ]
-    if revenue_metrics:
-        revenue_series = data.loc[revenue_metrics[0]].dropna()
-        growth_rates = revenue_series.pct_change().dropna()
-        risk_metrics['volatility'] = growth_rates.std() * 100
+risk_metrics = self._calculate_risk_metrics(data)
 
-    # Trend stability
-    analysis = self.components['analyzer'].analyze_financial_statements(data)
-    trends = analysis.get('trends', {})
+col1, col2, col3 = st.columns(3)
 
-    r_squared_values = []
-    for trend in trends.values():
-        if isinstance(trend, dict) and 'r_squared' in trend:
-            r_squared_values.append(trend['r_squared'])
+with col1:
+    volatility = risk_metrics.get('volatility', 0)
+    st.metric(
+        "Revenue Volatility",
+        f"{volatility:.1f}%",
+        help="Standard deviation of revenue growth"
+    )
 
-    if r_squared_values:
-        risk_metrics['trend_stability'] = np.mean(r_squared_values)
+with col2:
+    trend_stability = risk_metrics.get('trend_stability', 0)
+    st.metric(
+        "Trend Stability",
+        f"{trend_stability:.0%}",
+        help="Consistency of growth trends"
+    )
 
-    # Outlier risk
-    numeric_data = data.select_dtypes(include=[np.number])
-    total_values = numeric_data.size
-    outlier_count = 0
+with col3:
+    outlier_risk = risk_metrics.get('outlier_risk', 0)
+    st.metric(
+        "Outlier Risk",
+        f"{outlier_risk:.0%}",
+        help="Percentage of outlier values"
+    )
 
-    for col in numeric_data.columns:
-        for val in numeric_data[col].dropna():
-            z_score = np.abs(
-                (val - numeric_data[col].mean()) / numeric_data[col].std())
-            if z_score > 3:
-                outlier_count += 1
+# Performance monitoring
+if self.config.get('app.debug', False):
+    st.subheader("🔧 Performance Monitoring")
 
-    risk_metrics[
-        'outlier_risk'] = outlier_count / total_values if total_values > 0 else 0
+    perf_summary = performance_monitor.get_performance_summary()
 
-    return risk_metrics
+    if perf_summary:
+        perf_data = []
+        for operation, stats in perf_summary.items():
+            perf_data.append({
+                'Operation': operation,
+                'Total Calls': stats['total_calls'],
+                'Avg Duration (s)': stats['avg_duration'],
+                'Max Duration (s)': stats['max_duration'],
+                'Total Time (s)': stats['total_time']
+            })
 
+        if perf_data:
+            perf_df = pd.DataFrame(perf_data)
+            st.dataframe(perf_df, use_container_width=True)
 
-def _render_debug_footer(self):
-    """Render debug information in footer"""
-    with st.expander("🔧 Debug Information"):
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.write("**Session State Keys:**")
-            st.write(list(st.session_state.keys()))
-
-        with col2:
-            st.write("**Performance Summary:**")
-            perf_summary = performance_monitor.get_performance_summary()
-            if perf_summary:
-                for op, stats in list(perf_summary.items())[:5]:
-                    st.write(f"- {op}: {stats['avg_duration']:.3f}s avg")
-
-        # API Performance
-        if self.get_state('kaggle_api_enabled'):
-            st.write("**API Performance:**")
-            api_summary = performance_monitor.get_api_summary()
-            if api_summary:
-                for endpoint, metrics in api_summary.items():
-                    st.write(
-                        f"- {endpoint}: {metrics['total_requests']} requests, {metrics['success_rate']:.1%} success"
-                    )
-
-
-# --- 31. Application Entry Point ---
-
-
-def main():
-    """Main application entry point with comprehensive error handling."""
-    try:
-        # Create and run the application.
-        app = FinancialAnalyticsPlatform()
-        app.run()
-
-    except Exception as e:
-        # This block runs ONLY if an error occurs in the app.
-
-        # Log the fatal error for debugging.
-        logging.critical(f"Fatal application error: {e}", exc_info=True)
-
-        # Display a user-friendly error message.
-        st.error("🚨 A critical error occurred. Please refresh the page.")
-
-        # Show recovery options to the user.
-        st.subheader("🔄 Recovery Options")
+    # Cache statistics
+    if 'mapper' in self.components:
+        cache_stats = self.components['mapper'].embeddings_cache.get_stats()
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            if st.button("🔄 Refresh Page"):
-                st.experimental_rerun()
+            st.metric("Cache Entries", cache_stats.get('entries', 0))
 
         with col2:
-            if st.button("🗑️ Clear Cache"):
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.success("Cache cleared! Please refresh the page.")
+            st.metric("Cache Hit Rate", f"{cache_stats.get('hit_rate', 0):.1f}%")
 
         with col3:
-            if st.button("🏠 Reset to Home"):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.experimental_rerun()
+            cache_size_mb = cache_stats.get('size_bytes', 0) / (1024 * 1024)
+            st.metric("Cache Size", f"{cache_size_mb:.1f} MB")
+Use code with caution.
+def _detect_financial_patterns(self, data: pd.DataFrame) -> List[Dict[str, str]]:
+"""Detect patterns in financial data"""
+patterns = []
+Generated code
+# Analyze revenue patterns
+revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
+if revenue_metrics:
+    revenue_series = data.loc[revenue_metrics].dropna()
 
-        # Optionally show detailed debug info if debug mode is on.
-        if st.session_state.get('debug_mode', False):
-            st.exception(e)
+    # Check for seasonality (simple check)
+    if len(revenue_series) >= 4:
+        growth_rates = revenue_series.pct_change().dropna()
 
-            with st.expander("🔧 Debug Information"):
-                st.write("**Error Details:**")
-                st.code(traceback.format_exc())
+        if growth_rates.std() < 0.1:  # Low volatility
+            patterns.append({
+                'description': '📈 Stable revenue growth pattern detected - consistent performance',
+                'type': 'success'
+            })
+        elif growth_rates.std() > 0.3:  # High volatility
+            patterns.append({
+                'description': '⚠️ Volatile revenue pattern - consider investigating causes',
+                'type': 'warning'
+            })
 
-                st.write("**Session State:**")
-                st.json(dict(st.session_state))
+# Check for improvement trends
+analysis = self.components['analyzer'].analyze_financial_statements(data)
+trends = analysis.get('trends', {})
 
+improving_metrics = 0
+declining_metrics = 0
 
-# This is the standard Python construct to make a script runnable.
-# The code inside this block will only execute when the script is run directly.
-if __name__ == "__main__":
-    # Configure Python path and environment.
-    import sys
-    from pathlib import Path
+for metric, trend in trends.items():
+    if isinstance(trend, dict):
+        if trend.get('direction') == 'increasing':
+            improving_metrics += 1
+        elif trend.get('direction') == 'decreasing':
+            declining_metrics += 1
 
-    # Add the script's directory to the Python path.
-    # This helps ensure that local modules can be imported correctly.
-    current_dir = Path(__file__).parent
-    if str(current_dir) not in sys.path:
-        sys.path.insert(0, str(current_dir))
+if improving_metrics > declining_metrics * 2:
+    patterns.append({
+        'description': '🚀 Overall improving trend across multiple metrics',
+        'type': 'success'
+    })
+elif declining_metrics > improving_metrics * 2:
+    patterns.append({
+        'description': '📉 Concerning declining trend across multiple metrics',
+        'type': 'error'
+    })
 
-    # Run the main application function.
-    main()
+return patterns
+Use code with caution.
+def _calculate_risk_metrics(self, data: pd.DataFrame) -> Dict[str, float]:
+"""Calculate risk-related metrics"""
+risk_metrics = {}
+Generated code
+# Revenue volatility
+revenue_metrics = [idx for idx in data.index if 'revenue' in str(idx).lower()]
+if revenue_metrics:
+    revenue_series = data.loc[revenue_metrics].dropna()
+    growth_rates = revenue_series.pct_change().dropna()
+    risk_metrics['volatility'] = growth_rates.std() * 100
+
+# Trend stability
+analysis = self.components['analyzer'].analyze_financial_statements(data)
+trends = analysis.get('trends', {})
+
+r_squared_values = []
+for trend in trends.values():
+    if isinstance(trend, dict) and 'r_squared' in trend:
+        r_squared_values.append(trend['r_squared'])
+
+if r_squared_values:
+    risk_metrics['trend_stability'] = np.mean(r_squared_values)
+
+# Outlier risk
+numeric_data = data.select_dtypes(include=[np.number])
+total_values = numeric_data.size
+outlier_count = 0
+
+for col in numeric_data.columns:
+    for val in numeric_data[col].dropna():
+        z_score = np.abs((val - numeric_data[col].mean()) / numeric_data[col].std())
+        if z_score > 3:
+            outlier_count += 1
+
+risk_metrics['outlier_risk'] = outlier_count / total_values if total_values > 0 else 0
+
+return risk_metrics
+Use code with caution.
+def _render_debug_footer(self):
+"""Render debug information in footer"""
+with st.expander("🔧 Debug Information"):
+col1, col2 = st.columns(2)
+Generated code
+with col1:
+        st.write("**Session State Keys:**")
+        st.write(list(st.session_state.keys()))
+
+    with col2:
+        st.write("**Performance Summary:**")
+        perf_summary = performance_monitor.get_performance_summary()
+        if perf_summary:
+            for op, stats in list(perf_summary.items())[:5]:
+                st.write(f"- {op}: {stats['avg_duration']:.3f}s avg")
+
+    # API Performance
+    if self.get_state('kaggle_api_enabled'):
+        st.write("**API Performance:**")
+        api_summary = performance_monitor.get_api_summary()
+        if api_summary:
+            for endpoint, metrics in api_summary.items():
+                st.write(f"- {endpoint}: {metrics['total_requests']} requests, {metrics['success_rate']:.1%} success")
+Use code with caution.
+--- 31. Application Entry Point ---
+def main():
+"""Main application entry point with comprehensive error handling."""
+try:
+# Create and run the application.
+app = FinancialAnalyticsPlatform()
+app.run()
+Generated code
+except Exception as e:
+    # This block runs ONLY if an error occurs in the app.
+
+    # Log the fatal error for debugging.
+    logging.critical(f"Fatal application error: {e}", exc_info=True)
+
+    # Display a user-friendly error message.
+    st.error("🚨 A critical error occurred. Please refresh the page.")
+
+    # Show recovery options to the user.
+    st.subheader("🔄 Recovery Options")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        if st.button("🔄 Refresh Page"):
+            st.experimental_rerun()
+
+    with col2:
+        if st.button("🗑️ Clear Cache & Reset"):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.success("Cache cleared! Please refresh the page.")
+
+    with col3:
+        if st.button("🏠 Reset to Home"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.experimental_rerun()
+
+    # Optionally show detailed debug info if debug mode is on.
+    if st.session_state.get('debug_mode', False):
+        st.exception(e)
+
+        with st.expander("🔧 Debug Information"):
+            st.write("**Error Details:**")
+            st.code(traceback.format_exc())
+
+            st.write("**Session State:**")
+            st.json(dict(st.session_state))
+#Use code with caution.
+#This is the standard Python construct to make a script runnable.
+#The code inside this block will only execute when the script is run directly.
+if name == "main":
+# Configure Python path and environment.
+import sys
+from pathlib import Path
+# Generated code
+# Add the script's directory to the Python path.
+# This helps ensure that local modules can be imported correctly.
+current_dir = Path(__file__).parent
+if str(current_dir) not in sys.path:
+    sys.path.insert(0, str(current_dir))
+
+# Run the main application function.
+main() 

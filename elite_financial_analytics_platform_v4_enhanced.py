@@ -5886,6 +5886,9 @@ class FinancialAnalyticsPlatform:
                             
                             df = self._parse_single_file(temp_file)
                             if df is not None and not df.empty:
+                                # Debug inspection
+                                self._inspect_dataframe(df, extracted_name)
+                                
                                 all_dataframes.append(df)
                                 file_info.append({
                                     'name': extracted_name,
@@ -5896,6 +5899,9 @@ class FinancialAnalyticsPlatform:
                         # Handle regular files
                         df = self._parse_single_file(file)
                         if df is not None and not df.empty:
+                            # Debug inspection
+                            self._inspect_dataframe(df, file.name)
+                            
                             all_dataframes.append(df)
                             file_info.append({
                                 'name': file.name,
@@ -5903,6 +5909,7 @@ class FinancialAnalyticsPlatform:
                                 'shape': df.shape
                             })
                 except Exception as e:
+                    self.logger.error(f"Error processing {file.name}: {e}")
                     st.error(f"Error processing {file.name}: {str(e)}")
                     continue
             
@@ -5959,21 +5966,44 @@ class FinancialAnalyticsPlatform:
             sample = file.read(1024).decode('utf-8', errors='ignore')
             file.seek(0)  # Reset file pointer
             
-            # Log file content type
             self.logger.info(f"File content starts with: {sample[:100]}")
             
             if '<html' in sample.lower() or '<table' in sample.lower():
                 self.logger.info(f"{file.name} appears to be HTML content")
-                tables = pd.read_html(file)
-                if tables:
-                    return max(tables, key=len).set_index(0)
+                try:
+                    tables = pd.read_html(file)
+                    if tables:
+                        df = max(tables, key=len)
+                        
+                        # Clean up the DataFrame
+                        # Remove any unnamed columns
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] if hasattr(df.columns, 'str') else df
+                        
+                        # Try to identify the index column
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
+                        for col in potential_index_cols:
+                            if col in df.columns:
+                                return df.set_index(col)
+                        
+                        # If no standard index column found, use the first column
+                        if len(df.columns) > 0:
+                            return df.set_index(df.columns[0])
+                        
+                        return df
+                except Exception as e:
+                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
+                    return None
+                    
             elif file_ext == '.csv':
                 return pd.read_csv(file, index_col=0)
+                
             elif file_ext in ['.xls', '.xlsx']:
                 for engine in ['openpyxl', 'xlrd']:
                     try:
                         self.logger.info(f"Trying {engine} engine for {file.name}")
-                        return pd.read_excel(file, index_col=0, engine=engine)
+                        df = pd.read_excel(file, index_col=0, engine=engine)
+                        if not df.empty:
+                            return df
                     except Exception as e:
                         self.logger.warning(f"{engine} engine failed for {file.name}: {e}")
                 
@@ -5982,7 +6012,22 @@ class FinancialAnalyticsPlatform:
                     file.seek(0)
                     tables = pd.read_html(file)
                     if tables:
-                        return max(tables, key=len).set_index(0)
+                        df = max(tables, key=len)
+                        
+                        # Clean up the DataFrame
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] if hasattr(df.columns, 'str') else df
+                        
+                        # Try to identify the index column
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
+                        for col in potential_index_cols:
+                            if col in df.columns:
+                                return df.set_index(col)
+                        
+                        # If no standard index column found, use the first column
+                        if len(df.columns) > 0:
+                            return df.set_index(df.columns[0])
+                        
+                        return df
                 except Exception as e:
                     self.logger.error(f"HTML fallback failed for {file.name}: {e}")
             
@@ -5991,6 +6036,13 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None
+
+    def _inspect_dataframe(self, df: pd.DataFrame, filename: str) -> None:
+        """Debug helper to inspect DataFrame structure"""
+        self.logger.info(f"\nInspecting DataFrame from {filename}:")
+        self.logger.info(f"Shape: {df.shape}")
+        self.logger.info(f"Columns: {df.columns.tolist()}")
+        self.logger.info(f"First few rows:\n{df.head()}")
     
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
         """Merge multiple dataframes intelligently"""

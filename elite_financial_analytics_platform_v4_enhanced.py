@@ -6475,44 +6475,44 @@ class FinancialAnalyticsPlatform:
                     for col in std_df.columns
                 ]
             
-            # Handle duplicate indices more intelligently
+            # For financial data, preserve all rows but handle empty/NaN indices
             if std_df.index.duplicated().any():
-                self.logger.info("Handling duplicate indices")
+                self.logger.info("Found rows with similar names - making indices unique")
                 
-                # Find duplicates
-                duplicated_indices = std_df[std_df.index.duplicated(keep=False)]
-                unique_indices = std_df[~std_df.index.duplicated(keep=False)]
+                # Make indices unique by adding sequential numbers
+                new_index = []
+                seen_indices = {}
                 
-                # Group duplicates - for financial data, we typically want to keep both
-                # but rename them to make them unique
-                processed_dups = []
-                for idx in duplicated_indices.index.unique():
-                    dup_rows = duplicated_indices[duplicated_indices.index == idx]
+                for idx in std_df.index:
+                    idx_str = str(idx) if not pd.isna(idx) else "EmptyIndex"
                     
-                    # If all values are the same, keep only one
-                    if len(dup_rows) > 1 and dup_rows.nunique().sum() == 0:
-                        processed_dups.append(dup_rows.iloc[[0]])
+                    if idx_str in seen_indices:
+                        seen_indices[idx_str] += 1
+                        unique_idx = f"{idx_str}_v{seen_indices[idx_str]}"
                     else:
-                        # Rename duplicates
-                        renamed_rows = []
-                        for i, (_, row) in enumerate(dup_rows.iterrows()):
-                            if i == 0:
-                                renamed_rows.append(row)
-                            else:
-                                row.name = f"{row.name} ({i})"
-                                renamed_rows.append(row)
-                        processed_dups.extend(renamed_rows)
+                        seen_indices[idx_str] = 0
+                        unique_idx = idx_str
+                    
+                    new_index.append(unique_idx)
                 
-                # Combine unique and processed duplicates
-                if processed_dups:
-                    processed_dup_df = pd.DataFrame(processed_dups)
-                    std_df = pd.concat([unique_indices, processed_dup_df])
+                std_df.index = new_index
+                self.logger.info(f"Made {sum(v for v in seen_indices.values() if v > 0)} indices unique")
             
-            # Remove rows where all values are NaN
+            # Only remove completely empty rows (all NaN)
+            before_count = len(std_df)
             std_df = std_df.dropna(how='all')
+            after_count = len(std_df)
             
-            # Remove columns where all values are NaN
+            if before_count != after_count:
+                self.logger.info(f"Removed {before_count - after_count} completely empty rows")
+            
+            # Only remove completely empty columns (all NaN)
+            before_cols = len(std_df.columns)
             std_df = std_df.dropna(how='all', axis=1)
+            after_cols = len(std_df.columns)
+            
+            if before_cols != after_cols:
+                self.logger.info(f"Removed {before_cols - after_cols} completely empty columns")
             
             return std_df
         
@@ -6534,95 +6534,64 @@ class FinancialAnalyticsPlatform:
         self.logger.info(f"First few rows:\n{df.head()}")
     
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
-        """Merge dataframes based on analysis mode"""
+        """Merge dataframes preserving all financial line items"""
         try:
-            # Check if we're in benchmark mode
             analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
             
-            # For standalone analysis, filter out any benchmark/comparison data
             if analysis_mode == "Standalone Analysis":
-                self.logger.info("Using standalone analysis mode")
+                self.logger.info("Using standalone analysis mode - preserving all financial data")
                 
-                # Identify the actual company from the data (not ITC if it's benchmark)
-                companies_in_data = set()
-                for df in dataframes:
-                    for col in df.columns:
-                        if '>>' in str(col):
-                            parts = str(col).split('>>')
-                            if len(parts) >= 3:
-                                company_name = parts[2].split('(')[0].strip()
-                                companies_in_data.add(company_name)
+                # Process each dataframe to preserve all line items
+                processed_dfs = []
                 
-                self.logger.info(f"Companies found in data: {companies_in_data}")
-                
-                # If multiple companies, filter out benchmark companies
-                benchmark_companies = ['ITC Ltd', 'Hindustan Unilever', 'Nestle India']
-                actual_companies = companies_in_data - set(benchmark_companies)
-                
-                if actual_companies:
-                    # We have non-benchmark companies, use only their data
-                    primary_company = list(actual_companies)[0]
-                    self.logger.info(f"Focusing on primary company: {primary_company}")
+                for i, df in enumerate(dataframes):
+                    df_copy = df.copy()
                     
-                    # Filter dataframes to include only the primary company
-                    filtered_dataframes = []
-                    for df in dataframes:
-                        # Filter columns for the primary company
-                        company_cols = [col for col in df.columns 
-                                      if primary_company in str(col) or 
-                                      not any(bc in str(col) for bc in benchmark_companies)]
-                        
-                        if company_cols:
-                            filtered_df = df[company_cols]
-                            filtered_dataframes.append(filtered_df)
+                    # Detect statement type
+                    statement_type = self._detect_statement_type(df_copy)
+                    self.logger.info(f"Processing {statement_type} with {len(df_copy)} line items")
                     
-                    if filtered_dataframes:
-                        merged_df = pd.concat(filtered_dataframes, axis=0)
-                    else:
-                        # If no filtered data, use all data but warn
-                        st.warning("No non-benchmark data found. Showing all available data.")
-                        merged_df = pd.concat(dataframes, axis=0)
-                else:
-                    # All companies are benchmark companies
-                    if len(companies_in_data) == 1:
-                        # Only one company, use it
-                        merged_df = pd.concat(dataframes, axis=0)
-                        self.logger.info(f"Only benchmark company data available: {companies_in_data}")
-                    else:
-                        # Multiple benchmark companies, need user to select
-                        st.warning("Multiple companies detected in data. Please select which one to analyze.")
-                        merged_df = pd.concat(dataframes, axis=0)
+                    # Create unique indices by prefixing with statement type
+                    new_index = []
+                    for idx in df_copy.index:
+                        if pd.isna(idx) or str(idx).strip() == '':
+                            new_idx = f"{statement_type}_EmptyRow_{df_copy.index.get_loc(idx)}"
+                        else:
+                            clean_idx = str(idx).strip()
+                            new_idx = f"{statement_type}::{clean_idx}"
+                        new_index.append(new_idx)
+                    
+                    df_copy.index = new_index
+                    processed_dfs.append(df_copy)
                 
-                # Remove duplicate indices
-                if merged_df.index.duplicated().any():
-                    self.logger.warning(f"Removing {merged_df.index.duplicated().sum()} duplicate indices")
-                    merged_df = merged_df[~merged_df.index.duplicated(keep='first')]
+                # Concatenate all dataframes
+                merged_df = pd.concat(processed_dfs, axis=0, sort=False)
                 
-                # Extract and set company name
+                # Log the preservation of data
+                total_original = sum(len(df) for df in dataframes)
+                self.logger.info(f"Successfully preserved all {len(merged_df)} line items (original: {total_original})")
+                
+                # Extract company info
                 company_info = self._extract_company_info(merged_df)
                 if company_info:
                     self.logger.info(f"Analyzing data for: {company_info['name']}")
                     self.set_state('company_name', company_info['name'])
                 
                 return merged_df
-            
-            # For benchmark mode, include the benchmark data
+                
             elif analysis_mode == "Benchmark Comparison":
                 self.logger.info("Using benchmark comparison mode")
                 
-                # First merge uploaded data
-                merged_df = pd.concat(dataframes, axis=0)
+                # First merge uploaded data preserving all items
+                merged_df = self._merge_standalone_data(dataframes)
                 
                 # Then add benchmark data if available
                 benchmark_data = self.get_state('benchmark_data')
                 if benchmark_data is not None:
-                    # Combine user data with benchmark
-                    merged_df = pd.concat([merged_df, benchmark_data], axis=0)
-                
-                # Remove duplicate indices
-                if merged_df.index.duplicated().any():
-                    self.logger.warning(f"Removing {merged_df.index.duplicated().sum()} duplicate indices")
-                    merged_df = merged_df[~merged_df.index.duplicated(keep='first')]
+                    # Add benchmark prefix to avoid conflicts
+                    benchmark_copy = benchmark_data.copy()
+                    benchmark_copy.index = [f"Benchmark::{idx}" for idx in benchmark_copy.index]
+                    merged_df = pd.concat([merged_df, benchmark_copy], axis=0)
                 
                 return merged_df
             
@@ -6630,8 +6599,41 @@ class FinancialAnalyticsPlatform:
             
         except Exception as e:
             self.logger.error(f"Error merging dataframes: {e}")
-            # Return the first dataframe as fallback
             return dataframes[0] if dataframes else pd.DataFrame()
+    
+    def _merge_standalone_data(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
+        """Helper function to merge standalone data"""
+        processed_dfs = []
+        
+        for df in dataframes:
+            df_copy = df.copy()
+            statement_type = self._detect_statement_type(df_copy)
+            
+            new_index = [f"{statement_type}::{str(idx).strip()}" for idx in df_copy.index]
+            df_copy.index = new_index
+            processed_dfs.append(df_copy)
+        
+        return pd.concat(processed_dfs, axis=0, sort=False)
+    
+    def _detect_statement_type(self, df: pd.DataFrame) -> str:
+        """Detect the type of financial statement from column names"""
+        if df.columns.empty:
+            return "Financial"
+        
+        # Check first column for statement type indicators
+        col_sample = str(df.columns[0]).lower()
+        
+        if any(keyword in col_sample for keyword in ['profit', 'loss', 'income', 'p&l']):
+            return "ProfitLoss"
+        elif any(keyword in col_sample for keyword in ['balance', 'sheet']):
+            return "BalanceSheet"
+        elif any(keyword in col_sample for keyword in ['cash', 'flow']):
+            return "CashFlow"
+        elif any(keyword in col_sample for keyword in ['equity', 'changes']):
+            return "Equity"
+        else:
+            return "Financial"
+
     
     def _extract_company_info(self, df: pd.DataFrame) -> Dict[str, str]:
         """Extract company name and other info from DataFrame columns"""

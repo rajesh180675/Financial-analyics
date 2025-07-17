@@ -5017,32 +5017,90 @@ class FinancialAnalyticsPlatform:
         
         return components
 
-    def _cleanup_session_state(self):
-        """Clean up unnecessary session state entries"""
-        # Keep essential keys
-        essential_keys = {
-            'analysis_data', 'metric_mappings', 'company_name', 'data_source',
-            'pn_mappings', 'pn_results', 'ml_forecast_results', 'components',
-            'config_overrides', 'initialized'
+    def _cleanup_session_state(self, force_cleanup: bool = False):
+        """Clean up unnecessary session state entries with improved handling"""
+        try:
+            # Core essential keys that should never be deleted
+            core_essentials = {
+                'analysis_data', 'analysis_hash', 'components', 'initialized',
+                'config_overrides', 'data_source', 'number_format_value'
+            }
+    
+            # Business logic keys that should be preserved unless force_cleanup
+            business_keys = {
+                'metric_mappings', 'pn_mappings', 'pn_results', 'company_name',
+                'ml_forecast_results'
+            }
+    
+            # Essential keys combination
+            essential_keys = core_essentials | (set() if force_cleanup else business_keys)
+    
+            # Group keys by prefix for better organization
+            key_groups = {
+                'outliers': [],
+                'standard_embedding': [],
+                'template': [],
+                'pn': [],
+                'other': []
+            }
+    
+            # Categorize all keys
+            for key in list(st.session_state.keys()):
+                if key in essential_keys:
+                    continue
+                
+                if key.startswith('outliers_'):
+                    key_groups['outliers'].append(key)
+                elif key.startswith('standard_embedding_'):
+                    key_groups['standard_embedding'].append(key)
+                elif key.startswith('template_'):
+                    key_groups['template'].append(key)
+                elif key.startswith('pn_'):
+                    key_groups['pn'].append(key)
+                else:
+                    key_groups['other'].append(key)
+    
+            # Cleanup rules
+            cleanup_rules = {
+                'outliers': lambda keys: keys,  # Remove all outlier keys
+                'standard_embedding': lambda keys: [k for k in keys if not any(metric in k for metric in ['Revenue', 'Total Assets', 'Net Income'])],  # Keep essential embeddings
+                'template': lambda keys: keys if force_cleanup else [],  # Remove only on force cleanup
+                'pn': lambda keys: keys if force_cleanup else [],  # Remove only on force cleanup
+                'other': lambda keys: [k for k in keys if not k.endswith(('_button', '_radio', '_checkbox'))]  # Remove UI state
+            }
+    
+            # Perform cleanup
+            cleaned_count = 0
+            for group, keys in key_groups.items():
+                keys_to_remove = cleanup_rules[group](keys)
+                for key in keys_to_remove:
+                    try:
+                        del st.session_state[key]
+                        cleaned_count += 1
+                    except Exception as e:
+                        self.logger.warning(f"Could not delete key {key}: {e}")
+    
+            # Log cleanup results
+            self.logger.info(f"Cleaned up {cleaned_count} session state entries")
+            
+            # Perform garbage collection after significant cleanup
+            if cleaned_count > 10:
+                gc.collect()
+    
+        except Exception as e:
+            self.logger.error(f"Error during session state cleanup: {e}")
+    
+    def _trigger_cleanup(self, trigger_type: str):
+        """Trigger cleanup based on specific events"""
+        cleanup_triggers = {
+            'new_upload': True,  # Force cleanup on new file upload
+            'analysis_complete': False,  # Light cleanup after analysis
+            'page_reload': False,  # Light cleanup on page reload
+            'error_recovery': True,  # Force cleanup during error recovery
         }
         
-        # Remove outlier keys that are no longer needed
-        outlier_keys = [k for k in st.session_state.keys() if k.startswith('outliers_')]
-        for key in outlier_keys:
-            if key not in st.session_state:
-                continue
-            try:
-                del st.session_state[key]
-            except Exception as e:
-                self.logger.warning(f"Could not delete key {key}: {e}")
-    
-        # Keep only the most recent state
-        for key in list(st.session_state.keys()):
-            if key not in essential_keys and not key.startswith('standard_embedding_'):
-                try:
-                    del st.session_state[key]
-                except Exception as e:
-                    self.logger.warning(f"Could not delete key {key}: {e}")
+        force_cleanup = cleanup_triggers.get(trigger_type, False)
+        self._cleanup_session_state(force_cleanup)
 
     def _manage_analysis_state(self, df: pd.DataFrame):
         """Manage analysis state and caching"""
@@ -5964,8 +6022,18 @@ class FinancialAnalyticsPlatform:
     def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
         """Process uploaded files including compressed files with progress tracking"""
         try:
+            # First trigger cleanup
+            self._trigger_cleanup('new_upload')
+            
             # Clear previous state
             self._cleanup_session_state()
+            
+            # Reset calculations and state
+            self.set_state('metric_mappings', None)
+            self.set_state('pn_mappings', None)
+            self.set_state('pn_results', None)
+            self.set_state('ml_forecast_results', None)
+            self.set_state('ai_mapping_result', None)
             
             all_dataframes = []
             file_info = []
@@ -5990,6 +6058,8 @@ class FinancialAnalyticsPlatform:
                             
                             df = self._parse_single_file(temp_file)
                             if df is not None and not df.empty:
+                                # Clean the dataframe after parsing
+                                df = self._clean_dataframe(df)
                                 self._inspect_dataframe(df, extracted_name)
                                 all_dataframes.append(df)
                                 file_info.append({
@@ -6000,6 +6070,8 @@ class FinancialAnalyticsPlatform:
                     else:
                         df = self._parse_single_file(file)
                         if df is not None and not df.empty:
+                            # Clean the dataframe after parsing
+                            df = self._clean_dataframe(df)
                             self._inspect_dataframe(df, file.name)
                             all_dataframes.append(df)
                             file_info.append({
@@ -6021,6 +6093,22 @@ class FinancialAnalyticsPlatform:
                 # Process and validate
                 processed_df, validation_result = self.components['processor'].process(final_df, "uploaded_data")
                 
+                # Show data quality metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    total_rows = len(processed_df)
+                    total_cols = len(processed_df.columns)
+                    st.metric("Data Points", f"{total_rows}×{total_cols}")
+                
+                with col2:
+                    missing_pct = (processed_df.isnull().sum().sum() / (total_rows * total_cols)) * 100
+                    st.metric("Missing Data", f"{missing_pct:.1f}%")
+                
+                with col3:
+                    numeric_cols = processed_df.select_dtypes(include=[np.number]).columns
+                    numeric_pct = (len(numeric_cols) / len(processed_df.columns)) * 100
+                    st.metric("Numeric Columns", f"{numeric_pct:.1f}%")
+                
                 # Update state
                 self._manage_analysis_state(processed_df)
                 self.set_state('analysis_data', processed_df)
@@ -6029,26 +6117,39 @@ class FinancialAnalyticsPlatform:
                 # Show success message
                 st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)")
                 
-                # Show file info
-                if len(file_info) > 1:
-                    with st.expander("📁 Processed Files"):
+                # Show detailed data quality report
+                with st.expander("📊 Data Quality Report", expanded=True):
+                    st.write("**Data Structure:**")
+                    st.write(f"- Rows: {total_rows}")
+                    st.write(f"- Columns: {total_cols}")
+                    st.write(f"- Missing Data: {missing_pct:.1f}%")
+                    
+                    if validation_result.warnings:
+                        st.write("\n**Warnings:**")
+                        for warning in validation_result.warnings[:3]:  # Show first 3 warnings
+                            st.warning(warning)
+                    
+                    if validation_result.corrections:
+                        st.write("\n**Auto-corrections Applied:**")
+                        for correction in validation_result.corrections[:5]:  # Show first 5 corrections
+                            st.info(correction)
+                        if len(validation_result.corrections) > 5:
+                            st.write(f"... and {len(validation_result.corrections)-5} more corrections")
+                    
+                    # Show file info
+                    if len(file_info) > 1:
+                        st.write("\n**Processed Files:**")
                         info_df = pd.DataFrame(file_info)
                         st.dataframe(info_df, use_container_width=True)
-                
-                # Show validation results
-                if validation_result.warnings:
-                    for warning in validation_result.warnings[:3]:
-                        st.warning(warning)
-                
-                if validation_result.corrections:
-                    st.info(f"Applied {len(validation_result.corrections)} auto-corrections")
                 
             else:
                 st.error("No valid financial data found in uploaded files")
                 
         except Exception as e:
+            self._trigger_cleanup('error_recovery')
             st.error(f"Error processing files: {str(e)}")
         finally:
+            # Cleanup temporary files
             self.compression_handler.cleanup()
     
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
@@ -6131,7 +6232,110 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None
-
+            
+    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and prepare dataframe for analysis"""
+        try:
+            # First standardize the DataFrame structure
+            cleaned_df = self._standardize_dataframe(df)
+            
+            # Rest of your existing cleaning code...
+            # Remove unnamed columns
+            unnamed_cols = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
+            if unnamed_cols:
+                cleaned_df = cleaned_df.drop(columns=unnamed_cols)
+                self.logger.info(f"Removed {len(unnamed_cols)} unnamed columns")
+            
+            # Convert numeric columns
+            for col in cleaned_df.columns:
+                try:
+                    # Try to convert to numeric, replacing common non-numeric values
+                    cleaned_df[col] = cleaned_df[col].replace({
+                        '-': np.nan,
+                        '': np.nan,
+                        'NA': np.nan,
+                        'None': np.nan
+                    })
+                    cleaned_df[col] = pd.to_numeric(cleaned_df[col], errors='coerce')
+                except Exception as e:
+                    self.logger.warning(f"Could not convert column {col} to numeric: {e}")
+            
+            return cleaned_df
+            
+        except Exception as e:
+            self.logger.error(f"Error cleaning dataframe: {e}")
+            return df
+            
+    def _standardize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Standardize DataFrame structure and handle common issues"""
+        try:
+            # Make a copy to avoid modifying original
+            std_df = df.copy()
+            
+            # Handle multi-level columns
+            if isinstance(std_df.columns, pd.MultiIndex):
+                # Flatten column names
+                std_df.columns = [' - '.join(str(level) for level in col if str(level) != 'nan').strip() 
+                                for col in std_df.columns]
+            
+            # Handle multi-level index
+            if isinstance(std_df.index, pd.MultiIndex):
+                # Flatten index names
+                std_df.index = [' - '.join(str(level) for level in idx if str(level) != 'nan').strip() 
+                              for idx in std_df.index]
+            
+            # Clean column names
+            std_df.columns = [str(col).strip().replace('nan', '').strip(' -') for col in std_df.columns]
+            
+            # Clean index names
+            std_df.index = [str(idx).strip().replace('nan', '').strip(' -') for idx in std_df.index]
+            
+            # Remove completely empty rows and columns
+            std_df = std_df.dropna(how='all', axis=0)
+            std_df = std_df.dropna(how='all', axis=1)
+            
+            # Handle duplicate indices
+            if std_df.index.duplicated().any():
+                # Create unique index names
+                new_index = []
+                seen = set()
+                for idx in std_df.index:
+                    if idx in seen:
+                        counter = 1
+                        while f"{idx} ({counter})" in seen:
+                            counter += 1
+                        new_idx = f"{idx} ({counter})"
+                        new_index.append(new_idx)
+                        seen.add(new_idx)
+                    else:
+                        new_index.append(idx)
+                        seen.add(idx)
+                std_df.index = new_index
+            
+            # Handle duplicate columns
+            if std_df.columns.duplicated().any():
+                # Create unique column names
+                new_cols = []
+                seen = set()
+                for col in std_df.columns:
+                    if col in seen:
+                        counter = 1
+                        while f"{col} ({counter})" in seen:
+                            counter += 1
+                        new_col = f"{col} ({counter})"
+                        new_cols.append(new_col)
+                        seen.add(new_col)
+                    else:
+                        new_cols.append(col)
+                        seen.add(col)
+                std_df.columns = new_cols
+            
+            return std_df
+            
+        except Exception as e:
+            self.logger.error(f"Error standardizing DataFrame: {e}")
+            return df
+            
     def _inspect_dataframe(self, df: pd.DataFrame, filename: str) -> None:
         """Debug helper to inspect DataFrame structure"""
         self.logger.info(f"\nInspecting DataFrame from {filename}:")
@@ -6141,9 +6345,52 @@ class FinancialAnalyticsPlatform:
     
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
         """Merge multiple dataframes intelligently"""
-        # Simple concatenation for now
-        # In production, would implement smarter merging logic
-        return pd.concat(dataframes, axis=0).dropna(how='all')
+        try:
+            # Handle duplicate indices
+            for i, df in enumerate(dataframes):
+                # Make index names unique if they're duplicated
+                if df.index.duplicated().any():
+                    # Keep first occurrence and modify others
+                    new_index = []
+                    seen = set()
+                    for idx in df.index:
+                        if idx in seen:
+                            counter = 1
+                            while f"{idx} ({counter})" in seen:
+                                counter += 1
+                            new_idx = f"{idx} ({counter})"
+                            new_index.append(new_idx)
+                            seen.add(new_idx)
+                        else:
+                            new_index.append(idx)
+                            seen.add(idx)
+                    df.index = new_index
+                    self.logger.info(f"Fixed {sum(df.index.duplicated())} duplicate indices in DataFrame {i}")
+    
+            # Merge dataframes
+            if len(dataframes) == 1:
+                return dataframes[0]
+            
+            # Combine all dataframes
+            final_df = pd.concat(dataframes, axis=0)
+            
+            # Clean up the merged dataframe
+            # Remove completely empty rows and columns
+            final_df = final_df.dropna(how='all', axis=0)
+            final_df = final_df.dropna(how='all', axis=1)
+            
+            # Handle missing values more intelligently
+            for col in final_df.columns:
+                missing_pct = final_df[col].isnull().sum() / len(final_df)
+                if missing_pct > 0.5:  # If more than 50% missing
+                    self.logger.warning(f"Column {col} has {missing_pct*100:.1f}% missing values")
+                
+            return final_df
+            
+        except Exception as e:
+            self.logger.error(f"Error merging dataframes: {e}")
+            # Return the first dataframe as fallback
+            return dataframes[0] if dataframes else pd.DataFrame()
     
     def _load_sample_data(self, sample_name: str):
         """Load sample data"""

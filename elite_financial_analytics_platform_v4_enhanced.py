@@ -6539,19 +6539,66 @@ class FinancialAnalyticsPlatform:
             # Check if we're in benchmark mode
             analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
             
-            # For standalone analysis, just merge the uploaded files
+            # For standalone analysis, filter out any benchmark/comparison data
             if analysis_mode == "Standalone Analysis":
                 self.logger.info("Using standalone analysis mode")
                 
-                # Simple merge - concat and handle duplicates
-                merged_df = pd.concat(dataframes, axis=0)
+                # Identify the actual company from the data (not ITC if it's benchmark)
+                companies_in_data = set()
+                for df in dataframes:
+                    for col in df.columns:
+                        if '>>' in str(col):
+                            parts = str(col).split('>>')
+                            if len(parts) >= 3:
+                                company_name = parts[2].split('(')[0].strip()
+                                companies_in_data.add(company_name)
+                
+                self.logger.info(f"Companies found in data: {companies_in_data}")
+                
+                # If multiple companies, filter out benchmark companies
+                benchmark_companies = ['ITC Ltd', 'Hindustan Unilever', 'Nestle India']
+                actual_companies = companies_in_data - set(benchmark_companies)
+                
+                if actual_companies:
+                    # We have non-benchmark companies, use only their data
+                    primary_company = list(actual_companies)[0]
+                    self.logger.info(f"Focusing on primary company: {primary_company}")
+                    
+                    # Filter dataframes to include only the primary company
+                    filtered_dataframes = []
+                    for df in dataframes:
+                        # Filter columns for the primary company
+                        company_cols = [col for col in df.columns 
+                                      if primary_company in str(col) or 
+                                      not any(bc in str(col) for bc in benchmark_companies)]
+                        
+                        if company_cols:
+                            filtered_df = df[company_cols]
+                            filtered_dataframes.append(filtered_df)
+                    
+                    if filtered_dataframes:
+                        merged_df = pd.concat(filtered_dataframes, axis=0)
+                    else:
+                        # If no filtered data, use all data but warn
+                        st.warning("No non-benchmark data found. Showing all available data.")
+                        merged_df = pd.concat(dataframes, axis=0)
+                else:
+                    # All companies are benchmark companies
+                    if len(companies_in_data) == 1:
+                        # Only one company, use it
+                        merged_df = pd.concat(dataframes, axis=0)
+                        self.logger.info(f"Only benchmark company data available: {companies_in_data}")
+                    else:
+                        # Multiple benchmark companies, need user to select
+                        st.warning("Multiple companies detected in data. Please select which one to analyze.")
+                        merged_df = pd.concat(dataframes, axis=0)
                 
                 # Remove duplicate indices
                 if merged_df.index.duplicated().any():
                     self.logger.warning(f"Removing {merged_df.index.duplicated().sum()} duplicate indices")
                     merged_df = merged_df[~merged_df.index.duplicated(keep='first')]
                 
-                # Log company information
+                # Extract and set company name
                 company_info = self._extract_company_info(merged_df)
                 if company_info:
                     self.logger.info(f"Analyzing data for: {company_info['name']}")
@@ -6563,21 +6610,21 @@ class FinancialAnalyticsPlatform:
             elif analysis_mode == "Benchmark Comparison":
                 self.logger.info("Using benchmark comparison mode")
                 
-                # Get the benchmark data
+                # First merge uploaded data
+                merged_df = pd.concat(dataframes, axis=0)
+                
+                # Then add benchmark data if available
                 benchmark_data = self.get_state('benchmark_data')
                 if benchmark_data is not None:
                     # Combine user data with benchmark
-                    merged_df = pd.concat(dataframes + [benchmark_data], axis=0)
-                    
-                    # Remove duplicate indices
-                    if merged_df.index.duplicated().any():
-                        self.logger.warning(f"Removing {merged_df.index.duplicated().sum()} duplicate indices")
-                        merged_df = merged_df[~merged_df.index.duplicated(keep='first')]
-                    
-                    return merged_df
-                else:
-                    st.warning("Benchmark data not loaded. Using standalone analysis.")
-                    return self._merge_dataframes(dataframes)  # Recursive call with default mode
+                    merged_df = pd.concat([merged_df, benchmark_data], axis=0)
+                
+                # Remove duplicate indices
+                if merged_df.index.duplicated().any():
+                    self.logger.warning(f"Removing {merged_df.index.duplicated().sum()} duplicate indices")
+                    merged_df = merged_df[~merged_df.index.duplicated(keep='first')]
+                
+                return merged_df
             
             return pd.concat(dataframes, axis=0)
             
@@ -6951,6 +6998,12 @@ class FinancialAnalyticsPlatform:
         """Render overview tab with key metrics and insights"""
         st.header("Financial Overview")
         
+        # Show analysis mode - Define the variable here
+        analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
+        if analysis_mode == "Benchmark Comparison":
+            benchmark_company = self.get_state('benchmark_company', 'Unknown')
+            st.info(f"📊 Benchmark Comparison Mode: Comparing with {benchmark_company}")
+        
         # Show progress tracking if available
         if 'mapper' in self.components and hasattr(self.components['mapper'], 'progress_tracker'):
             self._render_progress_tracking()
@@ -6984,8 +7037,6 @@ class FinancialAnalyticsPlatform:
         with col4:
             quality_score = analysis.get('quality_score', 0)
             self.ui_factory.create_data_quality_badge(quality_score)
-    
-    # Rest of the method remains the same...
         
         # Key insights
         st.subheader("Key Insights")
@@ -7049,8 +7100,9 @@ class FinancialAnalyticsPlatform:
                 profit_data = metrics.get('net_income', [])
                 if profit_data:
                     self._render_metric_chart(profit_data[0], "Net Income Trend")
-
-        # NEW SECTION: If in benchmark mode, show comparison charts
+        
+        # If in benchmark mode, show comparison charts
+        # Note: analysis_mode is already defined at the beginning of this function
         if analysis_mode == "Benchmark Comparison" and self.get_state('benchmark_data') is not None:
             st.subheader("📈 Benchmark Comparison")
             

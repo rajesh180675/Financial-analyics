@@ -5953,20 +5953,41 @@ class FinancialAnalyticsPlatform:
         """Parse a single file and return DataFrame"""
         try:
             file_ext = Path(file.name).suffix.lower()
+            self.logger.info(f"Attempting to parse file: {file.name} with extension: {file_ext}")
             
-            if file_ext == '.csv':
-                return pd.read_csv(file, index_col=0)
-            elif file_ext in ['.xls', '.xlsx']:
-                return pd.read_excel(file, index_col=0, engine='openpyxl')
-            elif file_ext in ['.html', '.htm']:
-                # Try to parse HTML tables
+            # Read a sample of the file content to determine actual format
+            sample = file.read(1024).decode('utf-8', errors='ignore')
+            file.seek(0)  # Reset file pointer
+            
+            # Log file content type
+            self.logger.info(f"File content starts with: {sample[:100]}")
+            
+            if '<html' in sample.lower() or '<table' in sample.lower():
+                self.logger.info(f"{file.name} appears to be HTML content")
                 tables = pd.read_html(file)
                 if tables:
-                    # Use the largest table
                     return max(tables, key=len).set_index(0)
+            elif file_ext == '.csv':
+                return pd.read_csv(file, index_col=0)
+            elif file_ext in ['.xls', '.xlsx']:
+                for engine in ['openpyxl', 'xlrd']:
+                    try:
+                        self.logger.info(f"Trying {engine} engine for {file.name}")
+                        return pd.read_excel(file, index_col=0, engine=engine)
+                    except Exception as e:
+                        self.logger.warning(f"{engine} engine failed for {file.name}: {e}")
+                
+                # If Excel engines fail, try HTML parsing as fallback
+                try:
+                    file.seek(0)
+                    tables = pd.read_html(file)
+                    if tables:
+                        return max(tables, key=len).set_index(0)
+                except Exception as e:
+                    self.logger.error(f"HTML fallback failed for {file.name}: {e}")
             
             return None
-            
+                
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None

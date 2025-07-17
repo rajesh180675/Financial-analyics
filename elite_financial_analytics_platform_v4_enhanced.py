@@ -1006,14 +1006,10 @@ class DataValidator:
         # First pass: Convert all numeric-like columns to proper numeric type
         for col in corrected_df.columns:
             try:
-                # Check if column contains any numeric-like strings
-                sample = corrected_df[col].dropna().head()
-                if any(isinstance(x, (int, float)) or (isinstance(x, str) and any(c.isdigit() for c in x)) for x in sample):
-                    corrected_df[col] = corrected_df[col].apply(safe_convert_to_numeric)
-                    corrections_made.append(f"Converted column {col} to numeric format")
+                corrected_df[col] = corrected_df[col].apply(safe_convert_to_numeric)
             except Exception as e:
                 self.logger.warning(f"Could not process column {col}: {e}")
-        
+    
         # Second pass: Handle positive metrics
         positive_metrics = ['assets', 'revenue', 'equity', 'sales', 'income', 'cash']
         for idx in corrected_df.index:
@@ -1025,29 +1021,35 @@ class DataValidator:
                         for i in range(len(row_data)):
                             try:
                                 numeric_data = pd.to_numeric(row_data.iloc[i], errors='coerce')
-                                negative_mask = numeric_data < 0
-                                if negative_mask.any():
-                                    corrected_df.loc[idx].iloc[i][negative_mask] = abs(numeric_data[negative_mask])
-                                    corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
+                                # Only process numeric values
+                                numeric_mask = ~pd.isna(numeric_data)
+                                if numeric_mask.any():
+                                    negative_values = numeric_data[numeric_mask & (numeric_data < 0)]
+                                    if not negative_values.empty:
+                                        corrected_df.loc[idx].iloc[i][negative_values.index] = abs(negative_values)
+                                        corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
                             except Exception as e:
                                 self.logger.warning(f"Error processing row {i} of {idx}: {e}")
                     else:
                         try:
                             numeric_data = pd.to_numeric(row_data, errors='coerce')
-                            negative_mask = numeric_data < 0
-                            if negative_mask.any():
-                                corrected_df.loc[idx][negative_mask] = abs(numeric_data[negative_mask])
-                                corrections_made.append(f"Converted negative values to positive in {idx}")
+                            # Only process numeric values
+                            numeric_mask = ~pd.isna(numeric_data)
+                            if numeric_mask.any():
+                                negative_values = numeric_data[numeric_mask & (numeric_data < 0)]
+                                if not negative_values.empty:
+                                    corrected_df.loc[idx][negative_values.index] = abs(negative_values)
+                                    corrections_made.append(f"Converted negative values to positive in {idx}")
                         except Exception as e:
                             self.logger.warning(f"Error processing {idx}: {e}")
             except Exception as e:
                 self.logger.warning(f"Error processing metric {idx}: {e}")
-        
-        # Fix outliers using IQR method
+    
+        # Fix outliers using IQR method for numeric columns only
         numeric_cols = corrected_df.select_dtypes(include=[np.number]).columns
         for col in numeric_cols:
             try:
-                series = corrected_df[col].dropna()
+                series = pd.to_numeric(corrected_df[col], errors='coerce').dropna()
                 if len(series) > 4:
                     Q1 = series.quantile(0.25)
                     Q3 = series.quantile(0.75)
@@ -1057,19 +1059,22 @@ class DataValidator:
                         lower_bound = Q1 - 1.5 * IQR
                         upper_bound = Q3 + 1.5 * IQR
                         
-                        outlier_mask = (corrected_df[col] < lower_bound) | (corrected_df[col] > upper_bound)
+                        # Only process numeric values
+                        numeric_mask = pd.to_numeric(corrected_df[col], errors='coerce').notna()
+                        outlier_mask = numeric_mask & ((corrected_df[col] < lower_bound) | (corrected_df[col] > upper_bound))
+                        
                         if outlier_mask.any():
                             median_value = series.median()
                             corrected_df.loc[outlier_mask, col] = median_value
                             corrections_made.append(f"Corrected {outlier_mask.sum()} outliers in {col} using median")
             except Exception as e:
                 self.logger.warning(f"Error handling outliers in column {col}: {e}")
-        
+    
         # Update validation result
         if corrections_made:
             result.add_info(f"Applied {len(corrections_made)} auto-corrections")
             result.corrections = corrections_made
-        
+    
         return corrected_df, result
     
     def _fix_accounting_equation(self, df: pd.DataFrame, corrections_made: List[str]):

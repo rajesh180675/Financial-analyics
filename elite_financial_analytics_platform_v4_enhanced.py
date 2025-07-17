@@ -1052,6 +1052,7 @@ class DataValidator:
         """Comprehensive dataframe validation"""
         result = ValidationResult()
         
+        # Basic structure checks
         if df.empty:
             result.add_error(f"{context}: DataFrame is empty")
             return result
@@ -1060,44 +1061,138 @@ class DataValidator:
             result.add_error(f"{context}: No columns found")
             return result
         
-        # Calculate and report missing values
-        total_cells = df.shape[0] * df.shape[1]
-        missing_cells = df.isnull().sum().sum()
-        missing_pct = (missing_cells / total_cells) * 100
+        # Check dataset size
+        if df.shape[0] > 1000000:
+            result.add_warning(f"{context}: Large dataset ({df.shape[0]} rows), performance may be impacted")
         
-        if missing_pct > 50:
-            result.add_warning(f"{context}: High percentage of missing values ({missing_pct:.1f}%)")
-            # Add info about which columns have most missing values
-            missing_by_col = df.isnull().sum()
-            worst_cols = missing_by_col.nlargest(3)
-            for col, missing in worst_cols.items():
-                pct = (missing / len(df)) * 100
-                if pct > 50:
-                    result.add_info(f"Column '{col}' is {pct:.1f}% empty")
+        # Calculate missing values correctly for numeric columns only
+        numeric_df = df.select_dtypes(include=[np.number])
+        if not numeric_df.empty:
+            total_cells = numeric_df.shape[0] * numeric_df.shape[1]
+            missing_cells = numeric_df.isnull().sum().sum()
+            missing_pct = (missing_cells / total_cells) * 100
+            
+            # Report missing data with appropriate severity
+            if missing_pct > 50:
+                result.add_warning(f"{context}: High percentage of missing values ({missing_pct:.1f}%)")
+                
+                # Identify columns with most missing values
+                missing_by_col = numeric_df.isnull().sum()
+                worst_cols = missing_by_col.nlargest(3)
+                for col, missing in worst_cols.items():
+                    col_pct = (missing / len(numeric_df)) * 100
+                    if col_pct > 50:
+                        result.add_info(f"Column '{col}' is {col_pct:.1f}% empty")
+            elif missing_pct > 20:
+                result.add_info(f"{context}: Moderate missing values ({missing_pct:.1f}%)")
+        else:
+            result.add_warning(f"{context}: No numeric columns found")
+            missing_pct = 0
         
         # Check for duplicate indices
         if df.index.duplicated().any():
             dup_count = df.index.duplicated().sum()
             result.add_warning(f"{context}: {dup_count} duplicate indices found")
+            
+            # Identify which indices are duplicated
+            dup_indices = df.index[df.index.duplicated(keep=False)].unique()
+            for idx in dup_indices[:5]:  # Show first 5 duplicates
+                count = (df.index == idx).sum()
+                result.add_info(f"Index '{idx}' appears {count} times")
+            
+            if len(dup_indices) > 5:
+                result.add_info(f"... and {len(dup_indices) - 5} more duplicate indices")
         
-        # Smart negative value checking
-        for col in df.select_dtypes(include=[np.number]).columns:
-            series = df[col].dropna()
-            if (series < 0).any():
-                # Check if it's cash flow data
-                if 'cash flow' in str(col).lower() or 'cash flow' in context.lower():
-                    # Negative values are normal in cash flow for expenditures, investments, etc.
-                    result.add_info(f"Column '{col}' contains negative values (normal for cash flow items)")
+        # Check for constant columns
+        for col in df.columns:
+            if df[col].nunique() == 1:
+                result.add_info(f"{context}: Column '{col}' has constant value")
+        
+        # Smart negative value checking for numeric columns
+        for col in numeric_df.columns:
+            series = numeric_df[col].dropna()
+            if len(series) > 0 and (series < 0).any():
+                negative_count = (series < 0).sum()
+                negative_pct = (negative_count / len(series)) * 100
+                
+                col_lower = str(col).lower()
+                
+                # Define patterns for items that can legitimately be negative
+                negative_allowed = [
+                    'cash used', 'net cash used', 'cash flow from',
+                    'purchased', 'purchase of', 'expenditure', 'expense',
+                    'cost', 'depreciation', 'amortization', 'loss', 
+                    'deficit', 'outflow', 'payment', 'dividend',
+                    'comprehensive income', 'other comprehensive',
+                    'tax', 'interest', 'financing activities',
+                    'investing activities'
+                ]
+                
+                # Define patterns for items that should always be positive
+                always_positive = [
+                    'total assets', 'total equity', 'revenue from operations',
+                    'gross revenue', 'net revenue', 'total revenue',
+                    'sales', 'total liabilities'
+                ]
+                
+                # Check context from both column name and row indices
+                context_allows_negative = any(keyword in col_lower for keyword in negative_allowed)
+                
+                # Also check if any row index indicates cash flow context
+                if not context_allows_negative and 'cash flow' in context.lower():
+                    context_allows_negative = True
+                
+                # Determine if this is a problem
+                is_always_positive = any(keyword in col_lower for keyword in always_positive)
+                
+                if is_always_positive:
+                    result.add_warning(f"{context}: Column '{col}' contains {negative_count} negative values ({negative_pct:.1f}%)")
+                elif context_allows_negative:
+                    if negative_pct > 50:
+                        result.add_info(f"{context}: Column '{col}' contains {negative_count} negative values (normal for this type)")
                 else:
-                    # For other items, check if it should be positive
-                    positive_keywords = ['assets', 'revenue', 'sales', 'income from operations']
-                    if any(keyword in str(col).lower() for keyword in positive_keywords):
-                        result.add_warning(f"Column '{col}' contains negative values")
+                    # For ambiguous cases, only warn if significant
+                    if negative_pct > 10:
+                        result.add_info(f"{context}: Column '{col}' contains {negative_count} negative values ({negative_pct:.1f}%)")
         
-        # Add metadata
+        # Check for outliers using IQR method
+        outlier_info = {}
+        for col in numeric_df.columns:
+            series = numeric_df[col].dropna()
+            if len(series) > 4:  # Need at least 4 values for IQR
+                Q1 = series.quantile(0.25)
+                Q3 = series.quantile(0.75)
+                IQR = Q3 - Q1
+                
+                if IQR > 0:
+                    # Use standard 1.5*IQR for initial check
+                    lower_bound = Q1 - 1.5 * IQR
+                    upper_bound = Q3 + 1.5 * IQR
+                    
+                    outliers = series[(series < lower_bound) | (series > upper_bound)]
+                    outlier_pct = (len(outliers) / len(series)) * 100
+                    
+                    if outlier_pct > 20:
+                        result.add_warning(f"{context}: Column '{col}' has high outlier percentage ({outlier_pct:.1f}%)")
+                        outlier_info[col] = len(outliers)
+                    elif outlier_pct > 10:
+                        result.add_info(f"{context}: Column '{col}' has {len(outliers)} outliers ({outlier_pct:.1f}%)")
+                        outlier_info[col] = len(outliers)
+        
+        # Check data types
+        non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns
+        if len(non_numeric_cols) > 0:
+            result.add_info(f"{context}: {len(non_numeric_cols)} non-numeric columns: {list(non_numeric_cols)[:3]}...")
+        
+        # Store metadata
         result.metadata['shape'] = df.shape
         result.metadata['columns'] = list(df.columns)
+        result.metadata['numeric_columns'] = list(numeric_df.columns)
+        result.metadata['dtypes'] = df.dtypes.to_dict()
+        result.metadata['memory_usage'] = df.memory_usage(deep=True).sum()
         result.metadata['missing_percentage'] = missing_pct
+        result.metadata['duplicate_indices'] = list(df.index[df.index.duplicated()].unique())
+        result.metadata['outlier_columns'] = outlier_info
         
         return result
     
@@ -1830,38 +1925,55 @@ class FinancialAnalysisEngine(Component):
             return analysis
     
     def _detect_anomalies(self, df: pd.DataFrame) -> Dict[str, List[Dict[str, Any]]]:
-        """Detect anomalies in financial data"""
+        """Detect anomalies in financial data with better thresholds"""
         anomalies = {
             'value_anomalies': [],
             'trend_anomalies': [],
             'ratio_anomalies': []
         }
         
-        for col in df.select_dtypes(include=[np.number]).columns:
-            series = df[col].dropna()
-            if len(series) > 3:
-                z_scores = np.abs(stats.zscore(series))
-                anomaly_indices = np.where(z_scores > 3)[0]
-                
-                for idx in anomaly_indices:
-                    anomalies['value_anomalies'].append({
-                        'metric': df.index[idx],
-                        'year': col,
-                        'value': series.iloc[idx],
-                        'z_score': z_scores[idx]
-                    })
+        numeric_df = df.select_dtypes(include=[np.number])
         
+        # Value anomalies - use IQR method instead of z-score for financial data
+        for col in numeric_df.columns:
+            series = numeric_df[col].dropna()
+            if len(series) > 4:
+                Q1 = series.quantile(0.25)
+                Q3 = series.quantile(0.75)
+                IQR = Q3 - Q1
+                
+                if IQR > 0:
+                    # Use 3*IQR for financial data (more lenient)
+                    lower_bound = Q1 - 3 * IQR
+                    upper_bound = Q3 + 3 * IQR
+                    
+                    anomaly_mask = (series < lower_bound) | (series > upper_bound)
+                    anomaly_indices = series[anomaly_mask].index
+                    
+                    for idx in anomaly_indices:
+                        anomalies['value_anomalies'].append({
+                            'metric': str(idx),
+                            'year': str(col),
+                            'value': float(series[idx]),
+                            'lower_bound': lower_bound,
+                            'upper_bound': upper_bound
+                        })
+        
+        # Trend anomalies - only flag extreme changes
         for idx in df.index:
-            series = df.loc[idx].dropna()
+            series = numeric_df.loc[idx].dropna()
             if len(series) > 2:
+                # Calculate year-over-year changes
                 pct_changes = series.pct_change().dropna()
-                extreme_changes = pct_changes[np.abs(pct_changes) > 1]
+                
+                # Only flag changes > 200% or < -66%
+                extreme_changes = pct_changes[(pct_changes > 2.0) | (pct_changes < -0.66)]
                 
                 for year, change in extreme_changes.items():
                     anomalies['trend_anomalies'].append({
                         'metric': str(idx),
-                        'year': year,
-                        'change_pct': change * 100
+                        'year': str(year),
+                        'change_pct': float(change * 100)
                     })
         
         return anomalies
@@ -1879,9 +1991,9 @@ class FinancialAnalysisEngine(Component):
         return hashlib.md5(key_string.encode()).hexdigest()
     
     def _generate_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Generate summary statistics"""
+        """Generate summary statistics with better handling"""
         summary = {
-            'total_metrics': len(df),  # Always include this
+            'total_metrics': len(df),
             'years_covered': 0,
             'year_range': "N/A",
             'completeness': 0,
@@ -1891,21 +2003,29 @@ class FinancialAnalysisEngine(Component):
         numeric_df = df.select_dtypes(include=[np.number])
         
         if not numeric_df.empty:
+            # Calculate actual data completeness
+            total_cells = numeric_df.shape[0] * numeric_df.shape[1]
+            non_null_cells = numeric_df.notna().sum().sum()
+            completeness = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
+            
             summary.update({
                 'years_covered': len(numeric_df.columns),
                 'year_range': f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
-                'completeness': (numeric_df.notna().sum().sum() / numeric_df.size) * 100,
+                'completeness': completeness,
             })
             
-            # Key statistics for last 3 years
+            # Only include statistics for columns with sufficient data
             for col in numeric_df.columns[-3:]:
-                summary['key_statistics'][str(col)] = {
-                    'mean': numeric_df[col].mean(),
-                    'median': numeric_df[col].median(),
-                    'std': numeric_df[col].std(),
-                    'min': numeric_df[col].min(),
-                    'max': numeric_df[col].max()
-                }
+                col_data = numeric_df[col].dropna()
+                if len(col_data) > 0:
+                    summary['key_statistics'][str(col)] = {
+                        'mean': float(col_data.mean()),
+                        'median': float(col_data.median()),
+                        'std': float(col_data.std()) if len(col_data) > 1 else 0,
+                        'min': float(col_data.min()),
+                        'max': float(col_data.max()),
+                        'count': len(col_data)
+                    }
         
         return summary
     
@@ -6378,6 +6498,12 @@ class FinancialAnalyticsPlatform:
         self.logger.info(f"\nInspecting DataFrame from {filename}:")
         self.logger.info(f"Shape: {df.shape}")
         self.logger.info(f"Columns: {df.columns.tolist()}")
+        
+        # Check for duplicates
+        if df.index.duplicated().any():
+            dup_indices = df.index[df.index.duplicated(keep=False)].unique()
+            self.logger.warning(f"Duplicate indices found: {dup_indices[:5].tolist()}")
+        
         self.logger.info(f"First few rows:\n{df.head()}")
     
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:

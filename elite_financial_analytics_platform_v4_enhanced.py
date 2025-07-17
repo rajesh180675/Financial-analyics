@@ -980,101 +980,46 @@ class DataValidator:
         corrected_df = df.copy()
         corrections_made = []
         
-        def safe_convert_to_numeric(val):
-            """Safely convert value to numeric, handling various formats"""
-            if pd.isna(val):
-                return np.nan
-            if isinstance(val, (int, float)):
-                return val
-            
-            # Handle string values
-            if isinstance(val, str):
-                # Remove common characters
-                val = val.replace(',', '').replace('₹', '').replace('$', '').strip()
-                # Handle parentheses indicating negative numbers
-                if val.startswith('(') and val.endswith(')'):
-                    val = '-' + val[1:-1]
-                # Handle special cases
-                if val.lower() in ['na', 'nan', 'none', '-', '']:
-                    return np.nan
-                try:
-                    return float(val)
-                except ValueError:
-                    return np.nan
-            return np.nan
-    
-        # First pass: Convert all numeric-like columns to proper numeric type
-        for col in corrected_df.columns:
-            try:
-                corrected_df[col] = corrected_df[col].apply(safe_convert_to_numeric)
-            except Exception as e:
-                self.logger.warning(f"Could not process column {col}: {e}")
-    
-        # Second pass: Handle positive metrics
-        positive_metrics = ['assets', 'revenue', 'equity', 'sales', 'income', 'cash']
+        # Define items that CAN be negative
+        negative_allowed_keywords = [
+            'cash used', 'net cash used', 'purchased of', 'purchase of',
+            'expenditure', 'expense', 'cost', 'depreciation', 'amortization',
+            'loss', 'deficit', 'outflow', 'payment', 'dividend',
+            'comprehensive income', 'other comprehensive'
+        ]
+        
+        # Define items that should ALWAYS be positive
+        always_positive_keywords = [
+            'total assets', 'total equity', 'revenue from operations',
+            'gross revenue', 'net revenue', 'total revenue'
+        ]
+        
+        # Auto-corrections for positive metrics only
         for idx in corrected_df.index:
-            try:
-                if any(metric in str(idx).lower() for metric in positive_metrics):
-                    row_data = corrected_df.loc[idx]
-                    
-                    if isinstance(row_data, pd.DataFrame):
-                        for i in range(len(row_data)):
-                            try:
-                                numeric_data = pd.to_numeric(row_data.iloc[i], errors='coerce')
-                                # Only process numeric values
-                                numeric_mask = ~pd.isna(numeric_data)
-                                if numeric_mask.any():
-                                    negative_values = numeric_data[numeric_mask & (numeric_data < 0)]
-                                    if not negative_values.empty:
-                                        corrected_df.loc[idx].iloc[i][negative_values.index] = abs(negative_values)
-                                        corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
-                            except Exception as e:
-                                self.logger.warning(f"Error processing row {i} of {idx}: {e}")
-                    else:
-                        try:
-                            numeric_data = pd.to_numeric(row_data, errors='coerce')
-                            # Only process numeric values
-                            numeric_mask = ~pd.isna(numeric_data)
-                            if numeric_mask.any():
-                                negative_values = numeric_data[numeric_mask & (numeric_data < 0)]
-                                if not negative_values.empty:
-                                    corrected_df.loc[idx][negative_values.index] = abs(negative_values)
-                                    corrections_made.append(f"Converted negative values to positive in {idx}")
-                        except Exception as e:
-                            self.logger.warning(f"Error processing {idx}: {e}")
-            except Exception as e:
-                self.logger.warning(f"Error processing metric {idx}: {e}")
-    
-        # Fix outliers using IQR method for numeric columns only
-        numeric_cols = corrected_df.select_dtypes(include=[np.number]).columns
-        for col in numeric_cols:
-            try:
-                series = pd.to_numeric(corrected_df[col], errors='coerce').dropna()
-                if len(series) > 4:
-                    Q1 = series.quantile(0.25)
-                    Q3 = series.quantile(0.75)
-                    IQR = Q3 - Q1
-                    
-                    if IQR > 0:
-                        lower_bound = Q1 - 1.5 * IQR
-                        upper_bound = Q3 + 1.5 * IQR
-                        
-                        # Only process numeric values
-                        numeric_mask = pd.to_numeric(corrected_df[col], errors='coerce').notna()
-                        outlier_mask = numeric_mask & ((corrected_df[col] < lower_bound) | (corrected_df[col] > upper_bound))
-                        
-                        if outlier_mask.any():
-                            median_value = series.median()
-                            corrected_df.loc[outlier_mask, col] = median_value
-                            corrections_made.append(f"Corrected {outlier_mask.sum()} outliers in {col} using median")
-            except Exception as e:
-                self.logger.warning(f"Error handling outliers in column {col}: {e}")
-    
-        # Update validation result
+            idx_lower = str(idx).lower()
+            
+            # Skip if this metric is allowed to be negative
+            if any(keyword in idx_lower for keyword in negative_allowed_keywords):
+                continue
+                
+            # Only fix if it's in the always positive list
+            if any(keyword in idx_lower for keyword in always_positive_keywords):
+                row_data = corrected_df.loc[idx]
+                
+                try:
+                    numeric_data = pd.to_numeric(row_data, errors='coerce')
+                    negative_mask = numeric_data < 0
+                    if negative_mask.any():
+                        corrected_df.loc[idx][negative_mask] = abs(numeric_data[negative_mask])
+                        corrections_made.append(f"Converted negative values to positive in {idx}")
+                except Exception as e:
+                    self.logger.warning(f"Error processing {idx}: {e}")
+        
+        # Update result
         if corrections_made:
             result.add_info(f"Applied {len(corrections_made)} auto-corrections")
             result.corrections = corrections_made
-    
+        
         return corrected_df, result
     
     def _fix_accounting_equation(self, df: pd.DataFrame, corrections_made: List[str]):
@@ -6096,12 +6041,20 @@ class FinancialAnalyticsPlatform:
                     st.metric("Data Points", f"{total_rows}×{total_cols}")
                 
                 with col2:
-                    missing_pct = (processed_df.isnull().sum().sum() / (total_rows * total_cols)) * 100
+                    # Correct missing data calculation
+                    numeric_df = processed_df.select_dtypes(include=[np.number])
+                    if not numeric_df.empty:
+                        missing_pct = (numeric_df.isnull().sum().sum() / (numeric_df.shape[0] * numeric_df.shape[1])) * 100
+                    else:
+                        missing_pct = 0.0
                     st.metric("Missing Data", f"{missing_pct:.1f}%")
                 
                 with col3:
                     numeric_cols = processed_df.select_dtypes(include=[np.number]).columns
-                    numeric_pct = (len(numeric_cols) / len(processed_df.columns)) * 100
+                    if len(processed_df.columns) > 0:
+                        numeric_pct = (len(numeric_cols) / len(processed_df.columns)) * 100
+                    else:
+                        numeric_pct = 0.0
                     st.metric("Numeric Columns", f"{numeric_pct:.1f}%")
                 
                 # Update state
@@ -6375,23 +6328,38 @@ class FinancialAnalyticsPlatform:
                     for col in std_df.columns
                 ]
             
-            # Handle duplicate indices by grouping
+            # Handle duplicate indices more intelligently
             if std_df.index.duplicated().any():
-                # Group duplicate indices by summing (for financial data)
-                self.logger.info("Handling duplicate indices by grouping")
+                self.logger.info("Handling duplicate indices")
                 
-                # First, convert all numeric columns to float
-                numeric_cols = std_df.select_dtypes(include=[np.number]).columns
-                for col in numeric_cols:
-                    std_df[col] = pd.to_numeric(std_df[col], errors='coerce')
+                # Find duplicates
+                duplicated_indices = std_df[std_df.index.duplicated(keep=False)]
+                unique_indices = std_df[~std_df.index.duplicated(keep=False)]
                 
-                # Group by index and sum numeric columns, keep first for non-numeric
-                grouped = std_df.groupby(level=0).agg(
-                    lambda x: x.sum() if pd.api.types.is_numeric_dtype(x) else x.iloc[0]
-                )
-                std_df = grouped
+                # Group duplicates - for financial data, we typically want to keep both
+                # but rename them to make them unique
+                processed_dups = []
+                for idx in duplicated_indices.index.unique():
+                    dup_rows = duplicated_indices[duplicated_indices.index == idx]
+                    
+                    # If all values are the same, keep only one
+                    if len(dup_rows) > 1 and dup_rows.nunique().sum() == 0:
+                        processed_dups.append(dup_rows.iloc[[0]])
+                    else:
+                        # Rename duplicates
+                        renamed_rows = []
+                        for i, (_, row) in enumerate(dup_rows.iterrows()):
+                            if i == 0:
+                                renamed_rows.append(row)
+                            else:
+                                row.name = f"{row.name} ({i})"
+                                renamed_rows.append(row)
+                        processed_dups.extend(renamed_rows)
                 
-                self.logger.info(f"Reduced from {len(df)} to {len(std_df)} rows after handling duplicates")
+                # Combine unique and processed duplicates
+                if processed_dups:
+                    processed_dup_df = pd.DataFrame(processed_dups)
+                    std_df = pd.concat([unique_indices, processed_dup_df])
             
             # Remove rows where all values are NaN
             std_df = std_df.dropna(how='all')
@@ -6399,11 +6367,8 @@ class FinancialAnalyticsPlatform:
             # Remove columns where all values are NaN
             std_df = std_df.dropna(how='all', axis=1)
             
-            # Clean index names
-            std_df.index = [str(idx).strip() for idx in std_df.index]
-            
             return std_df
-            
+        
         except Exception as e:
             self.logger.error(f"Error standardizing DataFrame: {e}")
             return df

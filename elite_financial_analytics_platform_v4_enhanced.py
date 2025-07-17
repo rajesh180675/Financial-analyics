@@ -4984,6 +4984,133 @@ class ErrorRecoveryManager:
         
         return True
 
+
+
+def safe_state_access(func):
+    """Decorator to ensure safe session state access with comprehensive error handling"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                return func(self, *args, **kwargs)
+                
+            except KeyError as e:
+                retry_count += 1
+                key_name = str(e).strip("'\"")
+                
+                # Log the error
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"Session state key error in {func.__name__}: {e} (attempt {retry_count}/{max_retries})")
+                
+                # Try to fix the missing key
+                try:
+                    # Reinitialize session state
+                    self._initialize_session_state()
+                    
+                    # If it's a specific key we can predict, set a safe default
+                    safe_defaults = {
+                        'simple_parse_mode': False,
+                        'uploaded_files': [],
+                        'ml_forecast_results': None,
+                        'forecast_periods': 3,
+                        'forecast_model_type': 'auto',
+                        'selected_forecast_metrics': [],
+                        'analysis_data': None,
+                        'metric_mappings': None,
+                        'show_manual_mapping': False,
+                        'number_format_value': 'Indian',
+                        'kaggle_api_enabled': False,
+                        'api_metrics_visible': False,
+                        'analysis_mode': 'Standalone Analysis',
+                        'benchmark_company': 'ITC Ltd',
+                        'show_tutorial': True,
+                        'tutorial_step': 0,
+                        'collaboration_session': None,
+                        'query_history': [],
+                        'pn_mappings': None,
+                        'pn_results': None,
+                    }
+                    
+                    if key_name in safe_defaults:
+                        st.session_state[key_name] = safe_defaults[key_name]
+                        if hasattr(self, 'logger'):
+                            self.logger.info(f"Set safe default for missing key: {key_name}")
+                    
+                    # If this is the last retry, continue anyway
+                    if retry_count >= max_retries:
+                        if hasattr(self, 'logger'):
+                            self.logger.error(f"Failed to fix session state after {max_retries} attempts in {func.__name__}")
+                        # Try to continue with a fallback
+                        try:
+                            return func(self, *args, **kwargs)
+                        except:
+                            # Return a safe fallback
+                            return None
+                    
+                except Exception as init_error:
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Error during session state reinitialization: {init_error}")
+                    
+                    if retry_count >= max_retries:
+                        raise e  # Re-raise original error
+            
+            except AttributeError as e:
+                # Handle cases where self.logger or other attributes don't exist
+                if "'FinancialAnalyticsPlatform' object has no attribute 'logger'" in str(e):
+                    # Initialize logger if missing
+                    try:
+                        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
+                        return func(self, *args, **kwargs)
+                    except:
+                        # Continue without logging
+                        return func(self, *args, **kwargs)
+                else:
+                    raise e
+            
+            except Exception as e:
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"Unexpected error in {func.__name__}: {e}")
+                
+                # For non-KeyError exceptions, don't retry
+                raise e
+        
+        # If we get here, all retries failed
+        if hasattr(self, 'logger'):
+            self.logger.critical(f"All retry attempts failed for {func.__name__}")
+        return None
+    
+    return wrapper
+
+def critical_method(func):
+    """Decorator for critical methods that must not fail"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.critical(f"Critical method {func.__name__} failed: {e}")
+            
+            # Show user-friendly error
+            st.error(f"A critical error occurred in {func.__name__}. Please refresh the page.")
+            
+            # Provide recovery options
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(f"🔄 Retry {func.__name__}", key=f"retry_{func.__name__}"):
+                    st.experimental_rerun()
+            with col2:
+                if st.button("🏠 Reset Application", key=f"reset_{func.__name__}"):
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.experimental_rerun()
+            
+            return None
+    return wrapper
+
 # --- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture and all integrations"""
@@ -5022,7 +5149,7 @@ class FinancialAnalyticsPlatform:
         """Cleanup resources"""
         if hasattr(self, 'compression_handler'):
             self.compression_handler.cleanup()
-    
+    @critical_method
     def _initialize_session_state(self):
         """Initialize all session state variables"""
         defaults = {
@@ -5364,6 +5491,7 @@ class FinancialAnalyticsPlatform:
             st.error(f"Failed to export logs: {e}")
     
     @error_boundary()
+    @critical_method
     def run(self):
         """Main application entry point"""
         try:
@@ -5662,7 +5790,8 @@ class FinancialAnalyticsPlatform:
                 """
                 
                 st.markdown(metrics_html, unsafe_allow_html=True)
-    
+                
+    @safe_state_access
     def _render_sidebar(self):
         """Render sidebar with enhanced Kaggle configuration"""
         st.sidebar.title("⚙️ Configuration")
@@ -6143,7 +6272,8 @@ class FinancialAnalyticsPlatform:
                     st.sidebar.write("**Performance Summary:**")
                     for op, stats in list(perf_summary.items())[:5]:
                         st.sidebar.text(f"{op}: {stats['avg_duration']:.3f}s")
-    
+                        
+    @safe_state_access
     def _render_file_upload(self):
         """Render file upload interface with safe state handling"""
         # Ensure required state keys exist
@@ -6243,7 +6373,8 @@ class FinancialAnalyticsPlatform:
         
         if st.sidebar.button("Load Sample Data", type="primary"):
             self._load_sample_data(selected_sample)
-    
+            
+    @safe_state_access
     def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
         """Process uploaded files including compressed files with progress tracking"""
         try:
@@ -6910,7 +7041,8 @@ class FinancialAnalyticsPlatform:
         elif company_name == "Nestle India":
             # Similar implementation for Nestle
             st.warning("Benchmark data for Nestle India coming soon")
-    
+            
+    @safe_state_access
     def _render_main_content(self):
         """Render main content area"""
         # Natural Language Query Bar
@@ -6922,7 +7054,8 @@ class FinancialAnalyticsPlatform:
             self._render_analysis_interface()
         else:
             self._render_welcome_screen()
-    
+            
+    @safe_state_access
     def _render_query_bar(self):
         """Render natural language query bar"""
         col1, col2 = st.columns([5, 1])
@@ -7088,7 +7221,8 @@ class FinancialAnalyticsPlatform:
         with col3:
             if st.button("European Retail", key="sample_eu"):
                 self._load_sample_data("European Retail (IFRS)")
-    
+                
+    @safe_state_access
     def _render_analysis_interface(self):
         """Render main analysis interface"""
         data = self.get_state('analysis_data')
@@ -7134,6 +7268,7 @@ class FinancialAnalyticsPlatform:
             self._render_ml_insights_tab(data)
     
     @error_boundary()
+    @safe_state_access
     def _render_overview_tab(self, data: pd.DataFrame):
         """Render overview tab with key metrics and insights"""
         st.header("Financial Overview")
@@ -7392,6 +7527,7 @@ class FinancialAnalyticsPlatform:
                 st.plotly_chart(fig, use_container_width=True)
     
     @error_boundary()
+    @safe_state_access
     def _render_ratios_tab(self, data: pd.DataFrame):
         """Render financial ratios tab with manual mapping support"""
         st.header("📈 Financial Ratio Analysis")
@@ -7489,7 +7625,8 @@ class FinancialAnalyticsPlatform:
                         )
                         
                         st.plotly_chart(fig, use_container_width=True)
-    
+                        
+    @safe_state_access
     def _perform_ai_mapping(self, data: pd.DataFrame):
         """Perform AI mapping of metrics with progress tracking"""
         try:
@@ -7546,19 +7683,31 @@ class FinancialAnalyticsPlatform:
             st.error(f"AI mapping failed: {str(e)}")
     
     @error_boundary()
+    @safe_state_access
     def _render_trends_tab(self, data: pd.DataFrame):
-        """Render trends and analysis tab"""
+        """Render trends and analysis tab with comprehensive ML forecasting and safe state handling"""
         st.header("📉 Trend Analysis & ML Forecasting")
         
-        analysis = self.components['analyzer'].analyze_financial_statements(data)
-        trends = analysis.get('trends', {})
+        # Ensure all required state keys exist with safe defaults
+        self.ensure_state_key('ml_forecast_results', None)
+        self.ensure_state_key('forecast_periods', 3)
+        self.ensure_state_key('forecast_model_type', 'auto')
+        self.ensure_state_key('selected_forecast_metrics', [])
+        self.ensure_state_key('forecast_confidence_level', 0.95)
+        self.ensure_state_key('show_forecast_details', False)
+        self.ensure_state_key('forecast_history', [])
+        
+        # Analyze trends
+        with st.spinner("Analyzing trends..."):
+            analysis = self.components['analyzer'].analyze_financial_statements(data)
+            trends = analysis.get('trends', {})
         
         if not trends or 'error' in trends:
             st.error("Insufficient data for trend analysis. Need at least 2 years of data.")
             return
         
-        # Trend summary
-        st.subheader("Trend Summary")
+        # === TREND SUMMARY SECTION ===
+        st.subheader("📊 Trend Summary")
         
         trend_data = []
         for metric, trend_info in trends.items():
@@ -7575,6 +7724,7 @@ class FinancialAnalyticsPlatform:
         if trend_data:
             trend_df = pd.DataFrame(trend_data)
             
+            # Display trends with formatting
             st.dataframe(
                 trend_df.style.format({
                     'CAGR %': '{:.1f}',
@@ -7585,61 +7735,229 @@ class FinancialAnalyticsPlatform:
                 .background_gradient(subset=['R²'], cmap='Blues'),
                 use_container_width=True
             )
+            
+            # Trend insights
+            with st.expander("🔍 Trend Insights"):
+                positive_trends = len([t for t in trend_data if t['Direction'] == 'increasing'])
+                negative_trends = len([t for t in trend_data if t['Direction'] == 'decreasing'])
+                strong_trends = len([t for t in trend_data if t['Trend Strength'] == 'Strong'])
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Positive Trends", positive_trends)
+                with col2:
+                    st.metric("Negative Trends", negative_trends)
+                with col3:
+                    st.metric("Strong Trends", strong_trends)
+                
+                if positive_trends > negative_trends:
+                    st.success("📈 Overall positive trend momentum detected")
+                elif negative_trends > positive_trends:
+                    st.warning("📉 Overall negative trend momentum detected")
+                else:
+                    st.info("⚖️ Mixed trend signals - detailed analysis recommended")
         
-        # ML Forecasting Section
+        # === ML FORECASTING SECTION ===
         st.subheader("🤖 ML-Powered Forecasting")
         
-        if self.config.get('app.enable_ml_features', True):
-            col1, col2, col3 = st.columns(3)
+        if not self.config.get('app.enable_ml_features', True):
+            st.warning("ML features are disabled. Enable them in the sidebar settings.")
+            return
+        
+        # Forecasting configuration
+        with st.expander("⚙️ Forecasting Configuration", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 forecast_periods = st.selectbox(
                     "Forecast Periods",
-                    [1, 2, 3, 4, 5],
-                    index=2,
-                    help="Number of future periods to forecast"
+                    [1, 2, 3, 4, 5, 6],
+                    index=self.get_state_safe('forecast_periods', 3) - 1,
+                    help="Number of future periods to forecast",
+                    key="forecast_periods_select"
                 )
+                self.set_state('forecast_periods', forecast_periods)
             
             with col2:
                 model_type = st.selectbox(
                     "Model Type",
                     ['auto', 'linear', 'polynomial', 'exponential'],
-                    index=0,
-                    help="ML model for forecasting"
+                    index=['auto', 'linear', 'polynomial', 'exponential'].index(
+                        self.get_state_safe('forecast_model_type', 'auto')
+                    ),
+                    help="ML model for forecasting",
+                    key="forecast_model_select"
                 )
+                self.set_state('forecast_model_type', model_type)
             
             with col3:
-                if st.button("🚀 Generate Forecast", type="primary"):
-                    with st.spinner("Training ML models and generating forecasts..."):
+                confidence_level = st.selectbox(
+                    "Confidence Level",
+                    [0.90, 0.95, 0.99],
+                    index=[0.90, 0.95, 0.99].index(
+                        self.get_state_safe('forecast_confidence_level', 0.95)
+                    ),
+                    help="Statistical confidence level for intervals",
+                    key="confidence_level_select"
+                )
+                self.set_state('forecast_confidence_level', confidence_level)
+            
+            with col4:
+                show_details = st.checkbox(
+                    "Show Details",
+                    value=self.get_state_safe('show_forecast_details', False),
+                    help="Show model accuracy and technical details",
+                    key="show_forecast_details_check"
+                )
+                self.set_state('show_forecast_details', show_details)
+        
+        # Metric selection for forecasting
+        numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
+        key_metrics = []
+        
+        # Identify key financial metrics
+        for metric in numeric_metrics:
+            metric_lower = str(metric).lower()
+            if any(keyword in metric_lower for keyword in ['revenue', 'income', 'profit', 'cash', 'assets', 'equity']):
+                key_metrics.append(metric)
+        
+        # Default to first few key metrics or all if few metrics
+        default_metrics = key_metrics[:4] if len(key_metrics) >= 4 else numeric_metrics[:4]
+        
+        selected_metrics = st.multiselect(
+            "Select metrics to forecast:",
+            numeric_metrics,
+            default=self.get_state_safe('selected_forecast_metrics', default_metrics),
+            help="Choose which financial metrics to forecast",
+            key="forecast_metrics_select"
+        )
+        self.set_state('selected_forecast_metrics', selected_metrics)
+        
+        # Generate forecast button
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            if st.button("🚀 Generate ML Forecast", type="primary", key="generate_forecast_btn"):
+                if not selected_metrics:
+                    st.error("Please select at least one metric to forecast")
+                else:
+                    with st.spinner("🧠 Training ML models and generating forecasts..."):
                         try:
+                            # Initialize ML forecaster if not already done
+                            if not hasattr(self, 'ml_forecaster') or self.ml_forecaster is None:
+                                self.ml_forecaster = MLForecaster(self.config)
+                            
+                            # Generate forecasts
                             forecast_results = self.ml_forecaster.forecast_metrics(
                                 data, 
                                 periods=forecast_periods,
-                                model_type=model_type
+                                model_type=model_type,
+                                metrics=selected_metrics
                             )
                             
+                            # Store results safely
                             self.set_state('ml_forecast_results', forecast_results)
                             
+                            # Add to forecast history
+                            forecast_history = self.get_state_safe('forecast_history', [])
+                            forecast_entry = {
+                                'timestamp': datetime.now().isoformat(),
+                                'model_type': model_type,
+                                'periods': forecast_periods,
+                                'metrics': selected_metrics,
+                                'success': 'error' not in forecast_results
+                            }
+                            forecast_history.append(forecast_entry)
+                            
+                            # Keep only last 10 forecasts
+                            if len(forecast_history) > 10:
+                                forecast_history = forecast_history[-10:]
+                            
+                            self.set_state('forecast_history', forecast_history)
+                            
                             if 'error' not in forecast_results:
-                                st.success(f"✅ Forecast generated using {forecast_results['model_type']} model")
+                                st.success(f"✅ Forecast generated using {forecast_results.get('model_type', model_type)} model")
+                                
+                                # Show quick summary
+                                forecasts = forecast_results.get('forecasts', {})
+                                if forecasts:
+                                    st.info(f"📊 Generated forecasts for {len(forecasts)} metrics over {forecast_periods} periods")
                             else:
-                                st.error(f"Forecast failed: {forecast_results['error']}")
+                                st.error(f"❌ Forecast failed: {forecast_results['error']}")
                                 
                         except Exception as e:
-                            st.error(f"Forecasting error: {str(e)}")
+                            self.logger.error(f"Forecasting error: {e}")
+                            st.error(f"❌ Forecasting error: {str(e)}")
+                            
+                            # Store error in history
+                            forecast_history = self.get_state_safe('forecast_history', [])
+                            forecast_entry = {
+                                'timestamp': datetime.now().isoformat(),
+                                'model_type': model_type,
+                                'periods': forecast_periods,
+                                'metrics': selected_metrics,
+                                'success': False,
+                                'error': str(e)
+                            }
+                            forecast_history.append(forecast_entry)
+                            self.set_state('forecast_history', forecast_history)
+        
+        with col2:
+            if st.button("📊 Quick Forecast", help="Fast forecast with default settings"):
+                if not selected_metrics:
+                    st.error("Please select metrics first")
+                else:
+                    with st.spinner("Quick forecasting..."):
+                        try:
+                            if not hasattr(self, 'ml_forecaster'):
+                                self.ml_forecaster = MLForecaster(self.config)
+                            
+                            # Quick forecast with simplified settings
+                            quick_results = self.ml_forecaster.forecast_metrics(
+                                data, 
+                                periods=3,
+                                model_type='linear',
+                                metrics=selected_metrics[:2]  # Limit to 2 metrics for speed
+                            )
+                            
+                            self.set_state('ml_forecast_results', quick_results)
+                            
+                            if 'error' not in quick_results:
+                                st.success("✅ Quick forecast completed")
+                            else:
+                                st.error(f"❌ Quick forecast failed: {quick_results['error']}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Quick forecast error: {str(e)}")
+        
+        with col3:
+            # Clear results button
+            if st.button("🗑️ Clear Results", help="Clear forecast results"):
+                self.set_state('ml_forecast_results', None)
+                st.success("Forecast results cleared")
+        
+        # === DISPLAY FORECAST RESULTS ===
+        forecast_results = self.get_state_safe('ml_forecast_results', None)
+        
+        if forecast_results and 'error' not in forecast_results:
+            st.subheader("📈 Forecast Results")
             
-            # Display forecast results
-            forecast_results = self.get_state('ml_forecast_results')
-            if forecast_results and 'error' not in forecast_results:
-                st.subheader("📈 Forecast Results")
-                
-                forecasts = forecast_results.get('forecasts', {})
-                confidence_intervals = forecast_results.get('confidence_intervals', {})
-                
-                for metric, forecast in forecasts.items():
+            forecasts = forecast_results.get('forecasts', {})
+            confidence_intervals = forecast_results.get('confidence_intervals', {})
+            accuracy_metrics = forecast_results.get('accuracy_metrics', {})
+            
+            if not forecasts:
+                st.warning("No forecasts generated. Please try again with different settings.")
+                return
+            
+            # Create tabs for different views
+            forecast_tabs = st.tabs(["📊 Charts", "📋 Data Table", "🎯 Accuracy", "📝 Summary"])
+            
+            with forecast_tabs[0]:  # Charts tab
+                for i, (metric, forecast) in enumerate(forecasts.items()):
                     st.write(f"**{metric} Forecast**")
                     
-                    # Create forecast visualization
+                    # Create comprehensive forecast visualization
                     fig = go.Figure()
                     
                     # Historical data (last few points for context)
@@ -7653,19 +7971,21 @@ class FinancialAnalyticsPlatform:
                             y=hist_values,
                             mode='lines+markers',
                             name='Historical',
-                            line=dict(color='blue', width=2)
+                            line=dict(color='blue', width=3),
+                            marker=dict(size=8)
                         ))
                     
-                    # Forecast
-                    forecast_periods = forecast['periods']
+                    # Forecast line
+                    forecast_periods_list = forecast['periods']
                     forecast_values = forecast['values']
                     
                     fig.add_trace(go.Scatter(
-                        x=forecast_periods,
+                        x=forecast_periods_list,
                         y=forecast_values,
                         mode='lines+markers',
                         name='Forecast',
-                        line=dict(color='red', dash='dash', width=2)
+                        line=dict(color='red', dash='dash', width=3),
+                        marker=dict(size=10, symbol='diamond')
                     ))
                     
                     # Confidence intervals
@@ -7673,162 +7993,61 @@ class FinancialAnalyticsPlatform:
                         intervals = confidence_intervals[metric]
                         
                         fig.add_trace(go.Scatter(
-                            x=forecast_periods + forecast_periods[::-1],
+                            x=forecast_periods_list + forecast_periods_list[::-1],
                             y=intervals['upper'] + intervals['lower'][::-1],
                             fill='toself',
                             fillcolor='rgba(255,0,0,0.2)',
                             line=dict(color='rgba(255,255,255,0)'),
-                            name='95% Confidence',
+                            name=f'{int(confidence_level*100)}% Confidence',
                             showlegend=True
                         ))
                     
+                    # Add trend line if available
+                    if metric in trends and 'slope' in trends[metric]:
+                        trend_info = trends[metric]
+                        if len(hist_years) > 1:
+                            # Extend trend line into forecast period
+                            all_periods = hist_years + forecast_periods_list
+                            x_numeric = list(range(len(all_periods)))
+                            trend_line = [trend_info['slope'] * x + trend_info.get('intercept', hist_values[0]) 
+                                        for x in x_numeric]
+                            
+                            fig.add_trace(go.Scatter(
+                                x=all_periods,
+                                y=trend_line,
+                                mode='lines',
+                                name='Linear Trend',
+                                line=dict(color='green', dash='dot', width=2),
+                                opacity=0.7
+                            ))
+                    
+                    # Update layout
                     fig.update_layout(
                         title=f"{metric} - Historical vs Forecast",
                         xaxis_title="Period",
                         yaxis_title="Value",
                         hovermode='x unified',
-                        height=400
+                        height=500,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
-                
-                # Show accuracy metrics
-                accuracy_metrics = forecast_results.get('accuracy_metrics', {})
-                if accuracy_metrics:
-                    st.subheader("🎯 Model Accuracy")
                     
-                    accuracy_data = []
-                    for metric, accuracy in accuracy_metrics.items():
-                        accuracy_data.append({
-                            'Metric': metric,
-                            'RMSE': accuracy.get('rmse', 0),
-                            'MAE': accuracy.get('mae', 0),
-                            'MAPE %': accuracy.get('mape', 0) if accuracy.get('mape') else 'N/A'
-                        })
-                    
-                    if accuracy_data:
-                        accuracy_df = pd.DataFrame(accuracy_data)
-                        st.dataframe(accuracy_df, use_container_width=True)
-        
-        # Interactive visualization
-        st.subheader("📊 Interactive Trend Visualization")
-        
-        numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
-        selected_metrics = st.multiselect(
-            "Select metrics to visualize:",
-            numeric_metrics,
-            default=numeric_metrics[:3] if len(numeric_metrics) >= 3 else numeric_metrics
-        )
-        
-        if selected_metrics:
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                show_trend_lines = st.checkbox("Show Trend Lines", value=True)
-            
-            with col2:
-                normalize = st.checkbox("Normalize Values", value=False)
-            
-            with col3:
-                chart_type = st.selectbox("Chart Type", ["Line", "Bar", "Area"])
-            
-            fig = go.Figure()
-            
-            for i, metric in enumerate(selected_metrics):
-                values = data.loc[metric]
-                
-                if normalize:
-                    values = (values / values.iloc[0]) * 100
-                
-                if chart_type == "Line":
-                    fig.add_trace(go.Scatter(
-                        x=data.columns,
-                        y=values,
-                        mode='lines+markers',
-                        name=metric,
-                        line=dict(width=2),
-                        marker=dict(size=8)
-                    ))
-                elif chart_type == "Bar":
-                    fig.add_trace(go.Bar(
-                        x=data.columns,
-                        y=values,
-                        name=metric
-                    ))
-                elif chart_type == "Area":
-                    fig.add_trace(go.Scatter(
-                        x=data.columns,
-                        y=values,
-                        mode='lines',
-                        name=metric,
-                        fill='tonexty' if i > 0 else 'tozeroy',
-                        line=dict(width=2)
-                    ))
-                
-                if show_trend_lines and metric in trends:
-                    trend_info = trends[metric]
-                    if 'slope' in trend_info and 'intercept' in trend_info:
-                        x_numeric = np.arange(len(data.columns))
-                        y_trend = trend_info['slope'] * x_numeric + trend_info['intercept']
+                    # Show forecast values in a nice format
+                    if len(forecast_values) > 0:
+                        col1, col2, col3 = st.columns(3)
                         
-                        if normalize and values.iloc[0] != 0:
-                            y_trend = (y_trend / values.iloc[0]) * 100
-                        
-                        fig.add_trace(go.Scatter(
-                            x=data.columns,
-                            y=y_trend,
-                            mode='lines',
-                            name=f"{metric} (Trend)",
-                            line=dict(width=2, dash='dash'),
-                            opacity=0.7
-                        ))
-            
-            fig.update_layout(
-                title="Metric Trends Analysis",
-                xaxis_title="Year",
-                yaxis_title="Value" + (" (Base 100)" if normalize else ""),
-                hovermode='x unified',
-                height=500,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                )
-            )
-            
-            if chart_type == "Bar":
-                fig.update_layout(barmode='group')
-            
-            st.plotly_chart(fig, use_container_width=True)
-        
-        # Statistical Analysis
-        st.subheader("📈 Statistical Analysis")
-        
-        if selected_metrics and len(selected_metrics) > 1:
-            corr_data = data.loc[selected_metrics].T.corr()
-            
-            fig_corr = go.Figure(data=go.Heatmap(
-                z=corr_data.values,
-                x=corr_data.columns,
-                y=corr_data.index,
-                colorscale='RdBu',
-                zmid=0,
-                text=np.round(corr_data.values, 2),
-                texttemplate='%{text}',
-                textfont={"size": 10},
-                hoverongaps=False
-            ))
-            
-            fig_corr.update_layout(
-                title="Correlation Matrix",
-                height=400
-            )
-            
-            st.plotly_chart(fig_corr, use_container_width=True)
+                        with col1:
+                            current_value = forecast.get('last_actual', 0)
     
     @error_boundary()
+    @safe_state_access
     def _render_penman_nissim_tab(self, data: pd.DataFrame):
         """Render Penman-Nissim analysis tab"""
         st.header("🎯 Penman-Nissim Analysis")
@@ -8060,6 +8279,7 @@ class FinancialAnalyticsPlatform:
         return help_texts.get(ratio, "Financial ratio")
     
     @error_boundary()
+    @safe_state_access
     def _render_industry_tab(self, data: pd.DataFrame):
         """Render industry comparison tab - COMPLETE IMPLEMENTATION"""
         st.header("🏭 Industry Comparison")
@@ -8288,6 +8508,7 @@ class FinancialAnalyticsPlatform:
         return benchmarks.get(industry, benchmarks["Technology"])
     
     @error_boundary()
+    @safe_state_access
     def _render_data_explorer_tab(self, data: pd.DataFrame):
         """Render data explorer tab"""
         st.header("🔍 Data Explorer")
@@ -8417,6 +8638,7 @@ class FinancialAnalyticsPlatform:
             )
     
     @error_boundary()
+    @safe_state_access
     def _render_reports_tab(self, data: pd.DataFrame):
         """Render reports tab"""
         st.header("📄 Financial Analysis Reports")
@@ -8545,6 +8767,7 @@ class FinancialAnalyticsPlatform:
                     st.info(f"Applied {template_name} template settings")
     
     @error_boundary()
+    @safe_state_access
     def _render_ml_insights_tab(self, data: pd.DataFrame):
         """Render ML insights and advanced analytics tab"""
         st.header("🤖 ML Insights & Advanced Analytics")
@@ -8880,30 +9103,228 @@ class FinancialAnalyticsPlatform:
                     for endpoint, metrics in api_summary.items():
                         st.write(f"- {endpoint}: {metrics['total_requests']} requests, {metrics['success_rate']:.1%} success")
 
+    def _emergency_state_recovery(self):
+        """Emergency session state recovery"""
+        try:
+            # Clear corrupted state
+            corrupted_keys = []
+            for key in list(st.session_state.keys()):
+                try:
+                    _ = st.session_state[key]
+                except:
+                    corrupted_keys.append(key)
+            
+            for key in corrupted_keys:
+                del st.session_state[key]
+                self.logger.warning(f"Removed corrupted session state key: {key}")
+            
+            # Reinitialize
+            self._initialize_session_state()
+            
+            return True
+        except Exception as e:
+            self.logger.critical(f"Emergency recovery failed: {e}")
+            return False
+    
+    def _validate_session_state(self):
+        """Validate session state integrity"""
+        required_keys = [
+            'initialized', 'analysis_data', 'simple_parse_mode', 
+            'uploaded_files', 'number_format_value', 'ml_forecast_results',
+            'forecast_periods', 'forecast_model_type', 'selected_forecast_metrics',
+            'metric_mappings', 'show_manual_mapping', 'kaggle_api_enabled',
+            'api_metrics_visible', 'analysis_mode', 'benchmark_company'
+        ]
+        
+        missing_keys = []
+        for key in required_keys:
+            if key not in st.session_state:
+                missing_keys.append(key)
+        
+        if missing_keys:
+            self.logger.warning(f"Missing session state keys: {missing_keys}")
+            return False
+        
+        return True
+    
+    @safe_state_access
+    def get_state_with_validation(self, key: str, default: Any = None, validate_func: Callable = None) -> Any:
+        """Get state with optional validation"""
+        value = self.get_state(key, default)
+        
+        if validate_func and not validate_func(value):
+            self.logger.warning(f"Session state validation failed for key: {key}")
+            self.set_state(key, default)
+            return default
+        
+        return value
+    
+    def _perform_health_check(self):
+        """Perform comprehensive system health check"""
+        health_status = {
+            'session_state': False,
+            'components': False,
+            'configuration': False,
+            'memory': False,
+            'overall': False
+        }
+        
+        try:
+            # Check session state
+            health_status['session_state'] = self._validate_session_state()
+            
+            # Check components
+            if hasattr(self, 'components') and self.components:
+                initialized_components = sum(1 for c in self.components.values() if c._initialized)
+                health_status['components'] = initialized_components == len(self.components)
+            
+            # Check configuration
+            if hasattr(self, 'config') and self.config:
+                health_status['configuration'] = True
+            
+            # Check memory usage (if psutil available)
+            try:
+                if PSUTIL_AVAILABLE:
+                    import psutil
+                    memory_percent = psutil.virtual_memory().percent
+                    health_status['memory'] = memory_percent < 90  # Less than 90% usage
+                else:
+                    health_status['memory'] = True  # Assume OK if can't check
+            except:
+                health_status['memory'] = True
+            
+            # Overall health
+            health_status['overall'] = all([
+                health_status['session_state'],
+                health_status['components'],
+                health_status['configuration']
+            ])
+            
+            self.logger.info(f"Health check completed: {health_status}")
+            return health_status
+            
+        except Exception as e:
+            self.logger.error(f"Health check failed: {e}")
+            return health_status
+    
+    def _auto_recovery_attempt(self):
+        """Attempt automatic recovery from errors"""
+        try:
+            self.logger.info("Starting automatic recovery...")
+            
+            # Step 1: Validate current state
+            if not self._validate_session_state():
+                self.logger.warning("Session state validation failed, attempting recovery...")
+                
+                # Step 2: Try emergency recovery
+                if self._emergency_state_recovery():
+                    self.logger.info("Emergency recovery successful")
+                else:
+                    self.logger.error("Emergency recovery failed")
+                    return False
+            
+            # Step 3: Reinitialize components if needed
+            if not hasattr(self, 'components') or not self.components:
+                self.logger.info("Reinitializing components...")
+                try:
+                    self.components = self._initialize_components()
+                except Exception as e:
+                    self.logger.error(f"Component reinitialization failed: {e}")
+                    return False
+            
+            # Step 4: Perform health check
+            health = self._perform_health_check()
+            
+            if health['overall']:
+                self.logger.info("Auto-recovery completed successfully")
+                return True
+            else:
+                self.logger.warning(f"Auto-recovery partially successful: {health}")
+                return False
+                
+        except Exception as e:
+            self.logger.critical(f"Auto-recovery failed: {e}")
+            return False
+    
+    def _cleanup_resources(self):
+        """Clean up resources and prepare for shutdown"""
+        try:
+            self.logger.info("Starting resource cleanup...")
+            
+            # Cleanup compression handler
+            if hasattr(self, 'compression_handler'):
+                self.compression_handler.cleanup()
+            
+            # Cleanup components
+            if hasattr(self, 'components') and self.components:
+                for name, component in self.components.items():
+                    try:
+                        if hasattr(component, 'cleanup'):
+                            component.cleanup()
+                        self.logger.debug(f"Cleaned up component: {name}")
+                    except Exception as e:
+                        self.logger.warning(f"Error cleaning up {name}: {e}")
+            
+            # Clear performance monitor
+            if 'performance_monitor' in globals():
+                performance_monitor.clear_metrics()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            self.logger.info("Resource cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during resource cleanup: {e}")
+
+
+
+
 # --- 31. Application Entry Point ---
 def main():
     """Main application entry point with comprehensive error handling"""
     try:
-        # Create and run the application
-        app = FinancialAnalyticsPlatform()
-        app.run()
+        # Set page config first
+        st.set_page_config(
+            page_title="Elite Financial Analytics Platform v5.1",
+            page_icon="💹",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
         
+        # Create and run the application with enhanced error handling
+        try:
+            app = FinancialAnalyticsPlatform()
+            app.run()
+        except KeyError as e:
+            # Handle session state key errors specifically
+            st.error("🔧 Session state error detected. Reinitializing...")
+            
+            # Clear problematic state and reinitialize
+            if 'initialized' in st.session_state:
+                del st.session_state['initialized']
+            
+            # Try again
+            app = FinancialAnalyticsPlatform()
+            app.run()
+            
     except Exception as e:
         # Critical error handling
         logging.critical(f"Fatal application error: {e}", exc_info=True)
         
-        st.error("🚨 A critical error occurred. Please refresh the page.")
+        st.error("🚨 A critical error occurred.")
         
         # Show debug info if available
-        if st.session_state.get('debug_mode', False):
+        if st.session_state.get('show_debug_info', False):
             st.exception(e)
             
             with st.expander("🔧 Debug Information"):
                 st.write("**Error Details:**")
                 st.code(traceback.format_exc())
                 
-                st.write("**Session State:**")
-                st.json(dict(st.session_state))
+                st.write("**Session State Keys:**")
+                st.json(list(st.session_state.keys()))
         
         # Recovery options
         st.subheader("🔄 Recovery Options")
@@ -8911,17 +9332,18 @@ def main():
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("🔄 Refresh Page"):
+            if st.button("🔄 Refresh Page", key="refresh_page_btn"):
                 st.experimental_rerun()
         
         with col2:
-            if st.button("🗑️ Clear Cache"):
+            if st.button("🗑️ Clear Cache", key="clear_cache_btn"):
                 st.cache_data.clear()
                 st.cache_resource.clear()
                 st.success("Cache cleared!")
         
         with col3:
-            if st.button("🏠 Reset to Home"):
+            if st.button("🏠 Reset Application", key="reset_app_btn"):
+                # Clear all session state
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
                 st.experimental_rerun()

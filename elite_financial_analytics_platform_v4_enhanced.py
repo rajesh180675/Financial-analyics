@@ -5748,12 +5748,13 @@ class FinancialAnalyticsPlatform:
         # Collaboration indicator
         if self.get_state('collaboration_session'):
             session_id = self.get_state('collaboration_session')
-            activity = self.collaboration_manager.get_session_activity(session_id)
-            if activity:
-                st.markdown(
-                    f'<div class="collaboration-indicator">👥 {len(activity["active_users"])} users online</div>',
-                    unsafe_allow_html=True
-                )
+            if hasattr(self, 'collaboration_manager') and self.collaboration_manager:
+                activity = self.collaboration_manager.get_session_activity(session_id)
+                if activity:
+                    st.markdown(
+                        f'<div class="collaboration-indicator">👥 {len(activity["active_users"])} users online</div>',
+                        unsafe_allow_html=True
+                    )
         
         # Show Kaggle API status if enabled
         if self.config.get('ui.show_kaggle_status', True) and self.get_state('kaggle_api_enabled'):
@@ -5763,108 +5764,170 @@ class FinancialAnalyticsPlatform:
         if self.config.get('ui.show_api_metrics', True) and self.get_state('api_metrics_visible', False):
             self._render_api_metrics_panel()
         
-        # Show system status
+        # Show system status with safe component access
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            components_status = sum(1 for c in self.components.values() if c._initialized)
+            # Safe component count
+            try:
+                if hasattr(self, 'components') and self.components:
+                    components_status = sum(
+                        1 for c in self.components.values() 
+                        if hasattr(c, '_initialized') and c._initialized
+                    )
+                    total_components = len(self.components)
+                else:
+                    components_status = 0
+                    total_components = 0
+            except Exception as e:
+                self.logger.warning(f"Error counting components: {e}")
+                components_status = 0
+                total_components = 0
+            
             self.ui_factory.create_metric_card(
                 "Components", 
-                f"{components_status}/{len(self.components)}",
+                f"{components_status}/{total_components}",
                 help="Active system components"
             )
         
         with col2:
-            mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
+            # Safe mode display
+            try:
+                mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
+                mode_name = mode.name if hasattr(mode, 'name') else str(mode)
+            except Exception as e:
+                self.logger.warning(f"Error getting display mode: {e}")
+                mode_name = "LITE"
+            
             self.ui_factory.create_metric_card(
                 "Mode", 
-                mode.name,
+                mode_name,
                 help="Current operating mode"
             )
         
         with col3:
-            if 'mapper' in self.components:
-                cache_stats = self.components['mapper'].embeddings_cache.get_stats()
-                hit_rate = cache_stats.get('hit_rate', 0)
-                self.ui_factory.create_metric_card(
-                    "Cache Hit Rate", 
-                    f"{hit_rate:.1f}%",
-                    help="AI cache performance"
-                )
+            # Safe cache hit rate display
+            try:
+                if (hasattr(self, 'components') and 
+                    self.components and 
+                    'mapper' in self.components and 
+                    hasattr(self.components['mapper'], 'embeddings_cache')):
+                    
+                    cache_stats = self.components['mapper'].embeddings_cache.get_stats()
+                    hit_rate = cache_stats.get('hit_rate', 0)
+                else:
+                    hit_rate = 0
+            except Exception as e:
+                self.logger.warning(f"Error getting cache stats: {e}")
+                hit_rate = 0
+            
+            self.ui_factory.create_metric_card(
+                "Cache Hit Rate", 
+                f"{hit_rate:.1f}%",
+                help="AI cache performance"
+            )
         
         with col4:
-            version = self.config.get('app.version', 'Unknown')
+            # Safe version display
+            try:
+                version = self.config.get('app.version', 'Unknown')
+            except Exception as e:
+                self.logger.warning(f"Error getting version: {e}")
+                version = "5.1.0"
+            
             self.ui_factory.create_metric_card(
                 "Version", 
                 version,
                 help="Platform version"
             )
+        
+        # Show system health indicator if in debug mode
+        if self.config.get('app.debug', False):
+            try:
+                health = self._perform_health_check() if hasattr(self, '_perform_health_check') else None
+                if health and 'overall' in health:
+                    health_color = "🟢" if health['overall'] else "🔴"
+                    st.markdown(
+                        f'<div style="text-align: center; margin-top: 10px;">'
+                        f'{health_color} System Health: {"Good" if health["overall"] else "Issues Detected"}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            except Exception as e:
+                self.logger.warning(f"Error performing health check: {e}")
+            
     def _render_kaggle_status_badge(self):
         """Render floating Kaggle API status badge with enhanced metrics"""
-        if 'mapper' in self.components:
-            status = self.components['mapper'].get_api_status()
-            
-            if status['kaggle_available']:
-                info = status.get('api_info', {})
-                stats = status.get('api_stats', {})
+        try:
+            if 'mapper' in self.components and hasattr(self.components['mapper'], 'get_api_status'):
+                status = self.components['mapper'].get_api_status()
                 
-                # Get GPU info from the actual response
-                gpu_name = info.get('gpu_name', info.get('system', {}).get('gpu_name', 'GPU'))
-                model = info.get('model', info.get('system', {}).get('model', 'Unknown'))
-                version = info.get('version', 'Unknown')
-                
-                # Check circuit breaker status
-                circuit_state = 'closed'  # Your API shows it's closed (good)
-                
-                status_html = f"""
-                <div class="kaggle-status">
-                    <span class="api-health healthy"></span>
-                    <strong>Kaggle GPU Active</strong>
-                    <span class="kaggle-metric">🖥️ {gpu_name}</span>
-                    <span class="kaggle-metric">🤖 {model}</span>
-                    <span class="kaggle-metric">📊 v{version}</span>
-                </div>
-                """
-            else:
-                status_html = """
-                <div class="kaggle-status error">
-                    <span class="api-health unhealthy"></span>
-                    <strong>Kaggle GPU Offline</strong>
-                    <span class="kaggle-metric">Using local processing</span>
-                </div>
-                """
-            
-            st.markdown(status_html, unsafe_allow_html=True)
-    
-    def _render_api_metrics_panel(self):
-        """Render detailed API metrics panel"""
-        if 'mapper' in self.components:
-            api_summary = performance_monitor.get_api_summary()
-            
-            if api_summary:
-                metrics_html = """
-                <div class="api-metrics-panel">
-                    <h4 style="margin-top: 0;">API Performance Metrics</h4>
-                """
-                
-                for endpoint, metrics in api_summary.items():
-                    metrics_html += f"""
-                    <div style="margin-bottom: 10px;">
-                        <strong>{endpoint}</strong><br>
-                        <small>
-                        Requests: {metrics['total_requests']} | 
-                        Success: {metrics['success_rate']:.1%} | 
-                        Avg: {metrics['avg_response_time']:.2f}s | 
-                        P95: {metrics['p95_response_time']:.2f}s
-                        </small>
+                if status['kaggle_available']:
+                    info = status.get('api_info', {})
+                    stats = status.get('api_stats', {})
+                    
+                    # Get GPU info from the actual response
+                    gpu_name = info.get('gpu_name', info.get('system', {}).get('gpu_name', 'GPU'))
+                    model = info.get('model', info.get('system', {}).get('model', 'Unknown'))
+                    version = info.get('version', 'Unknown')
+                    
+                    # Check circuit breaker status
+                    circuit_state = 'closed'  # Your API shows it's closed (good)
+                    
+                    status_html = f"""
+                    <div class="kaggle-status">
+                        <span class="api-health healthy"></span>
+                        <strong>Kaggle GPU Active</strong>
+                        <span class="kaggle-metric">🖥️ {gpu_name}</span>
+                        <span class="kaggle-metric">🤖 {model}</span>
+                        <span class="kaggle-metric">📊 v{version}</span>
+                    </div>
+                    """
+                else:
+                    status_html = """
+                    <div class="kaggle-status error">
+                        <span class="api-health unhealthy"></span>
+                        <strong>Kaggle GPU Offline</strong>
+                        <span class="kaggle-metric">Using local processing</span>
                     </div>
                     """
                 
-                metrics_html += """
-                </div>
-                """
+                st.markdown(status_html, unsafe_allow_html=True)
+        except Exception as e:
+            self.logger.warning(f"Error rendering Kaggle status badge: {e}")
+    
+    def _render_api_metrics_panel(self):
+        """Render detailed API metrics panel"""
+        try:
+            if hasattr(self, 'components') and 'mapper' in self.components:
+                api_summary = performance_monitor.get_api_summary()
                 
-                st.markdown(metrics_html, unsafe_allow_html=True)
+                if api_summary:
+                    metrics_html = """
+                    <div class="api-metrics-panel">
+                        <h4 style="margin-top: 0;">API Performance Metrics</h4>
+                    """
+                    
+                    for endpoint, metrics in api_summary.items():
+                        metrics_html += f"""
+                        <div style="margin-bottom: 10px;">
+                            <strong>{endpoint}</strong><br>
+                            <small>
+                            Requests: {metrics['total_requests']} | 
+                            Success: {metrics['success_rate']:.1%} | 
+                            Avg: {metrics['avg_response_time']:.2f}s | 
+                            P95: {metrics['p95_response_time']:.2f}s
+                            </small>
+                        </div>
+                        """
+                    
+                    metrics_html += """
+                    </div>
+                    """
+                    
+                    st.markdown(metrics_html, unsafe_allow_html=True)
+        except Exception as e:
+            self.logger.warning(f"Error rendering API metrics panel: {e}")
                 
     @safe_state_access
     def _render_sidebar(self):

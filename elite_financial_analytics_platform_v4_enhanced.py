@@ -5126,11 +5126,23 @@ class FinancialAnalyticsPlatform:
         # Initialize logger
         self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
         
-        # Initialize components only once
-        if 'components' not in st.session_state:
-            st.session_state.components = self._initialize_components()
+        # Initialize components only once - FIX THIS PART
+        if 'components' not in st.session_state or st.session_state.components is None:
+            try:
+                components = self._initialize_components()
+                st.session_state.components = components
+            except Exception as e:
+                self.logger.error(f"Failed to initialize components: {e}")
+                # Create empty components dictionary as fallback
+                st.session_state.components = {}
         
-        self.components = st.session_state.components
+        # Always set self.components from session state
+        self.components = st.session_state.get('components', {})
+        
+        # Validate components
+        if not self.components:
+            self.logger.warning("No components initialized, creating defaults")
+            self.components = self._create_default_components()
         
         # Initialize managers
         self.ui_factory = UIComponentFactory()
@@ -5145,10 +5157,24 @@ class FinancialAnalyticsPlatform:
         # Initialize compression handler
         self.compression_handler = CompressionHandler(self.logger)
     
+    def _create_default_components(self) -> Dict[str, Component]:
+        """Create default components as fallback"""
+        try:
+            return {
+                'security': SecurityModule(self.config),
+                'processor': DataProcessor(self.config),
+                'analyzer': FinancialAnalysisEngine(self.config),
+                'mapper': AIMapper(self.config),
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to create default components: {e}")
+            return {}
+    
     def __del__(self):
         """Cleanup resources"""
         if hasattr(self, 'compression_handler'):
             self.compression_handler.cleanup()
+            
     @critical_method
     def _initialize_session_state(self):
         """Initialize all session state variables"""
@@ -5282,26 +5308,48 @@ class FinancialAnalyticsPlatform:
         self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
         self.logger.info(f"Initialized {len(defaults)} session state variables")
     
+    @critical_method
     def _initialize_components(self) -> Dict[str, Component]:
         """Initialize all components with dependency injection"""
-        components = {
-            'security': SecurityModule(self.config),
-            'processor': DataProcessor(self.config),
-            'analyzer': FinancialAnalysisEngine(self.config),
-            'mapper': AIMapper(self.config),
-        }
+        components = {}
         
-        # Initialize all components
-        for name, component in components.items():
+        try:
+            # Create components one by one with error handling
             try:
-                component.initialize()
-                self.logger.info(f"Initialized component: {name}")
+                components['security'] = SecurityModule(self.config)
+                components['security'].initialize()
+                self.logger.info("Initialized component: security")
             except Exception as e:
-                self.logger.error(f"Failed to initialize {name}: {e}")
-                # Try error recovery
-                self.error_recovery.handle_error(f"{name}_init_failed", {'component': component})
-        
-        return components
+                self.logger.error(f"Failed to initialize security: {e}")
+            
+            try:
+                components['processor'] = DataProcessor(self.config)
+                components['processor'].initialize()
+                self.logger.info("Initialized component: processor")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize processor: {e}")
+            
+            try:
+                components['analyzer'] = FinancialAnalysisEngine(self.config)
+                components['analyzer'].initialize()
+                self.logger.info("Initialized component: analyzer")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize analyzer: {e}")
+            
+            try:
+                components['mapper'] = AIMapper(self.config)
+                components['mapper'].initialize()
+                self.logger.info("Initialized component: mapper")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize mapper: {e}")
+                # Mapper might fail due to AI dependencies, but app should still work
+            
+            return components
+            
+        except Exception as e:
+            self.logger.error(f"Critical error in component initialization: {e}")
+            # Return at least empty dict instead of None
+            return {}
 
     def _cleanup_session_state(self, force_cleanup: bool = False):
         """Clean up unnecessary session state entries with improved handling"""
@@ -5503,11 +5551,17 @@ class FinancialAnalyticsPlatform:
                 initial_sidebar_state="expanded"
             )
             
+            # Validate components before proceeding
+            if not hasattr(self, 'components') or self.components is None:
+                self.logger.warning("Components not initialized, attempting recovery")
+                self._auto_recovery_attempt()
+            
             # Apply custom CSS
             self._apply_custom_css()
             
             # Render tutorial if active
-            self.tutorial_system.render()
+            if hasattr(self, 'tutorial_system') and self.tutorial_system:
+                self.tutorial_system.render()
             
             # Render header
             self._render_header()
@@ -5525,6 +5579,27 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Application error: {e}")
             st.error("An unexpected error occurred. Please refresh the page.")
+            
+            # Show recovery options
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 Retry"):
+                    st.experimental_rerun()
+            
+            with col2:
+                if st.button("🔧 Auto Recovery"):
+                    if self._auto_recovery_attempt():
+                        st.success("Recovery successful!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Recovery failed. Please refresh manually.")
+            
+            with col3:
+                if st.button("🗑️ Clear All & Restart"):
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.experimental_rerun()
             
             if self.config.get('app.debug', False):
                 st.exception(e)

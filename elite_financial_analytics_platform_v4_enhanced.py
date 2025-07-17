@@ -980,24 +980,49 @@ class DataValidator:
         corrected_df = df.copy()
         corrections_made = []
         
+        # Convert string numbers to float
+        for col in corrected_df.columns:
+            try:
+                # Replace common string patterns
+                if corrected_df[col].dtype == object:
+                    corrected_df[col] = corrected_df[col].replace({
+                        ',': '',
+                        'NA': 'NaN',
+                        'None': 'NaN',
+                        '-': 'NaN'
+                    }, regex=True)
+                    # Convert to float
+                    corrected_df[col] = pd.to_numeric(corrected_df[col], errors='coerce')
+            except Exception as e:
+                self.logger.warning(f"Could not convert column {col} to numeric: {e}")
+        
         # Auto-corrections
         positive_metrics = ['assets', 'revenue', 'equity', 'sales', 'income', 'cash']
         for idx in corrected_df.index:
-            for metric in positive_metrics:
-                if metric in str(idx).lower():
-                    row_data = corrected_df.loc[idx]
-                    
-                    if isinstance(row_data, pd.DataFrame):
-                        for i in range(len(row_data)):
-                            negative_mask = row_data.iloc[i] < 0
+            if any(metric in str(idx).lower() for metric in positive_metrics):
+                row_data = corrected_df.loc[idx]
+                
+                if isinstance(row_data, pd.DataFrame):
+                    for i in range(len(row_data)):
+                        try:
+                            numeric_mask = pd.to_numeric(row_data.iloc[i], errors='coerce').notna()
+                            negative_mask = pd.to_numeric(row_data.iloc[i], errors='coerce') < 0
                             if negative_mask.any():
-                                corrected_df.loc[idx].iloc[i][negative_mask] = abs(row_data.iloc[i][negative_mask])
+                                corrected_df.loc[idx].iloc[i][negative_mask] = abs(pd.to_numeric(row_data.iloc[i], errors='coerce')[negative_mask])
                                 corrections_made.append(f"Converted negative values to positive in {idx} (row {i})")
-                    else:
-                        negative_mask = row_data < 0
+                        except Exception as e:
+                            self.logger.warning(f"Error processing row {i} of {idx}: {e}")
+                else:
+                    try:
+                        numeric_mask = pd.to_numeric(row_data, errors='coerce').notna()
+                        negative_mask = pd.to_numeric(row_data, errors='coerce') < 0
                         if negative_mask.any():
-                            corrected_df.loc[idx][negative_mask] = abs(row_data[negative_mask])
+                            corrected_df.loc[idx][negative_mask] = abs(pd.to_numeric(row_data, errors='coerce')[negative_mask])
                             corrections_made.append(f"Converted negative values to positive in {idx}")
+                    except Exception as e:
+                        self.logger.warning(f"Error processing {idx}: {e}")
+    
+    # Rest of the method remains the same...
         
         # Fix outliers using IQR method
         for col in corrected_df.select_dtypes(include=[np.number]).columns:
@@ -1889,27 +1914,32 @@ class FinancialAnalysisEngine(Component):
     
     def _generate_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Generate summary statistics"""
-        numeric_df = df.select_dtypes(include=[np.number])
-        
-        if numeric_df.empty:
-            return {'error': 'No numeric data found'}
-        
         summary = {
-            'total_metrics': len(df),
-            'years_covered': len(numeric_df.columns),
-            'year_range': f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
-            'completeness': (numeric_df.notna().sum().sum() / numeric_df.size) * 100,
+            'total_metrics': len(df),  # Always include this
+            'years_covered': 0,
+            'year_range': "N/A",
+            'completeness': 0,
             'key_statistics': {}
         }
         
-        for col in numeric_df.columns[-3:]:
-            summary['key_statistics'][str(col)] = {
-                'mean': numeric_df[col].mean(),
-                'median': numeric_df[col].median(),
-                'std': numeric_df[col].std(),
-                'min': numeric_df[col].min(),
-                'max': numeric_df[col].max()
-            }
+        numeric_df = df.select_dtypes(include=[np.number])
+        
+        if not numeric_df.empty:
+            summary.update({
+                'years_covered': len(numeric_df.columns),
+                'year_range': f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
+                'completeness': (numeric_df.notna().sum().sum() / numeric_df.size) * 100,
+            })
+            
+            # Key statistics for last 3 years
+            for col in numeric_df.columns[-3:]:
+                summary['key_statistics'][str(col)] = {
+                    'mean': numeric_df[col].mean(),
+                    'median': numeric_df[col].median(),
+                    'std': numeric_df[col].std(),
+                    'min': numeric_df[col].min(),
+                    'max': numeric_df[col].max()
+                }
         
         return summary
     
@@ -6321,24 +6351,27 @@ class FinancialAnalyticsPlatform:
         with col1:
             self.ui_factory.create_metric_card(
                 "Total Metrics",
-                analysis['summary']['total_metrics']
+                analysis.get('summary', {}).get('total_metrics', len(data))
             )
         
         with col2:
             self.ui_factory.create_metric_card(
                 "Years Covered",
-                analysis['summary']['years_covered']
+                analysis.get('summary', {}).get('years_covered', len(data.columns))
             )
         
         with col3:
+            completeness = analysis.get('summary', {}).get('completeness', 0)
             self.ui_factory.create_metric_card(
                 "Data Completeness",
-                f"{analysis['summary']['completeness']:.1f}%"
+                f"{completeness:.1f}%"
             )
         
         with col4:
-            quality_score = analysis['quality_score']
+            quality_score = analysis.get('quality_score', 0)
             self.ui_factory.create_data_quality_badge(quality_score)
+    
+    # Rest of the method remains the same...
         
         # Key insights
         st.subheader("Key Insights")

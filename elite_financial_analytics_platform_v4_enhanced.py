@@ -5026,35 +5026,134 @@ class FinancialAnalyticsPlatform:
     def _initialize_session_state(self):
         """Initialize all session state variables"""
         defaults = {
+            # Core system state
             'initialized': True,
-            'analysis_data': None,
-            'metric_mappings': None,
-            'pn_mappings': None,
-            'pn_results': None,
-            'ai_mapping_result': None,
-            'company_name': None,
-            'data_source': None,
-            'show_manual_mapping': False,
+            'components': None,
             'config_overrides': {},
+            
+            # Data and analysis state
+            'analysis_data': None,
+            'analysis_hash': None,
+            'data_source': None,
+            'company_name': None,
+            'filtered_data': None,
+            
+            # File handling state
             'uploaded_files': [],
             'simple_parse_mode': False,
-            'number_format_value': 'Indian',
-            'show_tutorial': True,
-            'tutorial_step': 0,
-            'collaboration_session': None,
-            'query_history': [],
+            'processed_files_info': [],
+            
+            # Analysis mode and benchmarking
+            'analysis_mode': 'Standalone Analysis',
+            'benchmark_company': 'ITC Ltd',
+            'benchmark_data': None,
+            
+            # Mapping state
+            'metric_mappings': None,
+            'ai_mapping_result': None,
+            'show_manual_mapping': False,
+            'mapping_confidence_threshold': 0.6,
+            
+            # Penman-Nissim analysis
+            'pn_mappings': None,
+            'pn_results': None,
+            
+            # ML and forecasting
             'ml_forecast_results': None,
+            'forecast_periods': 3,
+            'forecast_model_type': 'auto',
+            
+            # Kaggle API configuration
             'kaggle_api_url': '',
+            'kaggle_api_key': '',
             'kaggle_api_enabled': False,
+            'kaggle_api_status': 'unknown',
             'kaggle_status': {},
             'show_kaggle_config': False,
-            'kaggle_api_status': 'unknown',
             'api_metrics_visible': False,
+            'kaggle_connection_tested': False,
+            
+            # UI and display settings
+            'number_format_value': 'Indian',
+            'display_mode': 'LITE',
+            'show_tutorial': True,
+            'tutorial_step': 0,
+            'tutorial_completed': False,
+            'show_debug_info': False,
+            
+            # Collaboration and sharing
+            'collaboration_session': None,
+            'shared_analysis_token': None,
+            'user_id': 'default_user',
+            
+            # Query and interaction history
+            'query_history': [],
+            'last_query_result': None,
+            'interaction_count': 0,
+            
+            # Chart and visualization state
+            'selected_chart_metrics': [],
+            'chart_type': 'line',
+            'show_trend_lines': True,
+            'normalize_values': False,
+            
+            # Export and reporting
+            'report_format': 'Excel',
+            'include_charts': True,
+            'report_sections': {
+                'overview': True,
+                'ratios': True,
+                'trends': True,
+                'forecasts': False,
+                'penman_nissim': False,
+                'industry': False,
+                'raw_data': False
+            },
+            
+            # Error tracking and recovery
+            'last_error': None,
+            'error_count': 0,
+            'recovery_attempts': 0,
+            
+            # Performance and caching
+            'cache_hit_count': 0,
+            'analysis_count': 0,
+            'performance_stats': {},
+            
+            # Advanced features
+            'enable_ai_insights': True,
+            'enable_anomaly_detection': True,
+            'enable_pattern_recognition': True,
+            'confidence_threshold': 0.6,
+            
+            # Data quality and validation
+            'validation_results': None,
+            'data_quality_score': None,
+            'outlier_detection_results': {},
+            
+            # Industry comparison
+            'selected_industry': 'Technology',
+            'comparison_year': None,
+            'industry_benchmarks': {},
+            
+            # Custom analysis settings
+            'custom_ratios': {},
+            'custom_metrics': {},
+            'analysis_notes': '',
+            
+            # Session management
+            'session_start_time': time.time(),
+            'last_activity_time': time.time(),
+            'session_id': hashlib.md5(f"{time.time()}".encode()).hexdigest()[:8],
         }
         
         for key, value in defaults.items():
             if key not in st.session_state:
                 st.session_state[key] = value
+        
+        # Log initialization
+        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
+        self.logger.info(f"Initialized {len(defaults)} session state variables")
     
     def _initialize_components(self) -> Dict[str, Component]:
         """Initialize all components with dependency injection"""
@@ -5184,12 +5283,40 @@ class FinancialAnalyticsPlatform:
     
     # State helper methods
     def get_state(self, key: str, default: Any = None) -> Any:
-        """Get value from session state"""
-        return SimpleState.get(key, default)
+        """Get value from session state with safe fallback"""
+        try:
+            return SimpleState.get(key, default)
+        except Exception as e:
+            self.logger.warning(f"Error accessing session state key '{key}': {e}")
+            return default
     
-    def set_state(self, key: str, value: Any):
-        """Set value in session state"""
-        SimpleState.set(key, value)
+    def set_state(self, key: str, value: Any) -> bool:
+        """Set value in session state with error handling"""
+        try:
+            SimpleState.set(key, value)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error setting session state key '{key}': {e}")
+            return False
+    
+    def ensure_state_key(self, key: str, default_value: Any = None):
+        """Ensure a session state key exists with a default value"""
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+            self.logger.info(f"Initialized missing session state key: {key}")
+    
+    def get_state_safe(self, key: str, default: Any = None, initialize: bool = True) -> Any:
+        """Ultra-safe session state access with auto-initialization"""
+        try:
+            if key not in st.session_state:
+                if initialize:
+                    st.session_state[key] = default
+                    self.logger.info(f"Auto-initialized session state key: {key} = {default}")
+                return default
+            return st.session_state[key]
+        except Exception as e:
+            self.logger.error(f"Critical error accessing session state key '{key}': {e}")
+            return default
     
     def _clear_all_caches(self):
         """Clear all caches"""
@@ -6018,7 +6145,11 @@ class FinancialAnalyticsPlatform:
                         st.sidebar.text(f"{op}: {stats['avg_duration']:.3f}s")
     
     def _render_file_upload(self):
-        """Render file upload interface"""
+        """Render file upload interface with safe state handling"""
+        # Ensure required state keys exist
+        self.ensure_state_key('uploaded_files', [])
+        self.ensure_state_key('simple_parse_mode', False)
+        
         allowed_types = self.config.get('app.allowed_file_types', [])
         max_size = self.config.get('security.max_upload_size_mb', 50)
         
@@ -6032,7 +6163,7 @@ class FinancialAnalyticsPlatform:
         )
         
         if temp_files:
-            st.session_state['uploaded_files'] = temp_files
+            self.set_state('uploaded_files', temp_files)
             
             # Count files and show info
             regular_files = [f for f in temp_files if not f.name.lower().endswith(('.zip', '.7z'))]
@@ -6043,15 +6174,22 @@ class FinancialAnalyticsPlatform:
             if regular_files:
                 st.sidebar.info(f"📄 {len(regular_files)} regular file(s) uploaded")
         
-        uploaded_files = st.session_state['uploaded_files']
+        # Safe access to uploaded files
+        uploaded_files = self.get_state_safe('uploaded_files', [], initialize=True)
         
         if uploaded_files:
-            # Simple parsing mode checkbox
-            st.session_state['simple_parse_mode'] = st.sidebar.checkbox(
+            # Simple parsing mode checkbox with safe access
+            current_simple_mode = self.get_state_safe('simple_parse_mode', False, initialize=True)
+            
+            new_simple_mode = st.sidebar.checkbox(
                 "Use simple parsing mode", 
-                value=st.session_state['simple_parse_mode'],
-                help="Try this if normal parsing fails"
+                value=current_simple_mode,
+                help="Try this if normal parsing fails",
+                key="simple_parse_mode_checkbox"
             )
+            
+            # Update state safely
+            self.set_state('simple_parse_mode', new_simple_mode)
             
             # Check for 7z files and py7zr availability
             has_7z = any(f.name.lower().endswith('.7z') for f in uploaded_files)

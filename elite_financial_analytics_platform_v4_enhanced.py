@@ -1115,49 +1115,44 @@ class DataValidator:
             result.add_error(f"{context}: No columns found")
             return result
         
-        if df.shape[0] > 1000000:
-            result.add_warning(f"{context}: Large dataset ({df.shape[0]} rows), performance may be impacted")
+        # Calculate and report missing values
+        total_cells = df.shape[0] * df.shape[1]
+        missing_cells = df.isnull().sum().sum()
+        missing_pct = (missing_cells / total_cells) * 100
         
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        if len(numeric_cols) == 0:
-            result.add_warning(f"{context}: No numeric columns found")
-        
-        if df.index.duplicated().any():
-            result.add_warning(f"{context}: Duplicate indices found")
-        
-        missing_pct = (df.isnull().sum().sum() / (df.shape[0] * df.shape[1])) * 100
         if missing_pct > 50:
             result.add_warning(f"{context}: High percentage of missing values ({missing_pct:.1f}%)")
+            # Add info about which columns have most missing values
+            missing_by_col = df.isnull().sum()
+            worst_cols = missing_by_col.nlargest(3)
+            for col, missing in worst_cols.items():
+                pct = (missing / len(df)) * 100
+                if pct > 50:
+                    result.add_info(f"Column '{col}' is {pct:.1f}% empty")
         
-        for col in df.columns:
-            if df[col].nunique() == 1:
-                result.add_info(f"{context}: Column '{col}' has constant value")
+        # Check for duplicate indices
+        if df.index.duplicated().any():
+            dup_count = df.index.duplicated().sum()
+            result.add_warning(f"{context}: {dup_count} duplicate indices found")
         
-        for col in numeric_cols:
+        # Smart negative value checking
+        for col in df.select_dtypes(include=[np.number]).columns:
             series = df[col].dropna()
-            if len(series) > 0:
-                mean = series.mean()
-                std = series.std()
-                outlier_threshold = self.config.get('analysis.outlier_std_threshold', 3)
-                
-                if std > 0:
-                    outliers = series[(series < mean - outlier_threshold * std) | 
-                                     (series > mean + outlier_threshold * std)]
-                    
-                    if len(outliers) > len(series) * 0.1:
-                        result.add_warning(
-                            f"{context}: Column '{col}' has many outliers ({len(outliers)} values)"
-                        )
-                
-                positive_keywords = ['assets', 'revenue', 'sales', 'income', 'cash']
-                if any(keyword in str(col).lower() for keyword in positive_keywords):
-                    if (series < 0).any():
-                        result.add_warning(f"{context}: Column '{col}' contains negative values")
+            if (series < 0).any():
+                # Check if it's cash flow data
+                if 'cash flow' in str(col).lower() or 'cash flow' in context.lower():
+                    # Negative values are normal in cash flow for expenditures, investments, etc.
+                    result.add_info(f"Column '{col}' contains negative values (normal for cash flow items)")
+                else:
+                    # For other items, check if it should be positive
+                    positive_keywords = ['assets', 'revenue', 'sales', 'income from operations']
+                    if any(keyword in str(col).lower() for keyword in positive_keywords):
+                        result.add_warning(f"Column '{col}' contains negative values")
         
+        # Add metadata
         result.metadata['shape'] = df.shape
         result.metadata['columns'] = list(df.columns)
-        result.metadata['dtypes'] = df.dtypes.to_dict()
-        result.metadata['memory_usage'] = df.memory_usage(deep=True).sum()
+        result.metadata['missing_percentage'] = missing_pct
         
         return result
     
@@ -6151,7 +6146,7 @@ class FinancialAnalyticsPlatform:
         finally:
             # Cleanup temporary files
             self.compression_handler.cleanup()
-    
+            
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
         """Parse a single file and return DataFrame"""
         try:
@@ -6171,19 +6166,35 @@ class FinancialAnalyticsPlatform:
                     if tables:
                         df = max(tables, key=len)
                         
-                        # Clean up the DataFrame
+                        # More aggressive cleaning for HTML tables
+                        # Handle multi-level headers by joining them
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
+                        
+                        # Clean column names
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        
                         # Remove any unnamed columns
-                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] if hasattr(df.columns, 'str') else df
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
                         
-                        # Try to identify the index column
-                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
+                        # Find the best index column
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
+                        index_col_found = False
+                        
                         for col in potential_index_cols:
-                            if col in df.columns:
-                                return df.set_index(col)
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                index_col_found = True
+                                break
                         
-                        # If no standard index column found, use the first column
-                        if len(df.columns) > 0:
-                            return df.set_index(df.columns[0])
+                        # If no standard index column found, check first column
+                        if not index_col_found and len(df.columns) > 0:
+                            first_col = df.columns[0]
+                            # Check if first column contains text (likely to be index)
+                            if df[first_col].dtype == object:
+                                df = df.set_index(first_col)
                         
                         return df
                 except Exception as e:
@@ -6191,43 +6202,125 @@ class FinancialAnalyticsPlatform:
                     return None
                     
             elif file_ext == '.csv':
-                return pd.read_csv(file, index_col=0)
-                
+                try:
+                    # Try different encodings
+                    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+                    for encoding in encodings:
+                        try:
+                            file.seek(0)
+                            df = pd.read_csv(file, encoding=encoding, index_col=0)
+                            self.logger.info(f"Successfully parsed CSV with {encoding} encoding")
+                            return df
+                        except UnicodeDecodeError:
+                            continue
+                        except Exception as e:
+                            self.logger.warning(f"CSV parsing failed with {encoding}: {e}")
+                            continue
+                    
+                    # If all encodings fail, try without index_col
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding='utf-8', index_col=None)
+                    # Set first column as index if it contains strings
+                    if df.iloc[:, 0].dtype == object:
+                        df = df.set_index(df.columns[0])
+                    return df
+                    
+                except Exception as e:
+                    self.logger.error(f"CSV parsing failed for {file.name}: {e}")
+                    return None
+                    
             elif file_ext in ['.xls', '.xlsx']:
+                # Try Excel parsing with different engines
                 for engine in ['openpyxl', 'xlrd']:
                     try:
+                        file.seek(0)
                         self.logger.info(f"Trying {engine} engine for {file.name}")
-                        df = pd.read_excel(file, index_col=0, engine=engine)
-                        if not df.empty:
-                            return df
+                        
+                        # First try with index_col=0
+                        try:
+                            df = pd.read_excel(file, index_col=0, engine=engine)
+                            if not df.empty:
+                                return df
+                        except Exception:
+                            # Try without index_col
+                            file.seek(0)
+                            df = pd.read_excel(file, index_col=None, engine=engine)
+                            if not df.empty and df.iloc[:, 0].dtype == object:
+                                df = df.set_index(df.columns[0])
+                                return df
+                            
                     except Exception as e:
                         self.logger.warning(f"{engine} engine failed for {file.name}: {e}")
+                        continue
                 
-                # If Excel engines fail, try HTML parsing as fallback
+                # If Excel engines fail, try HTML parsing as fallback (many .xls files are actually HTML)
                 try:
                     file.seek(0)
                     tables = pd.read_html(file)
                     if tables:
                         df = max(tables, key=len)
                         
-                        # Clean up the DataFrame
-                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')] if hasattr(df.columns, 'str') else df
+                        # Apply same cleaning as HTML files
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
                         
-                        # Try to identify the index column
-                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                        
+                        # Find index column
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
                         for col in potential_index_cols:
-                            if col in df.columns:
-                                return df.set_index(col)
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                break
+                        else:
+                            # Use first column as index if it's text
+                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
+                                df = df.set_index(df.columns[0])
                         
-                        # If no standard index column found, use the first column
-                        if len(df.columns) > 0:
-                            return df.set_index(df.columns[0])
+                        self.logger.info(f"Successfully parsed {file.name} as HTML table")
+                        return df
+                        
+                except Exception as e:
+                    self.logger.error(f"HTML fallback failed for {file.name}: {e}")
+                    return None
+            
+            elif file_ext in ['.html', '.htm']:
+                # Direct HTML file parsing
+                try:
+                    tables = pd.read_html(file)
+                    if tables:
+                        df = max(tables, key=len)
+                        
+                        # Apply cleaning
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
+                        
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                        
+                        # Set index
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
+                        for col in potential_index_cols:
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                break
+                        else:
+                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
+                                df = df.set_index(df.columns[0])
                         
                         return df
                 except Exception as e:
-                    self.logger.error(f"HTML fallback failed for {file.name}: {e}")
+                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
+                    return None
             
-            return None
+            else:
+                self.logger.warning(f"Unsupported file type: {file_ext}")
+                return None
                 
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
@@ -6267,68 +6360,47 @@ class FinancialAnalyticsPlatform:
             return df
             
     def _standardize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Standardize DataFrame structure and handle common issues"""
+        """Standardize DataFrame structure specifically for financial data"""
         try:
-            # Make a copy to avoid modifying original
             std_df = df.copy()
             
-            # Handle multi-level columns
-            if isinstance(std_df.columns, pd.MultiIndex):
-                # Flatten column names
-                std_df.columns = [' - '.join(str(level) for level in col if str(level) != 'nan').strip() 
-                                for col in std_df.columns]
+            # Fix common column name issues
+            if isinstance(std_df.columns, pd.Index):
+                std_df.columns = [
+                    str(col).strip()
+                    .replace('Fice >>', 'Finance >>')
+                    .replace('  ', ' ')
+                    .replace('\n', ' ')
+                    .replace('\t', ' ')
+                    for col in std_df.columns
+                ]
             
-            # Handle multi-level index
-            if isinstance(std_df.index, pd.MultiIndex):
-                # Flatten index names
-                std_df.index = [' - '.join(str(level) for level in idx if str(level) != 'nan').strip() 
-                              for idx in std_df.index]
+            # Handle duplicate indices by grouping
+            if std_df.index.duplicated().any():
+                # Group duplicate indices by summing (for financial data)
+                self.logger.info("Handling duplicate indices by grouping")
+                
+                # First, convert all numeric columns to float
+                numeric_cols = std_df.select_dtypes(include=[np.number]).columns
+                for col in numeric_cols:
+                    std_df[col] = pd.to_numeric(std_df[col], errors='coerce')
+                
+                # Group by index and sum numeric columns, keep first for non-numeric
+                grouped = std_df.groupby(level=0).agg(
+                    lambda x: x.sum() if pd.api.types.is_numeric_dtype(x) else x.iloc[0]
+                )
+                std_df = grouped
+                
+                self.logger.info(f"Reduced from {len(df)} to {len(std_df)} rows after handling duplicates")
             
-            # Clean column names
-            std_df.columns = [str(col).strip().replace('nan', '').strip(' -') for col in std_df.columns]
+            # Remove rows where all values are NaN
+            std_df = std_df.dropna(how='all')
             
-            # Clean index names
-            std_df.index = [str(idx).strip().replace('nan', '').strip(' -') for idx in std_df.index]
-            
-            # Remove completely empty rows and columns
-            std_df = std_df.dropna(how='all', axis=0)
+            # Remove columns where all values are NaN
             std_df = std_df.dropna(how='all', axis=1)
             
-            # Handle duplicate indices
-            if std_df.index.duplicated().any():
-                # Create unique index names
-                new_index = []
-                seen = set()
-                for idx in std_df.index:
-                    if idx in seen:
-                        counter = 1
-                        while f"{idx} ({counter})" in seen:
-                            counter += 1
-                        new_idx = f"{idx} ({counter})"
-                        new_index.append(new_idx)
-                        seen.add(new_idx)
-                    else:
-                        new_index.append(idx)
-                        seen.add(idx)
-                std_df.index = new_index
-            
-            # Handle duplicate columns
-            if std_df.columns.duplicated().any():
-                # Create unique column names
-                new_cols = []
-                seen = set()
-                for col in std_df.columns:
-                    if col in seen:
-                        counter = 1
-                        while f"{col} ({counter})" in seen:
-                            counter += 1
-                        new_col = f"{col} ({counter})"
-                        new_cols.append(new_col)
-                        seen.add(new_col)
-                    else:
-                        new_cols.append(col)
-                        seen.add(col)
-                std_df.columns = new_cols
+            # Clean index names
+            std_df.index = [str(idx).strip() for idx in std_df.index]
             
             return std_df
             

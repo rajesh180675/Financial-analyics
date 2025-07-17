@@ -5016,6 +5016,53 @@ class FinancialAnalyticsPlatform:
                 self.error_recovery.handle_error(f"{name}_init_failed", {'component': component})
         
         return components
+
+    def _cleanup_session_state(self):
+        """Clean up unnecessary session state entries"""
+        # Keep essential keys
+        essential_keys = {
+            'analysis_data', 'metric_mappings', 'company_name', 'data_source',
+            'pn_mappings', 'pn_results', 'ml_forecast_results', 'components',
+            'config_overrides', 'initialized'
+        }
+        
+        # Remove outlier keys that are no longer needed
+        outlier_keys = [k for k in st.session_state.keys() if k.startswith('outliers_')]
+        for key in outlier_keys:
+            if key not in st.session_state:
+                continue
+            try:
+                del st.session_state[key]
+            except Exception as e:
+                self.logger.warning(f"Could not delete key {key}: {e}")
+    
+        # Keep only the most recent state
+        for key in list(st.session_state.keys()):
+            if key not in essential_keys and not key.startswith('standard_embedding_'):
+                try:
+                    del st.session_state[key]
+                except Exception as e:
+                    self.logger.warning(f"Could not delete key {key}: {e}")
+
+    def _manage_analysis_state(self, df: pd.DataFrame):
+        """Manage analysis state and caching"""
+        current_hash = hashlib.md5(pd.util.hash_pandas_object(df).values).hexdigest()
+        
+        # Check if analysis needs to be updated
+        if ('analysis_hash' not in st.session_state or 
+            st.session_state.get('analysis_hash') != current_hash):
+            
+            # Clear previous analysis results
+            keys_to_clear = [
+                'metric_mappings', 'pn_mappings', 'pn_results',
+                'ml_forecast_results', 'ai_mapping_result'
+            ]
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
+            # Store new hash
+            st.session_state['analysis_hash'] = current_hash
     
     # State helper methods
     def get_state(self, key: str, default: Any = None) -> Any:
@@ -5917,6 +5964,9 @@ class FinancialAnalyticsPlatform:
     def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
         """Process uploaded files including compressed files with progress tracking"""
         try:
+            # Clear previous state
+            self._cleanup_session_state()
+            
             all_dataframes = []
             file_info = []
             
@@ -5931,20 +5981,16 @@ class FinancialAnalyticsPlatform:
                 progress_bar.progress((i + 1) / total_files)
                 
                 try:
-                    # Handle compressed files
                     if file.name.lower().endswith(('.zip', '.7z')):
                         extracted_files = self.compression_handler.extract_compressed_file(file)
                         
                         for extracted_name, extracted_content in extracted_files:
-                            # Create a temporary UploadedFile-like object
                             temp_file = io.BytesIO(extracted_content)
                             temp_file.name = extracted_name
                             
                             df = self._parse_single_file(temp_file)
                             if df is not None and not df.empty:
-                                # Debug inspection
                                 self._inspect_dataframe(df, extracted_name)
-                                
                                 all_dataframes.append(df)
                                 file_info.append({
                                     'name': extracted_name,
@@ -5952,12 +5998,9 @@ class FinancialAnalyticsPlatform:
                                     'shape': df.shape
                                 })
                     else:
-                        # Handle regular files
                         df = self._parse_single_file(file)
                         if df is not None and not df.empty:
-                            # Debug inspection
                             self._inspect_dataframe(df, file.name)
-                            
                             all_dataframes.append(df)
                             file_info.append({
                                 'name': file.name,
@@ -5973,16 +6016,13 @@ class FinancialAnalyticsPlatform:
             progress_bar.empty()
             
             if all_dataframes:
-                # Merge dataframes if multiple
-                if len(all_dataframes) == 1:
-                    final_df = all_dataframes[0]
-                else:
-                    final_df = self._merge_dataframes(all_dataframes)
+                final_df = all_dataframes[0] if len(all_dataframes) == 1 else self._merge_dataframes(all_dataframes)
                 
                 # Process and validate
                 processed_df, validation_result = self.components['processor'].process(final_df, "uploaded_data")
                 
-                # Store in session state
+                # Update state
+                self._manage_analysis_state(processed_df)
                 self.set_state('analysis_data', processed_df)
                 self.set_state('data_source', 'uploaded_files')
                 
@@ -6009,7 +6049,6 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             st.error(f"Error processing files: {str(e)}")
         finally:
-            # Cleanup temporary files
             self.compression_handler.cleanup()
     
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:

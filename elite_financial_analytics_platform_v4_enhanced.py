@@ -8916,7 +8916,7 @@ class FinancialAnalyticsPlatform:
         
         return insights
     
-   def _export_pn_report(self):
+    def _export_pn_report(self):
         """Export Penman-Nissim analysis report"""
         try:
             results = self.get_state('pn_results')

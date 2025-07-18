@@ -8184,17 +8184,52 @@ class FinancialAnalyticsPlatform:
                         with col1:
                             current_value = forecast.get('last_actual', 0)
     
+    
     @error_boundary()
     @safe_state_access
     def _render_penman_nissim_tab(self, data: pd.DataFrame):
-        """Render Penman-Nissim analysis tab"""
+        """Render Penman-Nissim analysis tab with enhanced features"""
         st.header("🎯 Penman-Nissim Analysis")
+        
+        # Show info about Penman-Nissim analysis
+        with st.expander("ℹ️ About Penman-Nissim Analysis", expanded=False):
+            st.markdown("""
+            **Penman-Nissim Analysis** separates operating and financing activities to provide deeper insights into:
+            - **RNOA**: Return on Net Operating Assets - measures operating efficiency
+            - **NBC**: Net Borrowing Cost - effective cost of debt
+            - **FLEV**: Financial Leverage - degree of financial leverage
+            - **Spread**: RNOA - NBC - value creation through leverage
+            
+            This analysis helps identify whether a company creates value through operations or financial engineering.
+            """)
         
         if not self.get_state('pn_mappings'):
             st.info("Configure Penman-Nissim mappings to proceed")
             
+            # Show sample mappings for guidance
+            with st.expander("📚 Mapping Guide", expanded=False):
+                st.markdown("""
+                **Essential mappings for Penman-Nissim analysis:**
+                - **Total Assets**: Total assets from balance sheet
+                - **Total Liabilities**: Total liabilities from balance sheet
+                - **Total Equity**: Shareholders' equity/Net worth
+                - **Current Assets**: Short-term/liquid assets
+                - **Current Liabilities**: Short-term obligations
+                - **Revenue**: Total income/sales/turnover
+                - **Operating Income**: EBIT/Operating profit
+                - **Interest Expense**: Finance costs
+                - **Tax Expense**: Income tax
+                - **Operating Cash Flow**: Cash from operations
+                """)
+            
             with st.expander("⚙️ Configure P-N Mappings", expanded=True):
                 available_metrics = [''] + [str(m) for m in data.index.tolist()]
+                
+                # Auto-detect potential mappings
+                auto_mappings = self._auto_detect_pn_mappings(data)
+                
+                if auto_mappings:
+                    st.info(f"🤖 Auto-detected {len(auto_mappings)} potential mappings")
                 
                 mapping_fields = {
                     'Balance Sheet': [
@@ -8203,6 +8238,9 @@ class FinancialAnalyticsPlatform:
                         ('Total Equity', 'pn_total_equity'),
                         ('Current Assets', 'pn_current_assets'),
                         ('Current Liabilities', 'pn_current_liabilities'),
+                        ('Cash and Cash Equivalents', 'pn_cash'),
+                        ('Short-term Debt', 'pn_short_debt'),
+                        ('Long-term Debt', 'pn_long_debt'),
                     ],
                     'Income Statement': [
                         ('Revenue', 'pn_revenue'),
@@ -8210,12 +8248,13 @@ class FinancialAnalyticsPlatform:
                         ('Net Income', 'pn_net_income'),
                         ('Interest Expense', 'pn_interest'),
                         ('Tax Expense', 'pn_tax'),
+                        ('Income Before Tax', 'pn_ibt'),
                     ],
                     'Cash Flow': [
                         ('Operating Cash Flow', 'pn_ocf'),
                         ('Capital Expenditure', 'pn_capex'),
                         ('Depreciation', 'pn_depreciation'),
-                        ('Income Before Tax', 'pn_ibt'),
+                        ('Free Cash Flow', 'pn_fcf'),
                     ]
                 }
                 
@@ -8226,183 +8265,704 @@ class FinancialAnalyticsPlatform:
                     with cols[i]:
                         st.markdown(f"**{category} Items**")
                         for field_name, field_key in fields:
+                            # Get auto-detected value
+                            default_idx = 0
+                            if auto_mappings and field_name in auto_mappings:
+                                try:
+                                    default_idx = available_metrics.index(auto_mappings[field_name]) 
+                                except ValueError:
+                                    default_idx = 0
+                            
                             selected = st.selectbox(
                                 field_name,
                                 available_metrics,
-                                key=field_key
+                                index=default_idx,
+                                key=field_key,
+                                help=f"Select the metric that represents {field_name}"
                             )
                             if selected:
                                 mappings[selected] = field_name
                 
                 mappings = {k: v for k, v in mappings.items() if k}
                 
-                if st.button("Apply P-N Mappings", type="primary"):
-                    if len(mappings) >= 8:
-                        self.set_state('pn_mappings', mappings)
-                        st.success("Mappings applied successfully!")
-                    else:
-                        st.error("Please provide at least 8 mappings for analysis")
+                # Validation and apply buttons
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("✅ Validate Mappings", key="validate_pn_mappings"):
+                        validation_result = self._validate_pn_mappings(mappings, data)
+                        if validation_result['is_valid']:
+                            st.success(f"✅ Mappings are valid! {len(mappings)} metrics mapped.")
+                        else:
+                            for error in validation_result['errors']:
+                                st.error(error)
+                
+                with col2:
+                    if st.button("🤖 Auto-Fill", key="auto_fill_pn"):
+                        st.experimental_rerun()
+                
+                with col3:
+                    if st.button("Apply P-N Mappings", type="primary"):
+                        if len(mappings) >= 10:
+                            self.set_state('pn_mappings', mappings)
+                            st.success(f"✅ Applied {len(mappings)} mappings successfully!")
+                        else:
+                            st.error(f"Please provide at least 10 mappings for comprehensive analysis (currently: {len(mappings)})")
             
             return
         
-        if st.button("🚀 Run Penman-Nissim Analysis", type="primary"):
-            mappings = self.get_state('pn_mappings')
+        # Show current mappings
+        current_mappings = self.get_state('pn_mappings')
+        with st.expander("📋 Current Mappings", expanded=False):
+            mapping_df = pd.DataFrame(
+                [(k, v) for k, v in current_mappings.items()],
+                columns=['Source Metric', 'P-N Category']
+            )
+            st.dataframe(mapping_df, use_container_width=True)
             
-            with st.spinner("Running Penman-Nissim analysis..."):
-                try:
-                    analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
-                    results = analyzer.calculate_all()
-                    
-                    if 'error' in results:
-                        st.error(f"Analysis failed: {results['error']}")
-                        return
-                    
-                    self.set_state('pn_results', results)
-                    st.success("Analysis completed successfully!")
-                    
-                except Exception as e:
-                    st.error(f"Analysis failed: {str(e)}")
-                    if self.config.get('app.debug', False):
-                        st.exception(e)
-                    return
+            if st.button("🔄 Reset Mappings", key="reset_pn_mappings"):
+                self.set_state('pn_mappings', None)
+                self.set_state('pn_results', None)
+                st.experimental_rerun()
         
+        # Analysis controls
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🚀 Run Penman-Nissim Analysis", type="primary", key="run_pn_analysis"):
+                mappings = self.get_state('pn_mappings')
+                
+                with st.spinner("Running Penman-Nissim analysis..."):
+                    try:
+                        # Initialize analyzer
+                        analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+                        
+                        # Run analysis with progress tracking
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        status_text.text("Reformulating financial statements...")
+                        progress_bar.progress(20)
+                        
+                        results = analyzer.calculate_all()
+                        
+                        status_text.text("Calculating ratios...")
+                        progress_bar.progress(60)
+                        
+                        if 'error' in results:
+                            st.error(f"❌ Analysis failed: {results['error']}")
+                            return
+                        
+                        status_text.text("Generating insights...")
+                        progress_bar.progress(100)
+                        
+                        # Clear progress indicators
+                        progress_bar.empty()
+                        status_text.empty()
+                        
+                        self.set_state('pn_results', results)
+                        st.success("✅ Penman-Nissim analysis completed successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Analysis failed: {str(e)}")
+                        if self.config.get('app.debug', False):
+                            st.exception(e)
+                        return
+        
+        with col2:
+            if self.get_state('pn_results'):
+                if st.button("📊 Export P-N Report", key="export_pn"):
+                    self._export_pn_report()
+        
+        with col3:
+            if self.get_state('pn_results'):
+                if st.button("🗑️ Clear Results", key="clear_pn"):
+                    self.set_state('pn_results', None)
+                    st.success("Results cleared")
+        
+        # Display results if available
         if self.get_state('pn_results'):
             results = self.get_state('pn_results')
             
-            st.subheader("Key Penman-Nissim Metrics")
+            # Debug information (if debug mode is on)
+            if self.config.get('app.debug', False):
+                with st.expander("🔍 Debug Information", expanded=False):
+                    st.write("**Results structure:**")
+                    st.json({k: type(v).__name__ for k, v in results.items()})
+                    
+                    if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame):
+                        st.write("**Ratios DataFrame:**")
+                        st.write(f"- Shape: {results['ratios'].shape}")
+                        st.write(f"- Index: {list(results['ratios'].index)}")
+                        st.write(f"- Columns: {list(results['ratios'].columns)}")
             
-            if 'ratios' in results:
+            # Key Metrics Section
+            st.subheader("📊 Key Penman-Nissim Metrics")
+            
+            if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
                 ratios_df = results['ratios']
                 
-                key_ratios = [
-                    ('Return on Net Operating Assets (RNOA) %', 'RNOA', 'success'),
-                    ('Financial Leverage (FLEV)', 'FLEV', 'info'),
-                    ('Net Borrowing Cost (NBC) %', 'NBC', 'warning'),
-                    ('Operating Profit Margin (OPM) %', 'OPM', 'primary')
-                ]
+                # Define metrics to display with better organization
+                key_metrics = {
+                    'Profitability': [
+                        ('Return on Net Operating Assets (RNOA) %', 'RNOA', 'success', '📈'),
+                        ('Operating Profit Margin (OPM) %', 'OPM', 'info', '💰'),
+                    ],
+                    'Leverage': [
+                        ('Financial Leverage (FLEV)', 'FLEV', 'warning', '⚖️'),
+                        ('Net Borrowing Cost (NBC) %', 'NBC', 'error', '💸'),
+                    ],
+                    'Efficiency': [
+                        ('Net Operating Asset Turnover (NOAT)', 'NOAT', 'primary', '🔄'),
+                        ('Spread %', 'Spread', 'success', '📊'),
+                    ]
+                }
                 
-                col1, col2, col3, col4 = st.columns(4)
-                
-                for i, (ratio_name, short_name, color) in enumerate(key_ratios):
-                    if ratio_name in ratios_df.index:
-                        col = [col1, col2, col3, col4][i]
-                        with col:
-                            latest_value = ratios_df.loc[ratio_name].iloc[-1]
-                            prev_value = ratios_df.loc[ratio_name].iloc[-2] if len(ratios_df.columns) > 1 else None
-                            
-                            delta = None
-                            if prev_value is not None:
-                                delta = latest_value - prev_value
-                            
-                            self.ui_factory.create_metric_card(
-                                short_name,
-                                f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}",
-                                delta=delta,
-                                help=self._get_pn_ratio_help(short_name)
-                            )
+                # Display metrics by category
+                for category, metrics in key_metrics.items():
+                    st.markdown(f"**{category}**")
+                    cols = st.columns(len(metrics))
+                    
+                    for i, (ratio_name, short_name, color, icon) in enumerate(metrics):
+                        with cols[i]:
+                            if ratio_name in ratios_df.index:
+                                try:
+                                    series = ratios_df.loc[ratio_name]
+                                    if not series.empty and not series.isna().all():
+                                        latest_value = series.iloc[-1]
+                                        prev_value = series.iloc[-2] if len(series) > 1 else None
+                                        
+                                        delta = None
+                                        delta_color = "normal"
+                                        if prev_value is not None and not pd.isna(prev_value) and not pd.isna(latest_value):
+                                            delta = latest_value - prev_value
+                                            # Determine delta color based on metric type
+                                            if short_name in ['RNOA', 'OPM', 'Spread', 'NOAT']:
+                                                delta_color = "normal"  # Higher is better
+                                            elif short_name in ['NBC']:
+                                                delta_color = "inverse"  # Lower is better
+                                        
+                                        display_value = f"{latest_value:.2f}{'%' if '%' in ratio_name else 'x'}" if not pd.isna(latest_value) else "N/A"
+                                        
+                                        st.metric(
+                                            f"{icon} {short_name}",
+                                            display_value,
+                                            delta=f"{delta:+.2f}" if delta is not None else None,
+                                            delta_color=delta_color,
+                                            help=self._get_pn_ratio_help(short_name)
+                                        )
+                                    else:
+                                        st.metric(f"{icon} {short_name}", "N/A", help="No data available")
+                                except Exception as e:
+                                    st.metric(f"{icon} {short_name}", "Error", help=str(e))
+                            else:
+                                st.metric(f"{icon} {short_name}", "N/A", help="Metric not calculated")
+                    
+                    st.markdown("")  # Add spacing
+            else:
+                st.warning("⚠️ No ratio data available. Please check your mappings and data quality.")
             
-            # Reformulated statements
+            # Reformulated Statements
+            st.subheader("📑 Reformulated Financial Statements")
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                if 'reformulated_balance_sheet' in results:
-                    st.subheader("Reformulated Balance Sheet")
+                if 'reformulated_balance_sheet' in results and not results['reformulated_balance_sheet'].empty:
+                    st.markdown("**📊 Reformulated Balance Sheet**")
                     ref_bs = results['reformulated_balance_sheet']
                     
-                    st.dataframe(
-                        ref_bs.style.format("{:,.0f}"),
-                        use_container_width=True
-                    )
+                    # Add totals row
+                    if not ref_bs.empty:
+                        st.dataframe(
+                            ref_bs.style.format("{:,.0f}")
+                            .background_gradient(cmap='RdYlGn', axis=1),
+                            use_container_width=True
+                        )
+                        
+                        # Show balance sheet equation check
+                        if all(metric in ref_bs.index for metric in ['Net Operating Assets', 'Net Financial Assets', 'Common Equity']):
+                            latest_col = ref_bs.columns[-1]
+                            noa = ref_bs.loc['Net Operating Assets', latest_col]
+                            nfa = ref_bs.loc['Net Financial Assets', latest_col]
+                            ce = ref_bs.loc['Common Equity', latest_col]
+                            check = noa + nfa - ce
+                            
+                            if abs(check) < 1:
+                                st.success("✅ Balance sheet equation holds")
+                            else:
+                                st.warning(f"⚠️ Balance sheet imbalance: {check:,.0f}")
+                else:
+                    st.info("Balance sheet reformulation not available")
             
             with col2:
-                if 'reformulated_income_statement' in results:
-                    st.subheader("Reformulated Income Statement")
+                if 'reformulated_income_statement' in results and not results['reformulated_income_statement'].empty:
+                    st.markdown("**📈 Reformulated Income Statement**")
                     ref_is = results['reformulated_income_statement']
                     
                     st.dataframe(
-                        ref_is.style.format("{:,.0f}"),
+                        ref_is.style.format("{:,.0f}")
+                        .background_gradient(cmap='RdYlGn', axis=1),
                         use_container_width=True
                     )
+                else:
+                    st.info("Income statement reformulation not available")
             
-            # Value Drivers
-            if 'value_drivers' in results:
-                st.subheader("Value Drivers Analysis")
+            # Free Cash Flow Analysis with fixed display
+            if 'free_cash_flow' in results and not results['free_cash_flow'].empty:
+                st.subheader("💵 Free Cash Flow Analysis")
                 
-                drivers_df = results['value_drivers']
-                
-                fig = go.Figure()
-                
-                for driver in drivers_df.index:
-                    fig.add_trace(go.Scatter(
-                        x=drivers_df.columns,
-                        y=drivers_df.loc[driver],
-                        mode='lines+markers',
-                        name=driver
-                    ))
-                
-                fig.update_layout(
-                    title="Value Drivers Trend",
-                    xaxis_title="Year",
-                    yaxis_title="Value (%)",
-                    hovermode='x unified',
-                    height=400
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Free Cash Flow
-            if 'free_cash_flow' in results:
-                st.subheader("Free Cash Flow Analysis")
                 fcf_df = results['free_cash_flow']
                 
+                # Display FCF table
+                st.dataframe(
+                    fcf_df.style.format("{:,.0f}")
+                    .background_gradient(cmap='RdYlGn', axis=1),
+                    use_container_width=True
+                )
+                
+                # Waterfall chart for latest year
                 if len(fcf_df.columns) > 0:
                     latest_year = fcf_df.columns[-1]
                     
-                    if 'Operating Cash Flow' in fcf_df.index and 'Free Cash Flow' in fcf_df.index:
+                    # Check if the expected rows exist
+                    if all(metric in fcf_df.index for metric in ['Operating Cash Flow', 'Free Cash Flow']):
                         ocf = fcf_df.loc['Operating Cash Flow', latest_year]
                         fcf = fcf_df.loc['Free Cash Flow', latest_year]
-                        capex = ocf - fcf
                         
-                        fig = go.Figure(go.Waterfall(
-                            name="",
-                            orientation="v",
-                            measure=["relative", "relative", "total"],
-                            x=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"],
-                            y=[ocf, -capex, fcf],
-                            connector={"line": {"color": "rgb(63, 63, 63)"}},
+                        if pd.notna(ocf) and pd.notna(fcf):
+                            capex = ocf - fcf
+                            
+                            fig = go.Figure(go.Waterfall(
+                                name="",
+                                orientation="v",
+                                measure=["relative", "relative", "total"],
+                                x=["Operating Cash Flow", "Capital Expenditure", "Free Cash Flow"],
+                                y=[ocf, -capex, fcf],
+                                text=[f"{ocf:,.0f}", f"{-capex:,.0f}", f"{fcf:,.0f}"],
+                                textposition="outside",
+                                connector={"line": {"color": "rgb(63, 63, 63)"}},
+                            ))
+                            
+                            fig.update_layout(
+                                title=f"Free Cash Flow Waterfall - {latest_year}",
+                                height=400,
+                                showlegend=False
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # FCF metrics
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                fcf_margin = (fcf / ocf * 100) if ocf != 0 else 0
+                                st.metric("FCF Conversion", f"{fcf_margin:.1f}%", 
+                                         help="Free Cash Flow as % of Operating Cash Flow")
+                            with col2:
+                                st.metric("CapEx Intensity", f"{abs(capex):,.0f}",
+                                         help="Capital Expenditure")
+                            with col3:
+                                if 'Free Cash Flow to Equity' in fcf_df.index:
+                                    fcfe = fcf_df.loc['Free Cash Flow to Equity', latest_year]
+                                    st.metric("FCF to Equity", f"{fcfe:,.0f}",
+                                             help="Free Cash Flow available to equity holders")
+            
+            # Value Drivers Analysis
+            if 'value_drivers' in results and not results['value_drivers'].empty:
+                st.subheader("🎯 Value Drivers Analysis")
+                
+                drivers_df = results['value_drivers']
+                
+                # Create tabs for different visualizations
+                driver_tabs = st.tabs(["📈 Trends", "📊 Latest Values", "🔄 Changes"])
+                
+                with driver_tabs[0]:
+                    # Trend chart
+                    fig = go.Figure()
+                    
+                    for driver in drivers_df.index:
+                        fig.add_trace(go.Scatter(
+                            x=drivers_df.columns,
+                            y=drivers_df.loc[driver],
+                            mode='lines+markers',
+                            name=driver,
+                            line=dict(width=2),
+                            marker=dict(size=8)
+                        ))
+                    
+                    fig.update_layout(
+                        title="Value Drivers Trend",
+                        xaxis_title="Year",
+                        yaxis_title="Value (%)",
+                        hovermode='x unified',
+                        height=400,
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with driver_tabs[1]:
+                    # Latest values
+                    if len(drivers_df.columns) > 0:
+                        latest_values = drivers_df[drivers_df.columns[-1]]
+                        
+                        fig = go.Figure(go.Bar(
+                            x=latest_values.index,
+                            y=latest_values.values,
+                            text=[f"{v:.1f}%" for v in latest_values.values],
+                            textposition='outside',
+                            marker_color=['green' if v > 0 else 'red' for v in latest_values.values]
                         ))
                         
                         fig.update_layout(
-                            title=f"Free Cash Flow Waterfall - {latest_year}",
+                            title=f"Value Drivers - {drivers_df.columns[-1]}",
+                            xaxis_title="Driver",
+                            yaxis_title="Value (%)",
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                with driver_tabs[2]:
+                    # Year-over-year changes
+                    if len(drivers_df.columns) > 1:
+                        changes = drivers_df.diff(axis=1)
+                        latest_changes = changes[changes.columns[-1]]
+                        
+                        fig = go.Figure(go.Bar(
+                            x=latest_changes.index,
+                            y=latest_changes.values,
+                            text=[f"{v:+.1f}pp" for v in latest_changes.values],
+                            textposition='outside',
+                            marker_color=['green' if v > 0 else 'red' for v in latest_changes.values]
+                        ))
+                        
+                        fig.update_layout(
+                            title=f"Value Driver Changes - YoY",
+                            xaxis_title="Driver",
+                            yaxis_title="Change (percentage points)",
                             height=400
                         )
                         
                         st.plotly_chart(fig, use_container_width=True)
             
-            # Insights
-            st.subheader("Penman-Nissim Insights")
+            # Enhanced Insights Section
+            st.subheader("💡 Penman-Nissim Insights & Recommendations")
             
-            insights = []
+            insights = self._generate_pn_insights(results)
             
-            if 'ratios' in results:
+            if insights:
+                # Categorize insights
+                categorized_insights = {
+                    'positive': [],
+                    'warning': [],
+                    'neutral': [],
+                    'recommendation': []
+                }
+                
+                for insight in insights:
+                    if '✅' in insight:
+                        categorized_insights['positive'].append(insight)
+                    elif '⚠️' in insight:
+                        categorized_insights['warning'].append(insight)
+                    elif '💡' in insight:
+                        categorized_insights['recommendation'].append(insight)
+                    else:
+                        categorized_insights['neutral'].append(insight)
+                
+                # Display insights by category
+                for category, items in categorized_insights.items():
+                    if items:
+                        for item in items:
+                            if category == 'positive':
+                                self.ui_factory.create_insight_card(item, "success")
+                            elif category == 'warning':
+                                self.ui_factory.create_insight_card(item, "warning")
+                            elif category == 'recommendation':
+                                self.ui_factory.create_insight_card(item, "info")
+                            else:
+                                st.write(f"• {item}")
+            else:
+                st.info("Run the analysis to see insights")
+            
+            # Comparative Analysis Section
+            if 'ratios' in results and len(results['ratios'].columns) > 1:
+                st.subheader("📊 Comparative Analysis")
+                
+                # Year-over-year comparison
                 ratios_df = results['ratios']
                 
-                if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
-                    rnoa_latest = ratios_df.loc['Return on Net Operating Assets (RNOA) %'].iloc[-1]
-                    if rnoa_latest > 15:
-                        insights.append("✅ Strong operating performance with RNOA above 15%")
-                    elif rnoa_latest < 8:
-                        insights.append("⚠️ Low RNOA indicates operational efficiency concerns")
+                # Create comparison table
+                comparison_metrics = ['Return on Net Operating Assets (RNOA) %', 
+                                    'Financial Leverage (FLEV)', 
+                                    'Spread %']
                 
-                if 'Spread %' in ratios_df.index:
-                    spread = ratios_df.loc['Spread %'].iloc[-1]
-                    if spread > 0:
-                        insights.append(f"✅ Positive spread ({spread:.1f}%) - operations earn more than borrowing cost")
-                    else:
-                        insights.append(f"⚠️ Negative spread ({spread:.1f}%) - borrowing cost exceeds operating returns")
+                comparison_data = []
+                for metric in comparison_metrics:
+                    if metric in ratios_df.index:
+                        row = {'Metric': metric}
+                        for col in ratios_df.columns[-3:]:  # Last 3 years
+                            if col in ratios_df.columns:
+                                row[str(col)] = ratios_df.loc[metric, col]
+                        comparison_data.append(row)
+                
+                if comparison_data:
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.dataframe(
+                        comparison_df.style.format({col: '{:.2f}' for col in comparison_df.columns if col != 'Metric'})
+                        .background_gradient(subset=[col for col in comparison_df.columns if col != 'Metric'], cmap='RdYlGn'),
+                        use_container_width=True
+                    )
+    
+    def _auto_detect_pn_mappings(self, data: pd.DataFrame) -> Dict[str, str]:
+        """Auto-detect potential mappings for Penman-Nissim analysis"""
+        mappings = {}
+        
+        patterns = {
+            'Total Assets': ['total asset', 'sum of asset', 'asset total'],
+            'Total Liabilities': ['total liabilit', 'sum of liabilit', 'liabilit total'],
+            'Total Equity': ['total equity', 'shareholder equity', 'net worth', 'stockholder equity'],
+            'Current Assets': ['current asset', 'short term asset', 'liquid asset'],
+            'Current Liabilities': ['current liabilit', 'short term liabilit'],
+            'Revenue': ['revenue', 'sales', 'turnover', 'income from operation', 'net sales'],
+            'Operating Income/EBIT': ['operating income', 'ebit', 'operating profit', 'profit from operation'],
+            'Net Income': ['net income', 'net profit', 'profit after tax', 'pat', 'net earning'],
+            'Interest Expense': ['interest expense', 'finance cost', 'interest cost', 'financial expense'],
+            'Tax Expense': ['tax expense', 'income tax', 'provision for tax'],
+            'Operating Cash Flow': ['operating cash flow', 'cash from operation', 'cash flow from operating'],
+            'Capital Expenditure': ['capital expenditure', 'capex', 'purchase of fixed asset', 'investment in ppe'],
+            'Depreciation': ['depreciation', 'amortization', 'depreciation and amortization'],
+            'Income Before Tax': ['income before tax', 'profit before tax', 'pbt', 'ebt'],
+            'Cash and Cash Equivalents': ['cash', 'cash and cash equivalent', 'cash & bank'],
+            'Short-term Debt': ['short term debt', 'short term borrowing', 'current portion of debt'],
+            'Long-term Debt': ['long term debt', 'long term borrowing', 'non current debt'],
+        }
+        
+        for target, patterns_list in patterns.items():
+            for idx in data.index:
+                idx_lower = str(idx).lower()
+                for pattern in patterns_list:
+                    if pattern in idx_lower:
+                        mappings[target] = str(idx)
+                        break
+                if target in mappings:
+                    break
+        
+        return mappings
+    
+    def _validate_pn_mappings(self, mappings: Dict[str, str], data: pd.DataFrame) -> Dict[str, Any]:
+        """Validate Penman-Nissim mappings"""
+        result = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': []
+        }
+        
+        # Check for essential mappings
+        essential = ['Total Assets', 'Total Liabilities', 'Total Equity', 'Revenue', 'Operating Income/EBIT']
+        mapped_targets = list(mappings.values())
+        
+        for item in essential:
+            if item not in mapped_targets:
+                result['errors'].append(f"Missing essential mapping: {item}")
+                result['is_valid'] = False
+        
+        # Check for duplicate mappings
+        if len(set(mappings.keys())) != len(mappings):
+            result['errors'].append("Duplicate source metrics detected")
+            result['is_valid'] = False
+        
+        # Check data availability
+        for source, target in mappings.items():
+            if source not in data.index:
+                result['errors'].append(f"Source metric '{source}' not found in data")
+                result['is_valid'] = False
+        
+        # Check for accounting equation consistency
+        if all(t in mapped_targets for t in ['Total Assets', 'Total Liabilities', 'Total Equity']):
+            # Will be validated during analysis
+            result['warnings'].append("Balance sheet equation will be validated during analysis")
+        
+        return result
+    
+    def _generate_pn_insights(self, results: Dict[str, Any]) -> List[str]:
+        """Generate comprehensive Penman-Nissim insights"""
+        insights = []
+        
+        if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
+            ratios_df = results['ratios']
             
-            for insight in insights:
-                self.ui_factory.create_insight_card(insight, "info")
+            # RNOA Analysis
+            if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
+                rnoa_series = ratios_df.loc['Return on Net Operating Assets (RNOA) %']
+                if not rnoa_series.empty and not rnoa_series.isna().all():
+                    rnoa_latest = rnoa_series.iloc[-1]
+                    
+                    if pd.notna(rnoa_latest):
+                        if rnoa_latest > 20:
+                            insights.append("✅ Exceptional operating performance with RNOA above 20%")
+                        elif rnoa_latest > 15:
+                            insights.append("✅ Strong operating performance with RNOA above 15%")
+                        elif rnoa_latest > 10:
+                            insights.append("📊 Moderate operating performance with RNOA above 10%")
+                        elif rnoa_latest > 5:
+                            insights.append("⚠️ Below-average operating performance (RNOA 5-10%)")
+                        else:
+                            insights.append("⚠️ Poor operating performance with RNOA below 5%")
+                        
+                        # Trend analysis
+                        if len(rnoa_series) > 1:
+                            trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
+                            insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+            
+            # Financial Leverage Analysis
+            if 'Financial Leverage (FLEV)' in ratios_df.index:
+                flev_series = ratios_df.loc['Financial Leverage (FLEV)']
+                if not flev_series.empty and not flev_series.isna().all():
+                    flev_latest = flev_series.iloc[-1]
+                    
+                    if pd.notna(flev_latest):
+                        if flev_latest > 2:
+                            insights.append("⚠️ High financial leverage (>2x) - elevated financial risk")
+                        elif flev_latest > 1:
+                            insights.append("📊 Moderate financial leverage (1-2x)")
+                        elif flev_latest > 0.5:
+                            insights.append("✅ Conservative financial leverage (0.5-1x)")
+                        else:
+                            insights.append("💡 Very low leverage - consider if debt could enhance returns")
+            
+            # Spread Analysis
+            if 'Spread %' in ratios_df.index:
+                spread_series = ratios_df.loc['Spread %']
+                if not spread_series.empty and not spread_series.isna().all():
+                    spread_latest = spread_series.iloc[-1]
+                    
+                    if pd.notna(spread_latest):
+                        if spread_latest > 10:
+                            insights.append(f"✅ Excellent spread ({spread_latest:.1f}%) - strong value creation through leverage")
+                        elif spread_latest > 5:
+                            insights.append(f"✅ Good spread ({spread_latest:.1f}%) - leverage adds value")
+                        elif spread_latest > 0:
+                            insights.append(f"📊 Positive spread ({spread_latest:.1f}%) - modest value from leverage")
+                        else:
+                            insights.append(f"⚠️ Negative spread ({spread_latest:.1f}%) - leverage destroys value")
+            
+            # NBC Analysis
+            if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
+                nbc_series = ratios_df.loc['Net Borrowing Cost (NBC) %']
+                if not nbc_series.empty and not nbc_series.isna().all():
+                    nbc_latest = nbc_series.iloc[-1]
+                    
+                    if pd.notna(nbc_latest):
+                        if nbc_latest > 10:
+                            insights.append(f"⚠️ High borrowing cost ({nbc_latest:.1f}%) - explore refinancing options")
+                        elif nbc_latest > 5:
+                            insights.append(f"📊 Moderate borrowing cost ({nbc_latest:.1f}%)")
+                        else:
+                            insights.append(f"✅ Low borrowing cost ({nbc_latest:.1f}%) - favorable financing")
+        
+        # Free Cash Flow Insights
+        if 'free_cash_flow' in results and isinstance(results['free_cash_flow'], pd.DataFrame) and not results['free_cash_flow'].empty:
+            fcf_df = results['free_cash_flow']
+            if 'Free Cash Flow' in fcf_df.index and len(fcf_df.columns) > 0:
+                fcf_series = fcf_df.loc['Free Cash Flow']
+                if not fcf_series.empty and not fcf_series.isna().all():
+                    fcf_latest = fcf_series.iloc[-1]
+                    if pd.notna(fcf_latest):
+                        if fcf_latest > 0:
+                            insights.append(f"✅ Positive free cash flow generation")
+                        else:
+                            insights.append(f"⚠️ Negative free cash flow - monitor cash position")
+        
+        # Recommendations
+        if insights:
+            insights.append("💡 **Recommendations based on Penman-Nissim analysis:**")
+            
+            # Based on the metrics, provide actionable recommendations
+            if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame):
+                ratios_df = results['ratios']
+                
+                # Operating performance recommendations
+                if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
+                    rnoa_series = ratios_df.loc['Return on Net Operating Assets (RNOA) %']
+                    if not rnoa_series.empty and not rnoa_series.isna().all():
+                        rnoa = rnoa_series.iloc[-1]
+                        if pd.notna(rnoa) and rnoa < 10:
+                            insights.append("💡 Focus on improving operational efficiency and asset utilization")
+                
+                # Leverage recommendations
+                if 'Spread %' in ratios_df.index:
+                    spread_series = ratios_df.loc['Spread %']
+                    if not spread_series.empty and not spread_series.isna().all():
+                        spread = spread_series.iloc[-1]
+                        if pd.notna(spread):
+                            if spread > 5 and 'Financial Leverage (FLEV)' in ratios_df.index:
+                                flev_series = ratios_df.loc['Financial Leverage (FLEV)']
+                                if not flev_series.empty and not flev_series.isna().all():
+                                    flev = flev_series.iloc[-1]
+                                    if pd.notna(flev) and flev < 1:
+                                        insights.append("💡 Consider increasing leverage to enhance equity returns")
+                            elif spread < 0:
+                                insights.append("💡 Reduce leverage or improve operating returns before increasing debt")
+        
+        if not insights:
+            insights.append("📊 Complete the Penman-Nissim analysis to see insights")
+        
+        return insights
+    
+   def _export_pn_report(self):
+        """Export Penman-Nissim analysis report"""
+        try:
+            results = self.get_state('pn_results')
+            if not results:
+                st.error("No results to export")
+                return
+            
+            # Create comprehensive report content
+            report_data = {
+                'company_name': self.get_state('company_name', 'Company'),
+                'analysis_date': datetime.now().strftime('%Y-%m-%d'),
+                'analysis_type': 'Penman-Nissim Analysis',
+                'summary': {
+                    'description': 'Penman-Nissim analysis separates operating and financing activities to analyze value creation',
+                    'key_findings': self._generate_pn_insights(results)[:5]  # Top 5 insights
+                }
+            }
+            
+            # Add all P-N results
+            if 'ratios' in results:
+                report_data['ratios'] = results['ratios']
+            if 'reformulated_balance_sheet' in results:
+                report_data['reformulated_balance_sheet'] = results['reformulated_balance_sheet']
+            if 'reformulated_income_statement' in results:
+                report_data['reformulated_income_statement'] = results['reformulated_income_statement']
+            if 'free_cash_flow' in results:
+                report_data['free_cash_flow'] = results['free_cash_flow']
+            if 'value_drivers' in results:
+                report_data['value_drivers'] = results['value_drivers']
+            
+            # Export to Excel using the existing export manager
+            excel_data = self.export_manager.export_to_excel(report_data, "penman_nissim_analysis.xlsx")
+            
+            st.download_button(
+                label="📊 Download Penman-Nissim Report",
+                data=excel_data,
+                file_name=f"{self.get_state('company_name', 'Company')}_PN_Analysis_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            st.success("✅ Report ready for download!")
+            
+        except Exception as e:
+            st.error(f"Export failed: {str(e)}")
+            if self.config.get('app.debug', False):
+                st.exception(e)
     
     def _get_pn_ratio_help(self, ratio: str) -> str:
         """Get help text for Penman-Nissim ratios"""

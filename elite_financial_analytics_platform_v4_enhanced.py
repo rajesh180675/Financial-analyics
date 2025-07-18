@@ -3779,7 +3779,7 @@ class EnhancedPenmanNissimAnalyzer:
                     (df.loc['Capital Expenditure'] if 'Capital Expenditure' in df.index else 0)
                 )
         
-        return fcf
+        return fcf.T
     
     def _calculate_value_drivers(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate value drivers for DCF analysis"""

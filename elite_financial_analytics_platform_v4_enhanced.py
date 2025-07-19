@@ -8579,13 +8579,84 @@ class FinancialAnalyticsPlatform:
             else:
                 st.write(insight)
     
-    if __name__ == "__main__":
+# --- 31. Application Entry Point ---
+def main():
+    """Main application entry point with comprehensive error handling"""
+    try:
+        # Set page config first
+        st.set_page_config(
+            page_title="Elite Financial Analytics Platform v5.1",
+            page_icon="💹",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+        
+        # Create and run the application with enhanced error handling
         try:
             app = FinancialAnalyticsPlatform()
             app.run()
-        except Exception as e:
-            # Fallback error display if main app fails catastrophically
-            st.error("A critical application error occurred during startup.")
+        except KeyError as e:
+            # Handle session state key errors specifically
+            st.error("🔧 Session state error detected. Reinitializing...")
+            
+            # Clear problematic state and reinitialize
+            if 'initialized' in st.session_state:
+                del st.session_state['initialized']
+            
+            # Try again
+            app = FinancialAnalyticsPlatform()
+            app.run()
+            
+    except Exception as e:
+        # Critical error handling
+        logging.critical(f"Fatal application error: {e}", exc_info=True)
+        
+        st.error("🚨 A critical error occurred.")
+        
+        # Show debug info if available
+        if st.session_state.get('show_debug_info', False):
             st.exception(e)
+            
+            with st.expander("🔧 Debug Information"):
+                st.write("**Error Details:**")
+                st.code(traceback.format_exc())
+                
+                st.write("**Session State Keys:**")
+                st.json(list(st.session_state.keys()))
+        
+        # Recovery options
+        st.subheader("🔄 Recovery Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 Refresh Page", key="refresh_page_btn"):
+                st.experimental_rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache", key="clear_cache_btn"):
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.success("Cache cleared!")
+        
+        with col3:
+            if st.button("🏠 Reset Application", key="reset_app_btn"):
+                # Clear all session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.experimental_rerun()
+
+if __name__ == "__main__":
+    # Configure Python path and environment
+    import sys
+    from pathlib import Path
+    
+    # Add current directory to Python path
+    current_dir = Path(__file__).parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    
+    # Run the application
+    main()
     
                 

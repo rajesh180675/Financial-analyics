@@ -5430,7 +5430,171 @@ def critical_method(func):
             return None
     return wrapper
 
+#--mapping class
+class PenmanNissimMappingTemplates:
+    """Pre-defined mapping templates for common Indian financial statement formats"""
+    
+    INDIAN_GAAP_TEMPLATE = {
+        # Balance Sheet Mappings
+        'Total Assets': ['Total Assets', 'TOTAL ASSETS', 'Total Asset', 'Assets Total', 'Total Equity and Liabilities'],
+        'Current Assets': ['Current Assets', 'Total Current Assets', 'CURRENT ASSETS'],
+        'Cash and Cash Equivalents': ['Cash and Cash Equivalents', 'Cash And Cash Equivalents', 'Cash & Cash Equivalents', 'Cash and Bank Balances'],
+        'Short-term Investments': ['Current Investments', 'Short Term Investments', 'Investments-Current', 'Other Current Assets'],
+        'Trade Receivables': ['Trade Receivables', 'Sundry Debtors', 'Debtors', 'Accounts Receivable', 'Trade receivables'],
+        'Inventory': ['Inventories', 'Inventory', 'Stock-in-Trade', 'Stock', 'Stores and Spares'],
+        'Property Plant Equipment': ['Property, Plant and Equipment', 'Fixed Assets', 'Tangible Assets', 'Net Block', 'Property Plant and Equipment'],
+        'Intangible Assets': ['Intangible Assets', 'Intangibles', 'Goodwill', 'Other Intangible Assets'],
+        
+        'Total Liabilities': ['Total Liabilities', 'TOTAL LIABILITIES', 'Total Non-Current Liabilities'],
+        'Current Liabilities': ['Current Liabilities', 'Total Current Liabilities', 'CURRENT LIABILITIES'],
+        'Accounts Payable': ['Trade Payables', 'Sundry Creditors', 'Creditors', 'Accounts Payable', 'Trade payables'],
+        'Short-term Debt': ['Short Term Borrowings', 'Current Maturities of Long Term Debt', 'Short-term Borrowings', 'Other Current Liabilities'],
+        'Long-term Debt': ['Long Term Borrowings', 'Long-term Borrowings', 'Term Loans', 'Debentures', 'Other Non-Current Liabilities'],
+        'Accrued Expenses': ['Provisions', 'Other Current Liabilities', 'Accrued Expenses'],
+        'Deferred Revenue': ['Deferred Revenue', 'Advance from Customers', 'Unearned Revenue'],
+        
+        'Total Equity': ['Total Equity', 'Shareholders Funds', 'Shareholder\'s Equity', 'Total Shareholders Funds', 'Net Worth', 'Equity'],
+        'Share Capital': ['Share Capital', 'Equity Share Capital', 'Paid-up Capital'],
+        'Retained Earnings': ['Reserves and Surplus', 'Retained Earnings', 'Other Equity'],
+        
+        # Income Statement Mappings
+        'Revenue': ['Revenue From Operations', 'Revenue from Operations (Net)', 'Total Revenue', 'Net Sales', 'Sales', 'Revenue From Operations(Net)'],
+        'Cost of Goods Sold': ['Cost of Materials Consumed', 'Cost of Goods Sold', 'Purchase of Stock-In-Trade', 'Changes in Inventory'],
+        'Operating Expenses': ['Employee Benefit Expenses', 'Other Expenses', 'Operating Expenses'],
+        'Operating Income': ['Operating Profit', 'EBIT', 'Operating Income', 'Profit Before Interest and Tax'],
+        'EBIT': ['EBIT', 'Profit Before Interest and Tax', 'Operating Profit'],
+        'Interest Expense': ['Finance Costs', 'Interest Expense', 'Interest and Finance Charges', 'Interest'],
+        'Interest Income': ['Interest Income', 'Other Income', 'Investment Income'],
+        'Tax Expense': ['Tax Expense', 'Total Tax Expense', 'Current Tax', 'Income Tax'],
+        'Net Income': ['Net Profit', 'Profit After Tax', 'Net Income', 'PAT', 'Net Profit After Tax', 'Profit/Loss For The Period'],
+        'Income Before Tax': ['Profit Before Tax', 'PBT', 'Income Before Tax', 'Profit before tax'],
+        
+        # Cash Flow Mappings
+        'Operating Cash Flow': ['Cash Flow from Operating Activities', 'Net Cash from Operating Activities', 'Operating Cash Flow', 'Net CashFlow From Operating Activities'],
+        'Investing Cash Flow': ['Cash Flow from Investing Activities', 'Net Cash Used in Investing Activities', 'Purchase of Investments'],
+        'Financing Cash Flow': ['Cash Flow from Financing Activities', 'Net Cash Used in Financing Activities'],
+        'Capital Expenditure': ['Purchase of Fixed Assets', 'Purchase of Property, Plant and Equipment', 'Capital Expenditure', 'Additions to Fixed Assets'],
+        'Depreciation': ['Depreciation and Amortisation', 'Depreciation', 'Depreciation & Amortization', 'Depreciation and Amortisation Expenses']
+    }
+    
+    @staticmethod
+    def create_smart_mapping(source_metrics: List[str], template: Dict[str, List[str]]) -> Tuple[Dict[str, str], List[str]]:
+        """Create mappings using template with fuzzy matching"""
+        mappings = {}
+        unmapped = []
+        used_sources = set()
+        
+        # First pass: exact matches
+        for source in source_metrics:
+            source_clean = source.split('::')[-1] if '::' in source else source
+            source_lower = source_clean.lower().strip()
+            
+            matched = False
+            for target, patterns in template.items():
+                for pattern in patterns:
+                    if source_lower == pattern.lower():
+                        if source not in used_sources:
+                            mappings[source] = target
+                            used_sources.add(source)
+                            matched = True
+                            break
+                if matched:
+                    break
+        
+        # Second pass: fuzzy matching for remaining items
+        for source in source_metrics:
+            if source in used_sources:
+                continue
+                
+            source_clean = source.split('::')[-1] if '::' in source else source
+            source_lower = source_clean.lower().strip()
+            
+            best_match = None
+            best_score = 0
+            
+            for target, patterns in template.items():
+                # Skip if target already has a mapping
+                if target in mappings.values():
+                    continue
+                    
+                for pattern in patterns:
+                    score = fuzz.token_sort_ratio(source_lower, pattern.lower())
+                    if score > best_score:
+                        best_score = score
+                        best_match = target
+            
+            if best_match and best_score >= 80:  # 80% threshold
+                mappings[source] = best_match
+                used_sources.add(source)
+            else:
+                unmapped.append(source)
+        
+        return mappings, unmapped
 
+#--Add the Enhanced Mapping Classes
+class EnhancedPenmanNissimMapper:
+    """Enhanced mapper specifically for Penman-Nissim analysis"""
+    
+    def __init__(self):
+        self.template = PenmanNissimMappingTemplates.INDIAN_GAAP_TEMPLATE
+        self.required_mappings = {
+            'essential': [
+                'Total Assets', 'Total Equity', 'Revenue', 'Operating Income',
+                'Net Income', 'Tax Expense', 'Interest Expense', 'Income Before Tax'
+            ],
+            'important': [
+                'Current Assets', 'Current Liabilities', 'Cash and Cash Equivalents',
+                'Operating Cash Flow', 'Capital Expenditure', 'Depreciation',
+                'Short-term Debt', 'Long-term Debt', 'Share Capital'
+            ],
+            'optional': [
+                'Trade Receivables', 'Inventory', 'Property Plant Equipment',
+                'Accounts Payable', 'Interest Income', 'Cost of Goods Sold',
+                'Operating Expenses', 'Accrued Expenses', 'Deferred Revenue'
+            ]
+        }
+    
+    def validate_mappings(self, mappings: Dict[str, str]) -> Dict[str, Any]:
+        """Validate if mappings are sufficient for Penman-Nissim"""
+        validation = {
+            'is_valid': True,
+            'completeness': 0,
+            'missing_essential': [],
+            'missing_important': [],
+            'warnings': [],
+            'suggestions': []
+        }
+        
+        # Check essential mappings
+        mapped_targets = set(mappings.values())
+        
+        for item in self.required_mappings['essential']:
+            if item not in mapped_targets:
+                validation['missing_essential'].append(item)
+                validation['is_valid'] = False
+        
+        for item in self.required_mappings['important']:
+            if item not in mapped_targets:
+                validation['missing_important'].append(item)
+        
+        # Calculate completeness
+        total_required = len(self.required_mappings['essential']) + len(self.required_mappings['important'])
+        total_mapped = len([m for m in self.required_mappings['essential'] + self.required_mappings['important'] 
+                           if m in mapped_targets])
+        validation['completeness'] = (total_mapped / total_required) * 100 if total_required > 0 else 0
+        
+        # Add warnings and suggestions
+        if validation['completeness'] < 60:
+            validation['warnings'].append("Insufficient mappings for accurate Penman-Nissim analysis")
+        
+        if 'Operating Income' not in mapped_targets and 'EBIT' in mapped_targets:
+            validation['suggestions'].append("Using EBIT as proxy for Operating Income")
+        
+        if 'Total Liabilities' not in mapped_targets:
+            validation['suggestions'].append("Total Liabilities can be calculated from Total Assets - Total Equity")
+        
+        return validation
+        
 # --- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:
     """Main application with advanced architecture and all integrations"""
@@ -8218,7 +8382,6 @@ class FinancialAnalyticsPlatform:
         """Placeholder for the old Penman-Nissim tab, will call the enhanced one."""
         self._render_penman_nissim_tab_enhanced(data)
 
-   
     @error_boundary()
     @safe_state_access
     def _render_penman_nissim_tab_enhanced(self, data: pd.DataFrame):
@@ -8228,35 +8391,21 @@ class FinancialAnalyticsPlatform:
         # Check if mappings exist
         mappings = self.get_state('pn_mappings')
         if not mappings:
-            st.warning("Please configure Penman-Nissim mappings first.")
+            # Use the enhanced mapping interface
+            mappings = self._render_enhanced_penman_nissim_mapping(data)
+            if not mappings:
+                return  # User hasn't completed mapping yet
+        else:
+            # Validate existing mappings
+            pn_mapper = EnhancedPenmanNissimMapper()
+            validation = pn_mapper.validate_mappings(mappings)
             
-            # Provide mapping interface
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🤖 Auto-map with AI", type="primary", key="pn_ai_map"):
-                    self._perform_ai_mapping(data)
-                    # Use the AI mappings for PN
-                    ai_mappings = self.get_state('metric_mappings')
-                    if ai_mappings:
-                        self.set_state('pn_mappings', ai_mappings)
-                        st.success("Applied AI mappings to Penman-Nissim analysis")
-                        st.rerun()  # FIXED: Changed from st.experimental_rerun()
-            
-            with col2:
-                if st.button("✏️ Manual Mapping", key="pn_manual_map"):
-                    self.set_state('show_manual_mapping', True)
-            
-            if self.get_state('show_manual_mapping', False):
-                manual_mapper = ManualMappingInterface(data)
-                mappings = manual_mapper.render()
-                
-                if st.button("✅ Apply PN Mappings", type="primary", key="apply_pn_mappings"):
-                    self.set_state('pn_mappings', mappings)
-                    st.success(f"Applied {len(mappings)} mappings!")
-                    self.set_state('show_manual_mapping', False)
-                    st.rerun()  # FIXED: Changed from st.experimental_rerun()
-            
-            return
+            if not validation['is_valid']:
+                st.warning("Current mappings are incomplete for Penman-Nissim analysis.")
+                if st.button("🔧 Reconfigure Mappings", key="pn_reconfig"):
+                    self.set_state('pn_mappings', None)
+                    st.rerun()
+                return
         
         # Perform analysis
         with st.spinner("Running Penman-Nissim analysis..."):
@@ -8434,8 +8583,8 @@ class FinancialAnalyticsPlatform:
                 
                 # RNOA decomposition comparison
                 if all(metric in ratios_df.index for metric in ['Return on Net Operating Assets (RNOA) %', 
-                                                                'Operating Profit Margin (OPM) %',
-                                                                'Net Operating Asset Turnover (NOAT)']):
+                                                              'Operating Profit Margin (OPM) %',
+                                                              'Net Operating Asset Turnover (NOAT)']):
                     
                     years = ratios_df.columns[-min(3, len(ratios_df.columns)):]
                     
@@ -8598,6 +8747,7 @@ class FinancialAnalyticsPlatform:
                 drivers_df = results['value_drivers']
                 
                 # Revenue growth analysis
+                # Revenue growth analysis
                 if 'Revenue Growth %' in drivers_df.index:
                     fig = go.Figure()
                     
@@ -8689,71 +8839,386 @@ class FinancialAnalyticsPlatform:
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
-    
-    def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
-        """Generate enhanced insights from Penman-Nissim analysis"""
-        insights = []
+
+    def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
+        """Enhanced mapping interface specifically for Penman-Nissim"""
+        st.subheader("🎯 Penman-Nissim Mapping Configuration")
         
-        if 'ratios' not in results or results['ratios'].empty:
-            return ["Unable to generate insights due to insufficient data."]
+        # Initialize enhanced mapper
+        pn_mapper = EnhancedPenmanNissimMapper()
         
-        ratios = results['ratios']
+        # Get source metrics
+        source_metrics = [str(m) for m in data.index.tolist()]
         
-        # RNOA Analysis
-        if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
-            rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
-            latest_rnoa = rnoa_series.iloc[-1]
-            avg_rnoa = rnoa_series.mean()
+        # Initialize session state for mappings if not exists
+        if 'temp_pn_mappings' not in st.session_state:
+            # Try template-based mapping first
+            template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
+                source_metrics, 
+                pn_mapper.template
+            )
+            st.session_state.temp_pn_mappings = template_mappings
+            st.session_state.pn_unmapped = unmapped
+        
+        current_mappings = st.session_state.temp_pn_mappings
+        unmapped = st.session_state.pn_unmapped
+        
+        # Validate current mappings
+        validation = pn_mapper.validate_mappings(current_mappings)
+        
+        # Display validation status
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Completeness", f"{validation['completeness']:.0f}%")
+        with col2:
+            st.metric("Mapped Items", len(current_mappings))
+        with col3:
+            essential_complete = len(validation['missing_essential']) == 0
+            st.metric("Essential", "✅ Complete" if essential_complete else f"❌ {len(validation['missing_essential'])} missing")
+        with col4:
+            status = "✅ Ready" if validation['is_valid'] else "⚠️ Incomplete"
+            st.metric("Status", status)
+        
+        # Show what's missing
+        if validation['missing_essential']:
+            st.error(f"**Missing essential items:** {', '.join(validation['missing_essential'])}")
+        
+        if validation['missing_important']:
+            st.warning(f"**Missing important items:** {', '.join(validation['missing_important'])}")
+        
+        if validation['suggestions']:
+            st.info(f"**Suggestions:** {'; '.join(validation['suggestions'])}")
+        
+        # Quick actions
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🤖 Re-run Auto Mapping", key="pn_rerun_auto"):
+                template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
+                    source_metrics, 
+                    pn_mapper.template
+                )
+                st.session_state.temp_pn_mappings = template_mappings
+                st.session_state.pn_unmapped = unmapped
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 Reset Mappings", key="pn_reset_mappings"):
+                st.session_state.temp_pn_mappings = {}
+                st.session_state.pn_unmapped = source_metrics
+                st.rerun()
+        
+        with col3:
+            if st.button("📋 Load VST Template", key="pn_vst_template", help="Load pre-configured template for VST Industries"):
+                # VST-specific mappings
+                vst_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets',
+                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',  # Alternative for Total Assets
+                    'BalanceSheet::Total Current Assets': 'Current Assets',
+                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
+                    'BalanceSheet::Total Equity': 'Total Equity',
+                    'BalanceSheet::Equity': 'Total Equity',  # Alternative
+                    'BalanceSheet::Share Capital': 'Share Capital',
+                    'BalanceSheet::Other Equity': 'Retained Earnings',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt',
+                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt',
+                    
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                    
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
+                }
+                
+                # Apply VST mappings
+                for source in source_metrics:
+                    for vst_key, target in vst_mappings.items():
+                        if vst_key.lower() in source.lower() or source.endswith(vst_key.split('::')[-1]):
+                            current_mappings[source] = target
+                            break
+                
+                st.session_state.temp_pn_mappings = current_mappings
+                st.success("Loaded VST Industries template!")
+                st.rerun()
+        
+        # Mapping interface with categories
+        tabs = st.tabs(["🔴 Essential Mappings", "🟡 Important Mappings", "🟢 Optional Mappings", "❓ Unmapped Items"])
+        
+        with tabs[0]:
+            st.info("These mappings are **required** for basic Penman-Nissim analysis")
             
-            if latest_rnoa > 20:
-                insights.append(f"✅ Excellent operating performance with RNOA of {latest_rnoa:.1f}% (Elite level)")
-            elif latest_rnoa > 15:
-                insights.append(f"✅ Strong operating performance with RNOA of {latest_rnoa:.1f}%")
-            elif latest_rnoa > 10:
-                insights.append(f"💡 Moderate operating performance with RNOA of {latest_rnoa:.1f}%")
+            for target in pn_mapper.required_mappings['essential']:
+                # Find current mapping
+                current_source = None
+                for source, mapped_target in current_mappings.items():
+                    if mapped_target == target:
+                        current_source = source
+                        break
+                
+                # Find best candidates
+                candidates = []
+                target_patterns = pn_mapper.template.get(target, [target])
+                
+                for source in source_metrics:
+                    source_clean = source.split('::')[-1] if '::' in source else source
+                    for pattern in target_patterns:
+                        if pattern.lower() in source_clean.lower():
+                            candidates.append(source)
+                            break
+                
+                # Remove already mapped items from candidates
+                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
+                
+                # Create selectbox
+                options = ['(Not mapped)'] + candidates + [s for s in source_metrics if s not in candidates and (s not in current_mappings or s == current_source)]
+                
+                if current_source:
+                    if current_source in candidates:
+                        default_index = candidates.index(current_source) + 1
+                    else:
+                        default_index = len(candidates) + 1 + [s for s in source_metrics if s not in candidates].index(current_source)
+                else:
+                    default_index = 0
+                
+                selected = st.selectbox(
+                    f"**{target}**" + (" ⚠️" if target in validation['missing_essential'] else ""),
+                    options,
+                    index=default_index,
+                    key=f"pn_map_essential_{target}",
+                    help=f"Common patterns: {', '.join(target_patterns[:3])}"
+                )
+                
+                # Update mappings
+                if current_source and current_source != selected:
+                    del current_mappings[current_source]
+                
+                if selected != '(Not mapped)':
+                    current_mappings[selected] = target
+        
+        with tabs[1]:
+            st.info("These mappings **improve accuracy** but aren't strictly required")
+            
+            for target in pn_mapper.required_mappings['important']:
+                # Similar logic as essential mappings
+                current_source = None
+                for source, mapped_target in current_mappings.items():
+                    if mapped_target == target:
+                        current_source = source
+                        break
+                
+                candidates = []
+                target_patterns = pn_mapper.template.get(target, [target])
+                
+                for source in source_metrics:
+                    source_clean = source.split('::')[-1] if '::' in source else source
+                    for pattern in target_patterns:
+                        if pattern.lower() in source_clean.lower():
+                            candidates.append(source)
+                            break
+                
+                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
+                options = ['(Not mapped)'] + candidates + [s for s in source_metrics if s not in candidates and (s not in current_mappings or s == current_source)]
+                
+                if current_source:
+                    if current_source in candidates:
+                        default_index = candidates.index(current_source) + 1
+                    else:
+                        try:
+                            default_index = len(candidates) + 1 + [s for s in source_metrics if s not in candidates].index(current_source)
+                        except ValueError:
+                            default_index = 0
+                else:
+                    default_index = 0
+                
+                selected = st.selectbox(
+                    f"**{target}**" + (" ⚠️" if target in validation['missing_important'] else ""),
+                    options,
+                    index=default_index,
+                    key=f"pn_map_important_{target}",
+                    help=f"Common patterns: {', '.join(target_patterns[:3])}"
+                )
+                
+                if current_source and current_source != selected:
+                    del current_mappings[current_source]
+                
+                if selected != '(Not mapped)':
+                    current_mappings[selected] = target
+        
+        with tabs[2]:
+            st.info("These mappings provide **additional insights**")
+            
+            for target in pn_mapper.required_mappings['optional']:
+                # Similar logic for optional mappings
+                current_source = None
+                for source, mapped_target in current_mappings.items():
+                    if mapped_target == target:
+                        current_source = source
+                        break
+                
+                candidates = []
+                target_patterns = pn_mapper.template.get(target, [target])
+                
+                for source in source_metrics:
+                    source_clean = source.split('::')[-1] if '::' in source else source
+                    for pattern in target_patterns:
+                        if pattern.lower() in source_clean.lower():
+                            candidates.append(source)
+                            break
+                
+                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
+                options = ['(Not mapped)'] + candidates[:10]  # Limit to top 10 candidates
+                
+                if current_source and current_source not in options:
+                    options.append(current_source)
+                
+                default_index = options.index(current_source) if current_source in options else 0
+                
+                selected = st.selectbox(
+                    f"{target}",
+                    options,
+                    index=default_index,
+                    key=f"pn_map_optional_{target}"
+                )
+                
+                if current_source and current_source != selected:
+                    del current_mappings[current_source]
+                
+                if selected != '(Not mapped)':
+                    current_mappings[selected] = target
+        
+        with tabs[3]:
+            st.info("Items that couldn't be automatically mapped")
+            
+            # Show unmapped items that aren't already mapped
+            truly_unmapped = [item for item in unmapped if item not in current_mappings]
+            
+            if truly_unmapped:
+                st.write(f"**{len(truly_unmapped)} unmapped items**")
+                
+                # Group by type
+                balance_sheet_items = [item for item in truly_unmapped if 'BalanceSheet::' in item]
+                pl_items = [item for item in truly_unmapped if 'ProfitLoss::' in item]
+                cf_items = [item for item in truly_unmapped if 'CashFlow::' in item]
+                
+                if balance_sheet_items:
+                    with st.expander(f"Balance Sheet Items ({len(balance_sheet_items)})"):
+                        for item in balance_sheet_items[:20]:
+                            st.text(f"• {item.split('::')[-1]}")
+                
+                if pl_items:
+                    with st.expander(f"P&L Items ({len(pl_items)})"):
+                        for item in pl_items[:20]:
+                            st.text(f"• {item.split('::')[-1]}")
+                
+                if cf_items:
+                    with st.expander(f"Cash Flow Items ({len(cf_items)})"):
+                        for item in cf_items[:20]:
+                            st.text(f"• {item.split('::')[-1]}")
             else:
-                insights.append(f"⚠️ Low operating performance with RNOA of {latest_rnoa:.1f}%")
-            
-            # RNOA trend
-            if len(rnoa_series) > 1:
-                trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
-                insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+                st.success("All items have been mapped!")
         
-        # Spread Analysis
-        if 'Spread %' in ratios.index:
-            spread_series = ratios.loc['Spread %']
-            latest_spread = spread_series.iloc[-1]
-            
-            if latest_spread > 5:
-                insights.append(f"🚀 Strong positive spread ({latest_spread:.1f}%) - Financial leverage is creating significant value")
-            elif latest_spread > 0:
-                insights.append(f"✅ Positive spread ({latest_spread:.1f}%) - Financial leverage is value accretive")
-            else:
-                insights.append(f"❌ Negative spread ({latest_spread:.1f}%) - Financial leverage is destroying value")
+        # Save current mappings to session state
+        st.session_state.temp_pn_mappings = current_mappings
         
-        # Financial Leverage Analysis
-        if 'Financial Leverage (FLEV)' in ratios.index:
-            flev_series = ratios.loc['Financial Leverage (FLEV)']
-            latest_flev = flev_series.iloc[-1]
-            
-            if latest_flev > 2:
-                insights.append(f"⚠️ High financial leverage ({latest_flev:.2f}) indicates significant financial risk")
-            elif latest_flev < 0:
-                insights.append(f"💡 Negative leverage ({latest_flev:.2f}) indicates net financial assets position")
+        # Apply button
+        st.markdown("---")
+        col1, col2, col3 = st.columns([2, 1, 2])
+        with col2:
+            if st.button("✅ Apply Mappings", type="primary", key="pn_apply_mappings"):
+                # Final validation
+                final_validation = pn_mapper.validate_mappings(current_mappings)
+                
+                if final_validation['is_valid']:
+                    self.set_state('pn_mappings', current_mappings)
+                    # Clean up temp state
+                    if 'temp_pn_mappings' in st.session_state:
+                        del st.session_state.temp_pn_mappings
+                    if 'pn_unmapped' in st.session_state:
+                        del st.session_state.pn_unmapped
+                    st.success(f"✅ Applied {len(current_mappings)} mappings successfully!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Please complete all essential mappings before proceeding")
+                    st.write("Missing:", ', '.join(final_validation['missing_essential']))
         
-        # OPM and NOAT Analysis
-        if 'Operating Profit Margin (OPM) %' in ratios.index and 'Net Operating Asset Turnover (NOAT)' in ratios.index:
-            opm = ratios.loc['Operating Profit Margin (OPM) %'].iloc[-1]
-            noat = ratios.loc['Net Operating Asset Turnover (NOAT)'].iloc[-1]
+        # Return None to indicate mapping is not complete yet
+        return None
+                        
+        def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
+            """Generate enhanced insights from Penman-Nissim analysis"""
+            insights = []
             
-            if opm > 15 and noat > 2:
-                insights.append(f"✅ Excellent combination of profitability (OPM: {opm:.1f}%) and efficiency (NOAT: {noat:.2f})")
-            elif opm < 5:
-                insights.append(f"⚠️ Low operating margin ({opm:.1f}%) suggests pricing or cost challenges")
-            elif noat < 1:
-                insights.append(f"⚠️ Low asset turnover ({noat:.2f}) indicates asset utilization issues")
-        
-        return insights
+            if 'ratios' not in results or results['ratios'].empty:
+                return ["Unable to generate insights due to insufficient data."]
+            
+            ratios = results['ratios']
+            
+            # RNOA Analysis
+            if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
+                rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
+                latest_rnoa = rnoa_series.iloc[-1]
+                avg_rnoa = rnoa_series.mean()
+                
+                if latest_rnoa > 20:
+                    insights.append(f"✅ Excellent operating performance with RNOA of {latest_rnoa:.1f}% (Elite level)")
+                elif latest_rnoa > 15:
+                    insights.append(f"✅ Strong operating performance with RNOA of {latest_rnoa:.1f}%")
+                elif latest_rnoa > 10:
+                    insights.append(f"💡 Moderate operating performance with RNOA of {latest_rnoa:.1f}%")
+                else:
+                    insights.append(f"⚠️ Low operating performance with RNOA of {latest_rnoa:.1f}%")
+                
+                # RNOA trend
+                if len(rnoa_series) > 1:
+                    trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
+                    insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+            
+            # Spread Analysis
+            if 'Spread %' in ratios.index:
+                spread_series = ratios.loc['Spread %']
+                latest_spread = spread_series.iloc[-1]
+                
+                if latest_spread > 5:
+                    insights.append(f"🚀 Strong positive spread ({latest_spread:.1f}%) - Financial leverage is creating significant value")
+                elif latest_spread > 0:
+                    insights.append(f"✅ Positive spread ({latest_spread:.1f}%) - Financial leverage is value accretive")
+                else:
+                    insights.append(f"❌ Negative spread ({latest_spread:.1f}%) - Financial leverage is destroying value")
+            
+            # Financial Leverage Analysis
+            if 'Financial Leverage (FLEV)' in ratios.index:
+                flev_series = ratios.loc['Financial Leverage (FLEV)']
+                latest_flev = flev_series.iloc[-1]
+                
+                if latest_flev > 2:
+                    insights.append(f"⚠️ High financial leverage ({latest_flev:.2f}) indicates significant financial risk")
+                elif latest_flev < 0:
+                    insights.append(f"💡 Negative leverage ({latest_flev:.2f}) indicates net financial assets position")
+            
+            # OPM and NOAT Analysis
+            if 'Operating Profit Margin (OPM) %' in ratios.index and 'Net Operating Asset Turnover (NOAT)' in ratios.index:
+                opm = ratios.loc['Operating Profit Margin (OPM) %'].iloc[-1]
+                noat = ratios.loc['Net Operating Asset Turnover (NOAT)'].iloc[-1]
+                
+                if opm > 15 and noat > 2:
+                    insights.append(f"✅ Excellent combination of profitability (OPM: {opm:.1f}%) and efficiency (NOAT: {noat:.2f})")
+                elif opm < 5:
+                    insights.append(f"⚠️ Low operating margin ({opm:.1f}%) suggests pricing or cost challenges")
+                elif noat < 1:
+                    insights.append(f"⚠️ Low asset turnover ({noat:.2f}) indicates asset utilization issues")
+            
+            return insights
     
     
     @error_boundary()

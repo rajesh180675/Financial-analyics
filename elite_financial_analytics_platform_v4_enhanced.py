@@ -4757,5 +4757,130 @@ class TutorialSystem:
                 'action': 'highlight_tabs'
             },
             {
-                'id':
+                'id': 'export',
+                'title': 'Export Results',
+                'content': 'Generate and download comprehensive reports in various formats.',
+                'location': 'reports',
+                'action': 'show_export'
+            }
+
+        self.completed_steps = set()
+
+    def render(self):
+        """Render tutorial interface"""
+        if not SimpleState.get('show_tutorial', True):
+            return
+
+        current_step = SimpleState.get('tutorial_step', 0)
+        
+        if current_step >= len(self.steps):
+            self._complete_tutorial()
+            return
+        
+        step = self.steps[current_step]
+        
+        # Tutorial overlay
+        with st.container():
+            col1, col2, col3 = st.columns([1, 3, 1])
+            
+            with col2:
+                st.info(f"""
+                ### Tutorial Step {current_step + 1}/{len(self.steps)}: {step['title']}
+                
+                {step['content']}
+                """)
+                
+                col_prev, col_next, col_skip = st.columns(3)
+                
+                with col_prev:
+                    if current_step > 0:
+                        if st.button("← Previous", key="tutorial_prev"):
+                            SimpleState.set('tutorial_step', current_step - 1)
+                
+                with col_next:
+                    if st.button("Next →", key="tutorial_next", type="primary"):
+                        self.completed_steps.add(step['id'])
+                        SimpleState.set('tutorial_step', current_step + 1)
+                
+                with col_skip:
+                    if st.button("Skip Tutorial", key="tutorial_skip"):
+                        self._complete_tutorial()
+        
+        # Execute step action
+        if step['action']:
+            self._execute_action(step['action'])
     
+    def _execute_action(self, action: str):
+        """Execute tutorial action"""
+        if action == 'highlight_upload':
+            st.sidebar.markdown("⬆️ Upload your files here")
+        elif action == 'highlight_tabs':
+            st.markdown("⬆️ Explore different analysis tabs above")
+        # Add more actions as needed
+    def _complete_tutorial(self):
+        """Mark tutorial as completed"""
+        SimpleState.set('show_tutorial', False)
+        SimpleState.set('tutorial_completed', True)
+        st.success("Tutorial completed! You're ready to use the platform.")
+
+
+# ==============================================================================
+# 26. Export Manager
+# ==============================================================================
+
+class ExportManager:
+    """Handle various export formats for analysis results"""
+    
+    def __init__(self, config: Configuration):
+        self.config = config
+        self.logger = LoggerFactory.get_logger('ExportManager')
+    
+    @error_boundary("Export failed")
+    def export_to_excel(self, analysis: Dict[str, Any], filename: str = "analysis.xlsx") -> bytes:
+        """Export analysis to Excel format"""
+        output = io.BytesIO()
+        try:
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # Summary sheet
+                if 'summary' in analysis:
+                    summary_df = pd.DataFrame([analysis['summary']])
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                
+                # Ratios sheets
+                if 'ratios' in analysis:
+                    for category, ratio_df in analysis['ratios'].items():
+                        if isinstance(ratio_df, pd.DataFrame):
+                            sheet_name = f'Ratios_{category}'[:31]
+                            ratio_df.to_excel(writer, sheet_name=sheet_name)
+                
+                # Trends sheet
+                if 'trends' in analysis:
+                    trends_data = []
+                    for metric, trend in analysis['trends'].items():
+                        if isinstance(trend, dict):
+                            trend_row = {'Metric': metric}
+                            trend_row.update(trend)
+                            trends_data.append(trend_row)
+                    
+                    if trends_data:
+                        trends_df = pd.DataFrame(trends_data)
+                        trends_df.to_excel(writer, sheet_name='Trends', index=False)
+                
+                # Insights sheet
+                if 'insights' in analysis:
+                    insights_df = pd.DataFrame({'Insights': analysis['insights']})
+                    insights_df.to_excel(writer, sheet_name='Insights', index=False)
+                
+                # Filtered data if present
+                if 'filtered_data' in analysis:
+                    analysis['filtered_data'].to_excel(writer, sheet_name='Data')
+        
+        except Exception as e:
+            self.logger.error(f"Excel export error: {e}")
+            raise
+        
+        output.seek(0)
+        return output.read()
+
+    
+                

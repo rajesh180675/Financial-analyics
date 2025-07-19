@@ -5420,12 +5420,12 @@ def critical_method(func):
             col1, col2 = st.columns(2)
             with col1:
                 if st.button(f"🔄 Retry {func.__name__}", key=f"retry_{func.__name__}"):
-                    st.experimental_rerun()
+                    st.rerun()
             with col2:
                 if st.button("🏠 Reset Application", key=f"reset_{func.__name__}"):
                     for key in list(st.session_state.keys()):
                         del st.session_state[key]
-                    st.experimental_rerun()
+                    st.rerun()
             
             return None
     return wrapper
@@ -5889,13 +5889,13 @@ class FinancialAnalyticsPlatform:
             
             with col1:
                 if st.button("🔄 Retry"):
-                    st.experimental_rerun()
+                    st.rerun()
             
             with col2:
                 if st.button("🔧 Auto Recovery"):
                     if self._auto_recovery_attempt():
                         st.success("Recovery successful!")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error("Recovery failed. Please refresh manually.")
             
@@ -5903,7 +5903,7 @@ class FinancialAnalyticsPlatform:
                 if st.button("🗑️ Clear All & Restart"):
                     for key in list(st.session_state.keys()):
                         del st.session_state[key]
-                    st.experimental_rerun()
+                    st.rerun()
             
             if self.config.get('app.debug', False):
                 st.exception(e)
@@ -8218,6 +8218,7 @@ class FinancialAnalyticsPlatform:
         """Placeholder for the old Penman-Nissim tab, will call the enhanced one."""
         self._render_penman_nissim_tab_enhanced(data)
 
+   
     @error_boundary()
     @safe_state_access
     def _render_penman_nissim_tab_enhanced(self, data: pd.DataFrame):
@@ -8239,7 +8240,7 @@ class FinancialAnalyticsPlatform:
                     if ai_mappings:
                         self.set_state('pn_mappings', ai_mappings)
                         st.success("Applied AI mappings to Penman-Nissim analysis")
-                        st.experimental_rerun()
+                        st.rerun()  # FIXED: Changed from st.experimental_rerun()
             
             with col2:
                 if st.button("✏️ Manual Mapping", key="pn_manual_map"):
@@ -8253,7 +8254,7 @@ class FinancialAnalyticsPlatform:
                     self.set_state('pn_mappings', mappings)
                     st.success(f"Applied {len(mappings)} mappings!")
                     self.set_state('show_manual_mapping', False)
-                    st.experimental_rerun()
+                    st.rerun()  # FIXED: Changed from st.experimental_rerun()
             
             return
         
@@ -8321,7 +8322,7 @@ class FinancialAnalyticsPlatform:
                         if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
                             rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
                             st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
-                                    
+                    
                     with col2:
                         if 'Financial Leverage (FLEV)' in ratios_df.index:
                             flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
@@ -8765,10 +8766,10 @@ class FinancialAnalyticsPlatform:
         col1, col2 = st.columns(2)
         with col1:
             selected_industry = st.selectbox(
-                "Select Industry",
-                list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
-                index=0,
-                key="industry_select"
+            "Select Industry",
+            list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
+            index=0,
+            key=f"industry_select_{id(self)}"  # Make it unique
             )
     
         with col2:
@@ -9168,7 +9169,7 @@ def main():
         
         with col1:
             if st.button("🔄 Refresh Page", key="refresh_page_btn"):
-                st.experimental_rerun()
+                st.rerun()
         
         with col2:
             if st.button("🗑️ Clear Cache", key="clear_cache_btn"):
@@ -9181,7 +9182,7 @@ def main():
                 # Clear all session state
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
-                st.experimental_rerun()
+                st.rerun()
 
 if __name__ == "__main__":
     # Configure Python path and environment

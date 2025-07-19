@@ -77,6 +77,15 @@ class IndustryBenchmarks:
             'Beta': 1.25,
             'Cost_of_Equity': 0.125
         },
+        'FMCG': {
+            'RNOA': {'mean': 16.0, 'std': 5.0, 'quartiles': [11.0, 16.0, 21.0]},
+            'OPM': {'mean': 12.0, 'std': 4.0, 'quartiles': [8.0, 12.0, 16.0]},
+            'NOAT': {'mean': 2.5, 'std': 0.8, 'quartiles': [1.7, 2.5, 3.3]},
+            'NBC': {'mean': 3.5, 'std': 1.2, 'quartiles': [2.3, 3.5, 4.7]},
+            'FLEV': {'mean': 0.4, 'std': 0.2, 'quartiles': [0.2, 0.4, 0.6]},
+            'Beta': 0.85,
+            'Cost_of_Equity': 0.095
+        },
         'Retail': {
             'RNOA': {'mean': 14.0, 'std': 4.5, 'quartiles': [10.0, 14.0, 18.0]},
             'OPM': {'mean': 8.0, 'std': 3.0, 'quartiles': [5.0, 8.0, 11.0]},

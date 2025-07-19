@@ -32,7 +32,7 @@ from datetime import datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
 from typing import (
-    Any, Dict, List, Optional, Tuple, Union, Set, TypeVar, Generic, 
+    Any, Dict, List, Optional, Tuple, Union, Set, TypeVar, Generic,
     Callable, Protocol, Type, cast, overload
 )
 from weakref import WeakValueDictionary
@@ -82,16 +82,17 @@ MAX_FILE_SIZE_MB = 50
 CACHE_TTL_SECONDS = 3600
 DEFAULT_CONFIDENCE_THRESHOLD = 0.6
 
+
 # --- Enhanced Lazy Loading System ---
 class LazyLoader:
     """Lazy loading for heavy modules with caching"""
     _cache = {}
     _lock = threading.Lock()
-    
+
     def __init__(self, module_name: str):
         self.module_name = module_name
         self._module = None
-    
+
     def __getattr__(self, attr):
         if self._module is None:
             with self._lock:
@@ -104,6 +105,7 @@ class LazyLoader:
                         raise ImportError(f"Optional module '{self.module_name}' not installed")
         return getattr(self._module, attr)
 
+
 # Check module availability
 def check_module_available(module_name: str) -> bool:
     """Check if a module is available"""
@@ -112,6 +114,7 @@ def check_module_available(module_name: str) -> bool:
         return True
     except ImportError:
         return False
+
 
 # Lazy load optional dependencies
 sentence_transformers = LazyLoader('sentence_transformers')
@@ -147,12 +150,13 @@ except ImportError:
     CORE_REQUIRED_METRICS = {}
     CorePenmanNissim = None
 
+
 # --- 2. Thread-Safe State Management (Consolidated) ---
 class ThreadSafeState:
     """Thread-safe state management for Streamlit"""
     _lock = threading.RLock()
     _state_locks = {}
-    
+
     @classmethod
     @contextmanager
     def lock(cls, key: Optional[str] = None):
@@ -165,32 +169,32 @@ class ThreadSafeState:
             lock = cls._state_locks[key]
         else:
             lock = cls._lock
-        
+
         lock.acquire()
         try:
             yield
         finally:
             lock.release()
-    
+
     @staticmethod
     def get(key: str, default: Any = None) -> Any:
         """Thread-safe get from session state"""
         with ThreadSafeState.lock(key):
             return st.session_state.get(key, default)
-    
+
     @staticmethod
     def set(key: str, value: Any):
         """Thread-safe set in session state"""
         with ThreadSafeState.lock(key):
             st.session_state[key] = value
-    
+
     @staticmethod
     def update(updates: Dict[str, Any]):
         """Thread-safe batch update"""
         with ThreadSafeState.lock():
             for key, value in updates.items():
                 st.session_state[key] = value
-    
+
     @staticmethod
     def delete(key: str):
         """Thread-safe delete from session state"""
@@ -198,13 +202,15 @@ class ThreadSafeState:
             if key in st.session_state:
                 del st.session_state[key]
 
+
 # Single alias for consistency
 SimpleState = ThreadSafeState
+
 
 # --- 3. Enhanced Performance Monitoring System ---
 class PerformanceMonitor:
     """Monitor and track performance metrics with API tracking"""
-    
+
     def __init__(self):
         self.metrics = defaultdict(list)
         self._lock = threading.Lock()
@@ -217,35 +223,35 @@ class PerformanceMonitor:
             'response_times': deque(maxlen=100),
             'error_types': defaultdict(int)
         })
-    
+
     def _get_logger(self):
         """Lazy initialize logger"""
         if self.logger is None:
             self.logger = LoggerFactory.get_logger('PerformanceMonitor')
         return self.logger
-    
+
     @contextmanager
     def measure(self, operation: str):
         """Measure operation performance"""
         start_time = time.time()
         start_memory = self._get_memory_usage()
-        
+
         try:
             yield
         finally:
             elapsed_time = time.time() - start_time
             memory_delta = self._get_memory_usage() - start_memory
-            
+
             with self._lock:
                 self.metrics[operation].append({
                     'duration': elapsed_time,
                     'memory_delta': memory_delta,
                     'timestamp': datetime.now()
                 })
-            
+
             if elapsed_time > 1.0:
                 self._get_logger().warning(f"Slow operation '{operation}': {elapsed_time:.2f}s")
-    
+
     def track_api_call(self, endpoint: str, success: bool, duration: float, error: Optional[str] = None):
         """Track API call metrics"""
         with self._lock:
@@ -259,7 +265,7 @@ class PerformanceMonitor:
                     metrics['error_types'][error] += 1
             metrics['total_time'] += duration
             metrics['response_times'].append(duration)
-    
+
     def _get_memory_usage(self) -> int:
         """Get current memory usage in bytes"""
         if PSUTIL_AVAILABLE:
@@ -269,7 +275,7 @@ class PerformanceMonitor:
             except Exception:
                 return 0
         return 0
-    
+
     def get_performance_summary(self) -> Dict[str, Any]:
         """Get performance summary for optimization"""
         with self._lock:
@@ -285,7 +291,7 @@ class PerformanceMonitor:
                         'total_time': sum(durations)
                     }
             return summary
-    
+
     def get_api_summary(self) -> Dict[str, Any]:
         """Get API performance summary"""
         with self._lock:
@@ -301,49 +307,51 @@ class PerformanceMonitor:
                         'error_distribution': dict(metrics['error_types'])
                     }
             return summary
-    
+
     def clear_metrics(self):
         """Clear all metrics"""
         with self._lock:
             self.metrics.clear()
             self.api_metrics.clear()
 
+
 # Global performance monitor instance
 performance_monitor = PerformanceMonitor()
+
 
 # --- 4. Enhanced Logging Configuration ---
 class LoggerFactory:
     """Factory for creating configured loggers with context"""
-    
+
     _loggers = {}
     _lock = threading.Lock()
     _log_dir = Path("logs")
     _initialized = False
-    
+
     @classmethod
     def _initialize(cls):
         """Initialize logging system"""
         if not cls._initialized:
             cls._log_dir.mkdir(exist_ok=True)
             cls._initialized = True
-    
+
     @classmethod
     def get_logger(cls, name: str, level: int = logging.INFO) -> logging.Logger:
         """Get or create a logger with proper configuration"""
         cls._initialize()
-        
+
         with cls._lock:
             if name not in cls._loggers:
                 logger = logging.getLogger(name)
                 logger.setLevel(level)
-                
+
                 # Remove existing handlers to avoid duplicates
                 logger.handlers.clear()
-                
+
                 # Console handler
                 console_handler = logging.StreamHandler()
                 console_handler.setLevel(level)
-                
+
                 # File handler with rotation
                 file_handler = RotatingFileHandler(
                     cls._log_dir / f"{name}.log",
@@ -351,25 +359,26 @@ class LoggerFactory:
                     backupCount=5
                 )
                 file_handler.setLevel(level)
-                
+
                 # Formatter
                 formatter = logging.Formatter(
                     '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
                 )
                 console_handler.setFormatter(formatter)
                 file_handler.setFormatter(formatter)
-                
+
                 logger.addHandler(console_handler)
                 logger.addHandler(file_handler)
-                
+
                 cls._loggers[name] = logger
-            
+
             return cls._loggers[name]
+
 
 # --- 5. Enhanced Error Context and Circuit Breaker ---
 class CircuitBreaker:
     """Circuit breaker pattern for API calls"""
-    
+
     def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 60, expected_exception: type = Exception):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
@@ -378,7 +387,7 @@ class CircuitBreaker:
         self.last_failure_time = None
         self.state = 'closed'  # closed, open, half-open
         self._lock = threading.Lock()
-    
+
     def call(self, func: Callable, *args, **kwargs) -> Any:
         """Execute function with circuit breaker protection"""
         with self._lock:
@@ -387,7 +396,7 @@ class CircuitBreaker:
                     self.state = 'half-open'
                 else:
                     raise Exception("Circuit breaker is OPEN")
-        
+
         try:
             result = func(*args, **kwargs)
             with self._lock:
@@ -399,12 +408,12 @@ class CircuitBreaker:
             with self._lock:
                 self.failure_count += 1
                 self.last_failure_time = time.time()
-                
+
                 if self.failure_count >= self.failure_threshold:
                     self.state = 'open'
-                    
+
             raise e
-    
+
     def get_state(self) -> Dict[str, Any]:
         """Get circuit breaker state"""
         with self._lock:
@@ -414,10 +423,11 @@ class CircuitBreaker:
                 'last_failure': self.last_failure_time
             }
 
+
 class ErrorContext:
     """Context manager for error handling with recovery"""
-    
-    def __init__(self, operation: str, logger: logging.Logger, 
+
+    def __init__(self, operation: str, logger: logging.Logger,
                  fallback: Optional[Callable] = None,
                  max_retries: int = 3):
         self.operation = operation
@@ -425,10 +435,10 @@ class ErrorContext:
         self.fallback = fallback
         self.max_retries = max_retries
         self.attempts = 0
-    
+
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type is not None:
             self.attempts += 1
@@ -436,21 +446,22 @@ class ErrorContext:
                 f"Error in {self.operation} (attempt {self.attempts}/{self.max_retries}): "
                 f"{exc_type.__name__}: {exc_val}"
             )
-            
+
             if self.attempts < self.max_retries:
                 self.logger.info(f"Retrying {self.operation}...")
                 return True
-            
+
             if self.fallback:
                 self.logger.info(f"Executing fallback for {self.operation}")
                 try:
                     self.fallback()
                 except Exception as fallback_error:
                     self.logger.error(f"Fallback failed: {fallback_error}")
-            
+
             self.logger.debug(f"Full traceback:\n{''.join(traceback.format_tb(exc_tb))}")
-            
+
         return False
+
 
 def error_boundary(fallback_return=None):
     """Decorator to add error boundary to functions"""
@@ -462,33 +473,35 @@ def error_boundary(fallback_return=None):
             except Exception as e:
                 logger = LoggerFactory.get_logger(func.__module__)
                 logger.error(f"Error in {func.__name__}: {e}", exc_info=True)
-                
+
                 st.error(f"An error occurred in {func.__name__}. Please try again or contact support.")
-                
+
                 if callable(fallback_return):
                     return fallback_return()
-                    
+
                 return fallback_return
         return wrapper
     return decorator
+
 
 # --- 6. Configuration Management ---
 class ConfigurationError(Exception):
     """Custom exception for configuration errors"""
     pass
 
+
 class Configuration:
     """Centralized configuration with validation and type safety"""
-    
+
     class DisplayMode(Enum):
         FULL = auto()
         LITE = auto()
         MINIMAL = auto()
-    
+
     class NumberFormat(Enum):
         INDIAN = auto()
         INTERNATIONAL = auto()
-    
+
     DEFAULTS = {
         'app': {
             'version': '5.1.0',
@@ -568,12 +581,12 @@ class Configuration:
             'allowed_html_tags': ['table', 'tr', 'td', 'th', 'tbody', 'thead', 'p', 'div', 'span', 'br'],
         }
     }
-    
+
     def __init__(self, custom_config: Optional[Dict[str, Any]] = None):
         self._config = self._deep_merge(self.DEFAULTS.copy(), custom_config or {})
         self._validate_config()
         self._logger = LoggerFactory.get_logger('Configuration')
-    
+
     def _deep_merge(self, base: Dict, override: Dict) -> Dict:
         """Deep merge two dictionaries"""
         for key, value in override.items():
@@ -582,31 +595,31 @@ class Configuration:
             else:
                 base[key] = value
         return base
-    
+
     def _validate_config(self):
         """Validate configuration values"""
         # App validation
         if self._config['app']['max_file_size_mb'] <= 0:
             raise ConfigurationError("max_file_size_mb must be positive")
-        
+
         if not self._config['app']['allowed_file_types']:
             raise ConfigurationError("allowed_file_types cannot be empty")
-        
+
         # Processing validation
         if self._config['processing']['max_workers'] <= 0:
             raise ConfigurationError("max_workers must be positive")
-        
+
         if self._config['processing']['timeout_seconds'] <= 0:
             raise ConfigurationError("timeout_seconds must be positive")
-        
+
         # Analysis validation
         if not 0 < self._config['analysis']['confidence_threshold'] <= 1:
             raise ConfigurationError("confidence_threshold must be between 0 and 1")
-        
+
         # AI validation - Fixed
         if self._config['ai']['use_kaggle_api'] and not self._config['ai']['kaggle_api_url']:
             self._config['ai']['use_kaggle_api'] = False
-    
+
     def get(self, path: str, default: Any = None) -> Any:
         """Get configuration value by dot-separated path"""
         try:
@@ -617,45 +630,46 @@ class Configuration:
         except (KeyError, TypeError):
             self._logger.warning(f"Configuration key '{path}' not found, using default: {default}")
             return default
-    
+
     def set(self, path: str, value: Any):
         """Set configuration value by dot-separated path"""
         keys = path.split('.')
         target = self._config
-        
+
         for key in keys[:-1]:
             if key not in target:
                 target[key] = {}
             target = target[key]
-        
+
         target[keys[-1]] = value
         self._logger.info(f"Configuration updated: {path} = {value}")
-    
+
     @contextmanager
     def override(self, **overrides):
         """Temporarily override configuration values"""
         original = {}
-        
+
         try:
             for path, value in overrides.items():
                 original[path] = self.get(path)
                 self.set(path, value)
-            
+
             yield self
-            
+
         finally:
             for path, value in original.items():
                 self.set(path, value)
+
 
 # --- 7. Number Formatting Functions ---
 def format_indian_number(value: float) -> str:
     """Format number in Indian numbering system"""
     if pd.isna(value) or value is None:
         return "-"
-    
+
     abs_value = abs(value)
     sign = "-" if value < 0 else ""
-    
+
     if abs_value >= 10000000:  # Crores
         return f"{sign}₹ {abs_value/10000000:.2f} Cr"
     elif abs_value >= 100000:  # Lakhs
@@ -665,14 +679,15 @@ def format_indian_number(value: float) -> str:
     else:
         return f"{sign}₹ {abs_value:.0f}"
 
+
 def format_international_number(value: float) -> str:
     """Format number in international system"""
     if pd.isna(value) or value is None:
         return "-"
-    
+
     abs_value = abs(value)
     sign = "-" if value < 0 else ""
-    
+
     if abs_value >= 1000000000:  # Billions
         return f"{sign}${abs_value/1000000000:.2f}B"
     elif abs_value >= 1000000:  # Millions
@@ -681,6 +696,7 @@ def format_international_number(value: float) -> str:
         return f"{sign}${abs_value/1000:.1f}K"
     else:
         return f"{sign}${abs_value:.0f}"
+
 
 # Cached formatter selection
 @lru_cache(maxsize=2)
@@ -691,10 +707,11 @@ def get_number_formatter(format_type: str) -> Callable:
     else:
         return format_international_number
 
+
 # --- 8. Enhanced Caching System ---
 class CacheEntry:
     """Cache entry with metadata and compression support"""
-    
+
     def __init__(self, value: Any, ttl: Optional[int] = None, compressed: bool = False):
         self.value = value
         self.created_at = time.time()
@@ -702,25 +719,26 @@ class CacheEntry:
         self.access_count = 0
         self.last_accessed = time.time()
         self.compressed = compressed
-    
+
     def is_expired(self) -> bool:
         """Check if entry is expired"""
         if self.ttl is None:
             return False
         return time.time() - self.created_at > self.ttl
-    
+
     def access(self) -> Any:
         """Access the value and update metadata"""
         self.access_count += 1
         self.last_accessed = time.time()
-        
+
         if self.compressed:
             return pickle.loads(zlib.decompress(self.value))
         return self.value
 
+
 class AdvancedCache:
     """Thread-safe cache with TTL, size limits, compression, and statistics"""
-    
+
     def __init__(self, max_size_mb: int = 100, default_ttl: int = 3600):
         self._cache: Dict[str, CacheEntry] = {}
         self._lock = threading.RLock()
@@ -729,71 +747,71 @@ class AdvancedCache:
         self._stats = defaultdict(int)
         self._logger = LoggerFactory.get_logger('Cache')
         self._compression_threshold = 100 * 1024  # 100KB
-    
+
     def _estimate_size(self, obj: Any) -> int:
         """Estimate object size in bytes"""
         try:
             return len(pickle.dumps(obj))
         except Exception:
             return 1024
-    
+
     def _compress_value(self, value: Any) -> bytes:
         """Compress large values"""
         return zlib.compress(pickle.dumps(value), level=6)
-    
+
     def _evict_if_needed(self):
         """Evict entries if cache is too large"""
         current_size = sum(self._estimate_size(entry.value) for entry in self._cache.values())
-        
+
         if current_size > self._max_size_bytes:
             entries = sorted(
                 self._cache.items(),
                 key=lambda x: x[1].last_accessed
             )
-            
+
             while current_size > self._max_size_bytes * 0.8 and entries:
                 key, entry = entries.pop(0)
                 current_size -= self._estimate_size(entry.value)
                 del self._cache[key]
                 self._stats['evictions'] += 1
                 self._logger.debug(f"Evicted cache entry: {key}")
-    
+
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache"""
         with self._lock:
             self._stats['get_calls'] += 1
-            
+
             if key in self._cache:
                 entry = self._cache[key]
-                
+
                 if entry.is_expired():
                     del self._cache[key]
                     self._stats['expired'] += 1
                     return None
-                
+
                 self._stats['hits'] += 1
                 return entry.access()
-            
+
             self._stats['misses'] += 1
             return None
-    
+
     def set(self, key: str, value: Any, ttl: Optional[int] = None, compress: bool = None):
         """Set value in cache with optional compression"""
         with self._lock:
             self._stats['set_calls'] += 1
-            
+
             if compress is None:
                 compress = self._estimate_size(value) > self._compression_threshold
-            
+
             if compress:
                 compressed_value = self._compress_value(value)
                 entry = CacheEntry(compressed_value, ttl or self._default_ttl, compressed=True)
             else:
                 entry = CacheEntry(value, ttl or self._default_ttl, compressed=False)
-            
+
             self._cache[key] = entry
             self._evict_if_needed()
-    
+
     def delete(self, key: str) -> bool:
         """Delete entry from cache"""
         with self._lock:
@@ -802,19 +820,19 @@ class AdvancedCache:
                 self._stats['deletes'] += 1
                 return True
             return False
-    
+
     def clear(self):
         """Clear all cache entries"""
         with self._lock:
             self._cache.clear()
             self._stats['clears'] += 1
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
         with self._lock:
             total_calls = self._stats['get_calls']
             hit_rate = (self._stats['hits'] / total_calls * 100) if total_calls > 0 else 0
-            
+
             return {
                 'entries': len(self._cache),
                 'size_bytes': sum(self._estimate_size(e.value) for e in self._cache.values()),
@@ -822,10 +840,11 @@ class AdvancedCache:
                 **self._stats
             }
 
+
 # --- 9. Resource Management ---
 class ResourceManager:
     """Manage computational resources and prevent overload"""
-    
+
     def __init__(self, config: Configuration):
         self.config = config
         self._semaphore = threading.Semaphore(config.get('processing.max_workers', 4))
@@ -836,65 +855,65 @@ class ResourceManager:
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=config.get('processing.max_workers', 4)
         )
-    
+
     def __del__(self):
         """Cleanup resources"""
         if hasattr(self, '_executor'):
             self._executor.shutdown(wait=False)
-    
+
     @contextmanager
     def acquire_worker(self, task_name: str):
         """Acquire a worker slot for processing"""
         acquired = False
         start_time = time.time()
-        
+
         try:
             acquired = self._semaphore.acquire(
                 timeout=self.config.get('processing.timeout_seconds', 30)
             )
-            
+
             if not acquired:
                 raise TimeoutError(f"Failed to acquire worker for {task_name}")
-            
+
             with self._lock:
                 self._active_tasks.add(task_name)
-            
+
             self._logger.debug(f"Acquired worker for {task_name}")
             yield
-            
+
         finally:
             if acquired:
                 self._semaphore.release()
-                
+
                 with self._lock:
                     self._active_tasks.discard(task_name)
-                
+
                 elapsed = time.time() - start_time
                 self._logger.debug(f"Released worker for {task_name} after {elapsed:.2f}s")
-    
-    def process_batch(self, items: List[Any], process_func: Callable, 
+
+    def process_batch(self, items: List[Any], process_func: Callable,
                      batch_size: Optional[int] = None) -> List[Any]:
         """Process items in batches for better performance"""
         if batch_size is None:
             batch_size = self.config.get('processing.batch_size', 5)
-        
+
         results = []
         futures = []
-        
+
         for i in range(0, len(items), batch_size):
             batch = items[i:i + batch_size]
             future = self._executor.submit(process_func, batch)
             futures.append(future)
-        
+
         for future in concurrent.futures.as_completed(futures):
             try:
                 result = future.result()
                 results.extend(result if isinstance(result, list) else [result])
             except Exception as e:
                 self._logger.error(f"Batch processing error: {e}")
-        
+
         return results
-    
+
     def check_memory_available(self, estimated_size: int) -> bool:
         """Check if enough memory is available"""
         if PSUTIL_AVAILABLE:
@@ -912,21 +931,22 @@ class ResourceManager:
                 return soft == resource.RLIM_INFINITY or estimated_size < soft * 0.5
             except:
                 return True
-    
+
     def get_active_tasks(self) -> List[str]:
         """Get list of active tasks"""
         with self._lock:
             return list(self._active_tasks)
-    
+
     def shutdown(self):
         """Shutdown the executor"""
         if hasattr(self, '_executor'):
             self._executor.shutdown(wait=True)
 
+
 # --- 10. Data Validation ---
 class ValidationResult:
     """Result of validation with detailed information"""
-    
+
     def __init__(self):
         self.is_valid = True
         self.errors: List[str] = []
@@ -934,24 +954,24 @@ class ValidationResult:
         self.info: List[str] = []
         self.metadata: Dict[str, Any] = {}
         self.corrections: List[str] = []
-    
+
     def add_error(self, message: str):
         """Add error message"""
         self.errors.append(message)
         self.is_valid = False
-    
+
     def add_warning(self, message: str):
         """Add warning message"""
         self.warnings.append(message)
-    
+
     def add_info(self, message: str):
         """Add info message"""
         self.info.append(message)
-    
+
     def add_correction(self, message: str):
         """Add correction message"""
         self.corrections.append(message)
-    
+
     def merge(self, other: 'ValidationResult'):
         """Merge another validation result"""
         self.is_valid = self.is_valid and other.is_valid
@@ -961,25 +981,26 @@ class ValidationResult:
         self.corrections.extend(other.corrections)
         self.metadata.update(other.metadata)
 
+
 class DataValidator:
     """Advanced data validation with comprehensive checks and auto-correction"""
-    
+
     def __init__(self, config: Configuration):
         self.config = config
         self._logger = LoggerFactory.get_logger('DataValidator')
         self.enable_auto_correction = config.get('analysis.enable_auto_correction', True)
-    
+
     @error_boundary((pd.DataFrame(), ValidationResult()))
     def validate_and_correct(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Validate and auto-correct dataframe"""
         result = self.validate_dataframe(df, context)
-        
+
         if not self.enable_auto_correction:
             return df, result
-        
+
         corrected_df = df.copy()
         corrections_made = []
-        
+
         # Define items that CAN be negative
         negative_allowed_keywords = [
             'cash used', 'net cash used', 'purchased of', 'purchase of',
@@ -987,25 +1008,25 @@ class DataValidator:
             'loss', 'deficit', 'outflow', 'payment', 'dividend',
             'comprehensive income', 'other comprehensive'
         ]
-        
+
         # Define items that should ALWAYS be positive
         always_positive_keywords = [
             'total assets', 'total equity', 'revenue from operations',
             'gross revenue', 'net revenue', 'total revenue'
         ]
-        
+
         # Auto-corrections for positive metrics only
         for idx in corrected_df.index:
             idx_lower = str(idx).lower()
-            
+
             # Skip if this metric is allowed to be negative
             if any(keyword in idx_lower for keyword in negative_allowed_keywords):
                 continue
-                
+
             # Only fix if it's in the always positive list
             if any(keyword in idx_lower for keyword in always_positive_keywords):
                 row_data = corrected_df.loc[idx]
-                
+
                 try:
                     numeric_data = pd.to_numeric(row_data, errors='coerce')
                     negative_mask = numeric_data < 0
@@ -1014,32 +1035,32 @@ class DataValidator:
                         corrections_made.append(f"Converted negative values to positive in {idx}")
                 except Exception as e:
                     self._logger.warning(f"Error processing {idx}: {e}")
-        
+
         # Update result
         if corrections_made:
             result.add_info(f"Applied {len(corrections_made)} auto-corrections")
             result.corrections = corrections_made
-        
+
         return corrected_df, result
-    
+
     def _fix_accounting_equation(self, df: pd.DataFrame, corrections_made: List[str]):
         """Fix violations of accounting equation (Assets = Liabilities + Equity)"""
         asset_rows = [idx for idx in df.index if 'total asset' in str(idx).lower()]
         liability_rows = [idx for idx in df.index if 'total liabilit' in str(idx).lower()]
         equity_rows = [idx for idx in df.index if 'total equity' in str(idx).lower()]
-        
+
         if asset_rows and liability_rows and equity_rows:
             for col in df.select_dtypes(include=[np.number]).columns:
                 try:
                     assets = df.loc[asset_rows[0], col]
                     liabilities = df.loc[liability_rows[0], col]
                     equity = df.loc[equity_rows[0], col]
-                    
+
                     if not pd.isna(assets) and not pd.isna(liabilities) and not pd.isna(equity):
                         expected_assets = liabilities + equity
                         diff = abs(assets - expected_assets)
                         tolerance = assets * 0.01
-                        
+
                         if diff > tolerance:
                             df.loc[equity_rows[0], col] = assets - liabilities
                             corrections_made.append(
@@ -1047,35 +1068,35 @@ class DataValidator:
                             )
                 except Exception:
                     pass
-    
+
     def validate_dataframe(self, df: pd.DataFrame, context: str = "data") -> ValidationResult:
         """Comprehensive dataframe validation"""
         result = ValidationResult()
-        
+
         # Basic structure checks
         if df.empty:
             result.add_error(f"{context}: DataFrame is empty")
             return result
-        
+
         if len(df.columns) == 0:
             result.add_error(f"{context}: No columns found")
             return result
-        
+
         # Check dataset size
         if df.shape[0] > 1000000:
             result.add_warning(f"{context}: Large dataset ({df.shape[0]} rows), performance may be impacted")
-        
+
         # Calculate missing values correctly for numeric columns only
         numeric_df = df.select_dtypes(include=[np.number])
         if not numeric_df.empty:
             total_cells = numeric_df.shape[0] * numeric_df.shape[1]
             missing_cells = numeric_df.isnull().sum().sum()
             missing_pct = (missing_cells / total_cells) * 100
-            
+
             # Report missing data with appropriate severity
             if missing_pct > 50:
                 result.add_warning(f"{context}: High percentage of missing values ({missing_pct:.1f}%)")
-                
+
                 # Identify columns with most missing values
                 missing_by_col = numeric_df.isnull().sum()
                 worst_cols = missing_by_col.nlargest(3)
@@ -1088,63 +1109,63 @@ class DataValidator:
         else:
             result.add_warning(f"{context}: No numeric columns found")
             missing_pct = 0
-        
+
         # Check for duplicate indices
         if df.index.duplicated().any():
             dup_count = df.index.duplicated().sum()
             result.add_warning(f"{context}: {dup_count} duplicate indices found")
-            
+
             # Identify which indices are duplicated
             dup_indices = df.index[df.index.duplicated(keep=False)].unique()
             for idx in dup_indices[:5]:  # Show first 5 duplicates
                 count = (df.index == idx).sum()
                 result.add_info(f"Index '{idx}' appears {count} times")
-            
+
             if len(dup_indices) > 5:
                 result.add_info(f"... and {len(dup_indices) - 5} more duplicate indices")
-        
+
         # Check for constant columns
         for col in df.columns:
             if df[col].nunique() == 1:
                 result.add_info(f"{context}: Column '{col}' has constant value")
-        
+
         # Smart negative value checking for numeric columns
         for col in numeric_df.columns:
             series = numeric_df[col].dropna()
             if len(series) > 0 and (series < 0).any():
                 negative_count = (series < 0).sum()
                 negative_pct = (negative_count / len(series)) * 100
-                
+
                 col_lower = str(col).lower()
-                
+
                 # Define patterns for items that can legitimately be negative
                 negative_allowed = [
                     'cash used', 'net cash used', 'cash flow from',
                     'purchased', 'purchase of', 'expenditure', 'expense',
-                    'cost', 'depreciation', 'amortization', 'loss', 
+                    'cost', 'depreciation', 'amortization', 'loss',
                     'deficit', 'outflow', 'payment', 'dividend',
                     'comprehensive income', 'other comprehensive',
                     'tax', 'interest', 'financing activities',
                     'investing activities'
                 ]
-                
+
                 # Define patterns for items that should always be positive
                 always_positive = [
                     'total assets', 'total equity', 'revenue from operations',
                     'gross revenue', 'net revenue', 'total revenue',
                     'sales', 'total liabilities'
                 ]
-                
+
                 # Check context from both column name and row indices
                 context_allows_negative = any(keyword in col_lower for keyword in negative_allowed)
-                
+
                 # Also check if any row index indicates cash flow context
                 if not context_allows_negative and 'cash flow' in context.lower():
                     context_allows_negative = True
-                
+
                 # Determine if this is a problem
                 is_always_positive = any(keyword in col_lower for keyword in always_positive)
-                
+
                 if is_always_positive:
                     result.add_warning(f"{context}: Column '{col}' contains {negative_count} negative values ({negative_pct:.1f}%)")
                 elif context_allows_negative:
@@ -1154,7 +1175,7 @@ class DataValidator:
                     # For ambiguous cases, only warn if significant
                     if negative_pct > 10:
                         result.add_info(f"{context}: Column '{col}' contains {negative_count} negative values ({negative_pct:.1f}%)")
-        
+
         # Check for outliers using IQR method
         outlier_info = {}
         for col in numeric_df.columns:
@@ -1163,27 +1184,27 @@ class DataValidator:
                 Q1 = series.quantile(0.25)
                 Q3 = series.quantile(0.75)
                 IQR = Q3 - Q1
-                
+
                 if IQR > 0:
                     # Use standard 1.5*IQR for initial check
                     lower_bound = Q1 - 1.5 * IQR
                     upper_bound = Q3 + 1.5 * IQR
-                    
+
                     outliers = series[(series < lower_bound) | (series > upper_bound)]
                     outlier_pct = (len(outliers) / len(series)) * 100
-                    
+
                     if outlier_pct > 20:
                         result.add_warning(f"{context}: Column '{col}' has high outlier percentage ({outlier_pct:.1f}%)")
                         outlier_info[col] = len(outliers)
                     elif outlier_pct > 10:
                         result.add_info(f"{context}: Column '{col}' has {len(outliers)} outliers ({outlier_pct:.1f}%)")
                         outlier_info[col] = len(outliers)
-        
+
         # Check data types
         non_numeric_cols = df.select_dtypes(exclude=[np.number]).columns
         if len(non_numeric_cols) > 0:
             result.add_info(f"{context}: {len(non_numeric_cols)} non-numeric columns: {list(non_numeric_cols)[:3]}...")
-        
+
         # Store metadata
         result.metadata['shape'] = df.shape
         result.metadata['columns'] = list(df.columns)
@@ -1193,41 +1214,41 @@ class DataValidator:
         result.metadata['missing_percentage'] = missing_pct
         result.metadata['duplicate_indices'] = list(df.index[df.index.duplicated()].unique())
         result.metadata['outlier_columns'] = outlier_info
-        
+
         return result
-    
+
     def validate_financial_data(self, df: pd.DataFrame) -> ValidationResult:
         """Validate financial statement data"""
         result = self.validate_dataframe(df, "financial_data")
-        
+
         required_keywords = ['asset', 'liability', 'equity', 'revenue', 'expense']
         found_keywords = []
-        
+
         for keyword in required_keywords:
             if any(keyword in str(idx).lower() for idx in df.index):
                 found_keywords.append(keyword)
-        
+
         if len(found_keywords) < 2:
             result.add_warning(
                 "Limited financial keywords found in data. "
                 "Please verify the data contains financial statements."
             )
-        
+
         asset_rows = [idx for idx in df.index if 'total asset' in str(idx).lower()]
         liability_rows = [idx for idx in df.index if 'total liabilit' in str(idx).lower()]
         equity_rows = [idx for idx in df.index if 'total equity' in str(idx).lower()]
-        
+
         if asset_rows and liability_rows and equity_rows:
             for col in df.select_dtypes(include=[np.number]).columns:
                 try:
                     assets = df.loc[asset_rows[0], col]
                     liabilities = df.loc[liability_rows[0], col]
                     equity = df.loc[equity_rows[0], col]
-                    
+
                     if not pd.isna(assets) and not pd.isna(liabilities) and not pd.isna(equity):
                         diff = abs(assets - (liabilities + equity))
                         tolerance = assets * 0.01
-                        
+
                         if diff > tolerance:
                             result.add_warning(
                                 f"Accounting equation imbalance in {col}: "
@@ -1236,21 +1257,22 @@ class DataValidator:
                             )
                 except Exception:
                     pass
-        
+
         return result
+
 
 # --- 11. Pattern Matching System ---
 class PatternMatcher:
     """Advanced pattern matching for financial metrics with compiled patterns"""
-    
+
     # Class-level compiled patterns for efficiency
     _compiled_patterns = None
     _lock = threading.Lock()
-    
+
     def __init__(self):
         self._logger = LoggerFactory.get_logger('PatternMatcher')
         self._patterns = self._get_compiled_patterns()
-    
+
     @classmethod
     def _get_compiled_patterns(cls) -> Dict[str, List[re.Pattern]]:
         """Get compiled patterns with caching"""
@@ -1259,7 +1281,7 @@ class PatternMatcher:
                 if cls._compiled_patterns is None:
                     cls._compiled_patterns = cls._build_patterns()
         return cls._compiled_patterns
-    
+
     @staticmethod
     def _build_patterns() -> Dict[str, List[re.Pattern]]:
         """Build comprehensive pattern library"""
@@ -1369,57 +1391,58 @@ class PatternMatcher:
                 re.compile(r'\binterest\s+cost\b', re.IGNORECASE),
             ],
         }
-    
+
     def find_matches(self, text: str, metric_type: str) -> List[Tuple[str, float]]:
         """Find pattern matches with confidence scores"""
         matches = []
-        
+
         if metric_type not in self._patterns:
             return matches
-        
+
         for pattern in self._patterns[metric_type]:
             if pattern.search(text):
                 match = pattern.search(text)
                 confidence = self._calculate_confidence(text, match)
                 matches.append((metric_type, confidence))
-        
+
         return matches
-    
+
     def _calculate_confidence(self, text: str, match: re.Match) -> float:
         """Calculate confidence score for a match"""
         confidence = 0.7
-        
+
         if match.group(0).lower() == text.lower():
             confidence += 0.2
-        
+
         position_ratio = match.start() / len(text)
         confidence += (1 - position_ratio) * 0.1
-        
+
         return min(confidence, 1.0)
-    
+
     def classify_metric(self, text: str) -> Dict[str, float]:
         """Classify a metric into categories with confidence scores"""
         classifications = defaultdict(float)
-        
+
         for metric_type in self._patterns:
             matches = self.find_matches(text, metric_type)
             for _, confidence in matches:
                 classifications[metric_type] = max(
-                    classifications[metric_type], 
+                    classifications[metric_type],
                     confidence
                 )
-        
+
         return dict(classifications)
+
 
 # --- 12. Base Component Class ---
 class Component(ABC):
     """Base component with lifecycle management"""
-    
+
     def __init__(self, config: Configuration):
         self.config = config
         self._logger = LoggerFactory.get_logger(self.__class__.__name__)
         self._initialized = False
-    
+
     def initialize(self):
         """Initialize component"""
         if not self._initialized:
@@ -1427,33 +1450,34 @@ class Component(ABC):
             with performance_monitor.measure(f"init_{self.__class__.__name__}"):
                 self._do_initialize()
             self._initialized = True
-    
+
     @abstractmethod
     def _do_initialize(self):
         """Actual initialization logic"""
         pass
-    
+
     def cleanup(self):
         """Cleanup component"""
         if self._initialized:
             self._logger.info(f"Cleaning up {self.__class__.__name__}")
             self._do_cleanup()
             self._initialized = False
-    
+
     def _do_cleanup(self):
         """Actual cleanup logic"""
         pass
 
+
 # --- 13. Security Module ---
 class SecurityModule(Component):
     """Enhanced security with comprehensive validation"""
-    
+
     def __init__(self, config: Configuration):
         super().__init__(config)
         self._sanitizer = None
         self._rate_limiter = defaultdict(deque)
         self._blocked_ips = set()
-    
+
     def _do_initialize(self):
         """Initialize security components"""
         self._allowed_tags = self.config.get('security.allowed_html_tags', [])
@@ -1461,81 +1485,81 @@ class SecurityModule(Component):
             '*': ['class', 'id'],
             'table': ['border', 'cellpadding', 'cellspacing'],
         }
-    
+
     @error_boundary()
     def sanitize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Deep sanitization of dataframe content"""
         sanitized = df.copy()
-        
+
         for col in sanitized.select_dtypes(include=['object']).columns:
             sanitized[col] = sanitized[col].apply(
                 lambda x: bleach.clean(str(x)) if pd.notna(x) else x
             )
-        
+
         for col in sanitized.select_dtypes(include=[np.number]).columns:
             max_val = sanitized[col].max()
             if pd.notna(max_val) and max_val > 1e15:
                 self._logger.warning(f"Extremely large values detected in {col}")
-        
+
         return sanitized
-    
+
     def validate_file_upload(self, file: UploadedFile) -> ValidationResult:
         """Comprehensive file validation"""
         result = ValidationResult()
-        
+
         max_size = self.config.get('security.max_upload_size_mb', 50) * 1024 * 1024
         if file.size > max_size:
             result.add_error(f"File size ({file.size / 1024 / 1024:.1f}MB) exceeds limit ({max_size / 1024 / 1024}MB)")
             return result
-        
+
         allowed_types = self.config.get('app.allowed_file_types', [])
         file_ext = Path(file.name).suffix.lower().lstrip('.')
-        
+
         if file_ext not in allowed_types:
             result.add_error(f"File type '{file_ext}' not allowed. Allowed types: {', '.join(allowed_types)}")
             return result
-        
+
         suspicious_patterns = [
             r'\.\./', r'\.\.\\',  # Path traversal
             r'[<>:"|?*]',  # Invalid characters
             r'^\.',  # Hidden files
             r'\.(exe|bat|cmd|sh|ps1)$',  # Executable extensions
         ]
-        
+
         for pattern in suspicious_patterns:
             if re.search(pattern, file.name, re.IGNORECASE):
                 result.add_error(f"Suspicious file name pattern detected")
                 return result
-        
+
         if file_ext in ['html', 'htm', 'xml']:
             content = self._read_file_safely(file)
             if content:
                 validation = self._validate_html_content(content)
                 result.merge(validation)
-        
+
         return result
-    
+
     def _read_file_safely(self, file: UploadedFile, max_bytes: int = 1024 * 1024) -> Optional[str]:
         """Safely read file content with size limit"""
         try:
             content = file.read(max_bytes)
             file.seek(0)
-            
+
             for encoding in ['utf-8', 'latin-1', 'cp1252']:
                 try:
                     return content.decode(encoding)
                 except UnicodeDecodeError:
                     continue
-            
+
             return None
         except Exception as e:
             self._logger.error(f"Error reading file: {e}")
             return None
-    
+
     def _validate_html_content(self, content: str) -> ValidationResult:
         """Validate HTML content for security issues"""
         result = ValidationResult()
-        
+
         malicious_patterns = [
             (r'<script', 'JavaScript code detected'),
             (r'javascript:', 'JavaScript protocol detected'),
@@ -1548,17 +1572,17 @@ class SecurityModule(Component):
             (r'expression\s*\(', 'CSS expression detected'),
             (r'vbscript:', 'VBScript protocol detected'),
         ]
-        
+
         content_lower = content.lower()
         for pattern, message in malicious_patterns:
             if re.search(pattern, content_lower):
                 result.add_error(f"Security issue: {message}")
-        
+
         if len(content) > 10 * 1024 * 1024:
             result.add_warning("Large HTML content may impact performance")
-        
+
         return result
-    
+
     def sanitize_html(self, content: str) -> str:
         """Sanitize HTML content"""
         return bleach.clean(
@@ -1568,42 +1592,43 @@ class SecurityModule(Component):
             strip=True,
             strip_comments=True
         )
-    
-    def check_rate_limit(self, identifier: str, action: str, 
+
+    def check_rate_limit(self, identifier: str, action: str,
                         limit: Optional[int] = None, window: Optional[int] = None) -> bool:
         """Check rate limit for an action"""
         if limit is None:
             limit = self.config.get('security.rate_limit_requests', 100)
         if window is None:
             window = self.config.get('security.rate_limit_window', 60)
-        
+
         key = f"{identifier}:{action}"
         now = time.time()
-        
+
         self._rate_limiter[key] = deque(
             [t for t in self._rate_limiter[key] if now - t < window],
             maxlen=limit
         )
-        
+
         if len(self._rate_limiter[key]) >= limit:
             self._logger.warning(f"Rate limit exceeded for {key}")
             return False
-        
+
         self._rate_limiter[key].append(now)
         return True
+
 
 # --- 14. Compression Handler ---
 class CompressionHandler:
     """Handle compressed file extraction with proper cleanup"""
-    
+
     def __init__(self, logger):
         self.logger = logger
         self.temp_dirs = []
-    
+
     def __del__(self):
         """Cleanup temporary directories"""
         self.cleanup()
-    
+
     def cleanup(self):
         """Clean up temporary directories"""
         for temp_dir in self.temp_dirs:
@@ -1614,18 +1639,18 @@ class CompressionHandler:
             except Exception as e:
                 self.logger.error(f"Error cleaning up temp dir: {e}")
         self.temp_dirs.clear()
-    
+
     def extract_compressed_file(self, file: UploadedFile) -> List[Tuple[str, bytes]]:
         """Extract compressed file and return list of (filename, content) tuples"""
         extracted_files = []
         temp_dir = Path(tempfile.mkdtemp())
         self.temp_dirs.append(temp_dir)
-        
+
         try:
             temp_file = temp_dir / file.name
             with open(temp_file, 'wb') as f:
                 f.write(file.getbuffer())
-            
+
             if file.name.lower().endswith('.zip'):
                 extracted_files = self._extract_zip(temp_file, temp_dir)
             elif file.name.lower().endswith('.7z'):
@@ -1634,9 +1659,9 @@ class CompressionHandler:
                 else:
                     st.error("7z support not available. Please install 'py7zr' package: pip install py7zr")
                     return []
-            
+
             self.logger.info(f"Extracted {len(extracted_files)} files from {file.name}")
-            
+
         except Exception as e:
             self.logger.error(f"Error extracting {file.name}: {e}")
             st.error(f"Error extracting compressed file: {str(e)}")
@@ -1647,21 +1672,21 @@ class CompressionHandler:
                     temp_file.unlink()
             except:
                 pass
-        
+
         return extracted_files
-    
+
     def _extract_zip(self, zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
         """Extract ZIP file"""
         extracted = []
-        
+
         with zipfile.ZipFile(zip_path, 'r') as zip_file:
             file_list = zip_file.namelist()
             supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
-            
+
             for file_name in file_list:
                 if file_name.endswith('/') or file_name.startswith('.') or '/' in file_name and file_name.split('/')[-1].startswith('.'):
                     continue
-                
+
                 if any(file_name.lower().endswith(ext) for ext in supported_extensions):
                     try:
                         content = zip_file.read(file_name)
@@ -1670,17 +1695,17 @@ class CompressionHandler:
                         self.logger.info(f"Extracted: {clean_name}")
                     except Exception as e:
                         self.logger.error(f"Error extracting {file_name}: {e}")
-        
+
         return extracted
-    
+
     def _extract_7z(self, seven_zip_path: Path, temp_dir: Path) -> List[Tuple[str, bytes]]:
         """Extract 7z file"""
         extracted = []
-        
+
         with py7zr.SevenZipFile(seven_zip_path, mode='r') as seven_zip:
             seven_zip.extractall(path=temp_dir)
             supported_extensions = ['.csv', '.html', '.htm', '.xls', '.xlsx']
-            
+
             for extracted_file in temp_dir.rglob('*'):
                 if extracted_file.is_file() and not extracted_file.name.startswith('.'):
                     if any(extracted_file.name.lower().endswith(ext) for ext in supported_extensions):
@@ -1691,30 +1716,31 @@ class CompressionHandler:
                             self.logger.info(f"Extracted: {extracted_file.name}")
                         except Exception as e:
                             self.logger.error(f"Error reading {extracted_file}: {e}")
-        
+
         return extracted
+
 
 # --- 15. Data Processing Pipeline ---
 class DataProcessor(Component):
     """Advanced data processing with pipeline architecture and batch support"""
-    
+
     def __init__(self, config: Configuration):
         super().__init__(config)
         self._transformers = []
         self._validators = []
         self.resource_manager = None
         self.chunk_size = config.get('processing.chunk_size', 10000)
-    
+
     def _do_initialize(self):
         """Initialize processor"""
         self.resource_manager = ResourceManager(self.config)
         self._setup_pipeline()
-    
+
     def _do_cleanup(self):
         """Cleanup processor resources"""
         if self.resource_manager:
             self.resource_manager.shutdown()
-    
+
     def _setup_pipeline(self):
         """Setup processing pipeline"""
         self._transformers = [
@@ -1723,13 +1749,13 @@ class DataProcessor(Component):
             self._interpolate_missing,
             self._detect_outliers,
         ]
-        
+
         validator = DataValidator(self.config)
         self._validators = [
             validator.validate_dataframe,
             validator.validate_financial_data,
         ]
-    
+
     @error_boundary()
     def process(self, df: pd.DataFrame, context: str = "data") -> Tuple[pd.DataFrame, ValidationResult]:
         """Process dataframe through pipeline"""
@@ -1738,21 +1764,21 @@ class DataProcessor(Component):
                 return self._process_large_dataframe(df, context)
             else:
                 return self._process_standard(df, context)
-    
+
     def _process_standard(self, df: pd.DataFrame, context: str) -> Tuple[pd.DataFrame, ValidationResult]:
         """Standard processing for normal-sized dataframes"""
         result = ValidationResult()
         processed_df = df.copy()
-        
+
         with self.resource_manager.acquire_worker(f"process_{context}"):
             for validator in self._validators:
                 validation = validator(processed_df)
                 result.merge(validation)
-                
+
                 if not validation.is_valid:
                     self._logger.warning(f"Validation failed in {context}")
                     break
-            
+
             if self.config.get('analysis.enable_auto_correction', True):
                 validator = DataValidator(self.config)
                 try:
@@ -1760,7 +1786,7 @@ class DataProcessor(Component):
                     result.merge(correction_result)
                 except Exception as e:
                     self._logger.error(f"Auto-correction failed: {e}")
-            
+
             if result.is_valid:
                 for transformer in self._transformers:
                     try:
@@ -1769,109 +1795,110 @@ class DataProcessor(Component):
                         result.add_error(f"Transformation error: {str(e)}")
                         self._logger.error(f"Error in transformer {transformer.__name__}: {e}")
                         break
-        
+
         return processed_df, result
-    
+
     def _process_large_dataframe(self, df: pd.DataFrame, context: str) -> Tuple[pd.DataFrame, ValidationResult]:
         """Process large dataframes in chunks to reduce memory usage"""
         self._logger.info(f"Processing large dataframe ({len(df)} rows) in chunks")
-        
+
         result = ValidationResult()
         chunks = []
-        
+
         for start in range(0, len(df), self.chunk_size):
             end = min(start + self.chunk_size, len(df))
             chunk = df.iloc[start:end]
-            
+
             processed_chunk, chunk_result = self._process_standard(chunk, f"{context}_chunk_{start}")
             chunks.append(processed_chunk)
             result.merge(chunk_result)
-            
+
             if not chunk_result.is_valid:
                 break
-        
+
         if chunks:
             processed_df = pd.concat(chunks)
         else:
             processed_df = df
-        
+
         return processed_df, result
-    
+
     def process_batch(self, dataframes: List[pd.DataFrame]) -> List[Tuple[pd.DataFrame, ValidationResult]]:
         """Process multiple dataframes in batch for efficiency"""
         return self.resource_manager.process_batch(
             dataframes,
             lambda batch: [self.process(df) for df in batch]
         )
-    
+
     def _clean_numeric_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean numeric data with advanced techniques"""
         df_clean = df.copy()
-        
+
         for col in df.select_dtypes(include=['object']).columns:
             converted = pd.to_numeric(df[col], errors='coerce')
-            
+
             if converted.notna().sum() > len(df) * 0.5:
                 df_clean[col] = converted
-        
+
         return df_clean
-    
+
     def _normalize_indices(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normalize index names"""
         df_norm = df.copy()
-        
+
         if isinstance(df.index, pd.Index):
             df_norm.index = df.index.map(lambda x: str(x).strip())
-        
+
         if df_norm.index.duplicated().any():
             df_norm = df_norm[~df_norm.index.duplicated(keep='first')]
             self._logger.warning("Removed duplicate indices")
-        
+
         return df_norm
-    
+
     def _interpolate_missing(self, df: pd.DataFrame) -> pd.DataFrame:
         """Interpolate missing values intelligently"""
         df_interp = df.copy()
         method = self.config.get('analysis.interpolation_method', 'linear')
-        
+
         for col in df.select_dtypes(include=[np.number]).columns:
             if df[col].isna().any():
                 non_na_count = df[col].notna().sum()
                 min_points = self.config.get('analysis.min_data_points', 3)
-                
+
                 if non_na_count >= min_points:
                     df_interp[col] = df[col].interpolate(method=method, limit_direction='both')
-        
+
         return df_interp
-    
+
     def _detect_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
         """Detect and optionally handle outliers"""
         df_clean = df.copy()
         outlier_threshold = self.config.get('analysis.outlier_std_threshold', 3)
-        
+
         for col in df.select_dtypes(include=[np.number]).columns:
             series = df[col].dropna()
             if len(series) > 3:
                 mean = series.mean()
                 std = series.std()
-                
+
                 if std > 0:
                     lower_bound = mean - outlier_threshold * std
                     upper_bound = mean + outlier_threshold * std
-                    
+
                     outliers = (series < lower_bound) | (series > upper_bound)
                     if outliers.any():
                         self._logger.info(f"Found {outliers.sum()} outliers in {col}")
-                        
+
                         outlier_indices = series[outliers].index.tolist()
                         SimpleState.set(f"outliers_{col}", outlier_indices)
-        
+
         return df_clean
+
 
 # --- 16. Financial Analysis Engine ---
 class FinancialAnalysisEngine(Component):
     """Core financial analysis engine with advanced features and caching"""
-    
+
     def __init__(self, config: Configuration):
         super().__init__(config)
         self.pattern_matcher = PatternMatcher()
@@ -1882,29 +1909,29 @@ class FinancialAnalysisEngine(Component):
             self.chart_generator = CoreChartGenerator()
             self.ratio_calculator = CoreRatioCalculator()
             self.industry_benchmarks = CoreIndustryBenchmarks()
-    
+
     def _do_initialize(self):
         """Initialize analysis components"""
         pass
-    
+
     @error_boundary({})
     def analyze_financial_statements(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Comprehensive financial statement analysis with caching"""
         # Generate cache key
         cache_key = self._generate_cache_key(df)
-        
+
         # Check memory cache first (fastest)
         if cache_key in self._analysis_cache:
             self._logger.info("Returning analysis from memory cache")
             return self._analysis_cache[cache_key]
-        
+
         # Check persistent cache
         cached_result = self.cache.get(cache_key)
         if cached_result:
             self._logger.info("Returning cached analysis")
             self._analysis_cache[cache_key] = cached_result
             return cached_result
-        
+
         # Perform analysis
         with performance_monitor.measure("analyze_financial_statements"):
             analysis = {
@@ -1916,19 +1943,19 @@ class FinancialAnalysisEngine(Component):
                 'insights': self._generate_insights(df),
                 'anomalies': self._detect_anomalies(df)
             }
-            
+
             # Cache the result
             self.cache.set(cache_key, analysis, ttl=3600)
             self._analysis_cache[cache_key] = analysis
-            
+
             # Limit memory cache size
             if len(self._analysis_cache) > 10:
                 # Remove oldest entry
                 oldest_key = next(iter(self._analysis_cache))
                 del self._analysis_cache[oldest_key]
-            
+
             return analysis
-            
+
     def _detect_anomalies(self, df: pd.DataFrame) -> Dict[str, List[Dict[str, Any]]]:
         """Detect anomalies in financial data with better thresholds"""
         anomalies = {
@@ -1936,9 +1963,9 @@ class FinancialAnalysisEngine(Component):
             'trend_anomalies': [],
             'ratio_anomalies': []
         }
-        
+
         numeric_df = df.select_dtypes(include=[np.number])
-        
+
         # Value anomalies - use IQR method instead of z-score for financial data
         for col in numeric_df.columns:
             series = numeric_df[col].dropna()
@@ -1950,10 +1977,10 @@ class FinancialAnalysisEngine(Component):
                     # Use 3*IQR for financial data (more lenient)
                     lower_bound = Q1 - 3 * IQR
                     upper_bound = Q3 + 3 * IQR
-                    
+
                     anomaly_mask = (series < lower_bound) | (series > upper_bound)
                     anomaly_indices = series[anomaly_mask].index
-                    
+
                     for idx in anomaly_indices:
                         anomalies['value_anomalies'].append({
                             'metric': str(idx),
@@ -1962,464 +1989,463 @@ class FinancialAnalysisEngine(Component):
                             'lower_bound': lower_bound,
                             'upper_bound': upper_bound
                         })
-        
+
         # Trend anomalies - only flag extreme changes
         for idx in df.index:
             series = numeric_df.loc[idx].dropna()
             if len(series) > 2:
                 # Calculate year-over-year changes
                 pct_changes = series.pct_change().dropna()
-                
+
                 # Only flag changes > 200% or < -66%
                 extreme_changes = pct_changes[(pct_changes > 2.0) | (pct_changes < -0.66)]
-                
+
                 for year, change in extreme_changes.items():
                     anomalies['trend_anomalies'].append({
                         'metric': str(idx),
                         'year': str(year),
                         'change_pct': float(change * 100)
                     })
-        
+
         return anomalies
 
-    
     def _generate_cache_key(self, df: pd.DataFrame) -> str:
-    """Generate cache key for dataframe"""
-    key_parts = [
-    str(df.shape),
-    str(df.index[:5].tolist()),
-    str(df.columns[:5].tolist()),
-    str(df.iloc[:5, :5].values.tolist()) if df.shape[0] >= 5 and df.shape[1] >= 5 else ""
-    ]
-    
-    key_string = "|".join(key_parts)
-    return hashlib.md5(key_string.encode()).hexdigest()
-    
+        """Generate cache key for dataframe"""
+        key_parts = [
+            str(df.shape),
+            str(df.index[:5].tolist()),
+            str(df.columns[:5].tolist()),
+            str(df.iloc[:5, :5].values.tolist()) if df.shape[0] >= 5 and df.shape[1] >= 5 else ""
+        ]
+
+        key_string = "|".join(key_parts)
+        return hashlib.md5(key_string.encode()).hexdigest()
+
     def _generate_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
-    """Generate summary statistics with better handling"""
-    summary = {
-    'total_metrics': len(df),
-    'years_covered': 0,
-    'year_range': "N/A",
-    'completeness': 0,
-    'key_statistics': {}
-    }
-    
-    numeric_df = df.select_dtypes(include=[np.number])
-    
-    if not numeric_df.empty:
-    # Calculate actual data completeness
-    total_cells = numeric_df.shape[0] * numeric_df.shape[1]
-    non_null_cells = numeric_df.notna().sum().sum()
-    completeness = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
-    
-    summary.update({
-    'years_covered': len(numeric_df.columns),
-    'year_range': f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
-    'completeness': completeness,
-    })
-    
-    # Only include statistics for columns with sufficient data
-    for col in numeric_df.columns[-3:]:
-    col_data = numeric_df[col].dropna()
-    if len(col_data) > 0:
-        summary['key_statistics'][str(col)] = {
-            'mean': float(col_data.mean()),
-            'median': float(col_data.median()),
-            'std': float(col_data.std()) if len(col_data) > 1 else 0,
-            'min': float(col_data.min()),
-            'max': float(col_data.max()),
-            'count': len(col_data)
+        """Generate summary statistics with better handling"""
+        summary = {
+            'total_metrics': len(df),
+            'years_covered': 0,
+            'year_range': "N/A",
+            'completeness': 0,
+            'key_statistics': {}
         }
-    
-    return summary
-    
+
+        numeric_df = df.select_dtypes(include=[np.number])
+
+        if not numeric_df.empty:
+            # Calculate actual data completeness
+            total_cells = numeric_df.shape[0] * numeric_df.shape[1]
+            non_null_cells = numeric_df.notna().sum().sum()
+            completeness = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
+
+            summary.update({
+                'years_covered': len(numeric_df.columns),
+                'year_range': f"{numeric_df.columns[0]} - {numeric_df.columns[-1]}" if len(numeric_df.columns) > 0 else "N/A",
+                'completeness': completeness,
+            })
+
+            # Only include statistics for columns with sufficient data
+            for col in numeric_df.columns[-3:]:
+                col_data = numeric_df[col].dropna()
+                if len(col_data) > 0:
+                    summary['key_statistics'][str(col)] = {
+                        'mean': float(col_data.mean()),
+                        'median': float(col_data.median()),
+                        'std': float(col_data.std()) if len(col_data) > 1 else 0,
+                        'min': float(col_data.min()),
+                        'max': float(col_data.max()),
+                        'count': len(col_data)
+                    }
+
+        return summary
+
     def _extract_key_metrics(self, df: pd.DataFrame) -> Dict[str, Any]:
-    """Extract and classify key financial metrics"""
-    metrics = {}
-    
-    for idx in df.index:
-    classifications = self.pattern_matcher.classify_metric(str(idx))
-    if classifications:
-    top_classification = max(classifications.items(), key=lambda x: x[1])
-    metric_type, confidence = top_classification
-    
-    if confidence > 0.5:
-        if metric_type not in metrics:
-            metrics[metric_type] = []
-        
-        metrics[metric_type].append({
-            'name': str(idx),
-            'confidence': confidence,
-            'values': df.loc[idx].to_dict()
-        })
-    
-    return metrics
-    
+        """Extract and classify key financial metrics"""
+        metrics = {}
+
+        for idx in df.index:
+            classifications = self.pattern_matcher.classify_metric(str(idx))
+            if classifications:
+                top_classification = max(classifications.items(), key=lambda x: x[1])
+                metric_type, confidence = top_classification
+
+                if confidence > 0.5:
+                    if metric_type not in metrics:
+                        metrics[metric_type] = []
+
+                    metrics[metric_type].append({
+                        'name': str(idx),
+                        'confidence': confidence,
+                        'values': df.loc[idx].to_dict()
+                    })
+
+        return metrics
+
     def _calculate_ratios(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
-    """Calculate financial ratios with proper error handling"""
-    ratios = {}
-    
-    # Use core components if available
-    if CORE_COMPONENTS_AVAILABLE and hasattr(self, 'ratio_calculator'):
-    ratios['Liquidity'] = self.ratio_calculator.calculate_liquidity_ratios(df)
-    ratios['Profitability'] = self.ratio_calculator.calculate_profitability_ratios(df)
-    ratios['Leverage'] = self.ratio_calculator.calculate_leverage_ratios(df)
-    ratios['Efficiency'] = self.ratio_calculator.calculate_efficiency_ratios(df)
-    else:
-    # Fallback implementation
-    metrics = self._extract_key_metrics(df)
-    
-    metric_values = {}
-    metric_keys = [
-    'current_assets', 'current_liabilities', 'total_assets', 'total_liabilities',
-    'total_equity', 'inventory', 'cash', 'net_income', 'revenue',
-    'cost_of_goods_sold', 'ebit', 'interest_expense', 'receivables'
-    ]
-    
-    for metric_key in metric_keys:
-    metric_value = self._get_metric_value(df, metrics, metric_key)
-    if metric_value is not None:
-        if isinstance(metric_value, pd.DataFrame):
-            metric_value = metric_value.iloc[0]
-        metric_values[metric_key] = metric_value
-    else:
-        metric_values[metric_key] = None
-    
-    def safe_divide(numerator_key, denominator_key, multiplier=1):
-    """Safely divide two metrics"""
-    numerator = metric_values.get(numerator_key)
-    denominator = metric_values.get(denominator_key)
-    
-    if numerator is None or denominator is None:
-        return None
-    
-    try:
-        if hasattr(denominator, 'replace'):
-            safe_denom = denominator.replace(0, np.nan)
+        """Calculate financial ratios with proper error handling"""
+        ratios = {}
+
+        # Use core components if available
+        if CORE_COMPONENTS_AVAILABLE and hasattr(self, 'ratio_calculator'):
+            ratios['Liquidity'] = self.ratio_calculator.calculate_liquidity_ratios(df)
+            ratios['Profitability'] = self.ratio_calculator.calculate_profitability_ratios(df)
+            ratios['Leverage'] = self.ratio_calculator.calculate_leverage_ratios(df)
+            ratios['Efficiency'] = self.ratio_calculator.calculate_efficiency_ratios(df)
         else:
-            safe_denom = denominator if denominator != 0 else np.nan
-        
-        result = (numerator / safe_denom) * multiplier
-        return result
-    except Exception as e:
-        self._logger.warning(f"Division error: {e}")
-        return None
-    
-    # Liquidity Ratios
-    try:
-    liquidity_data = {}
-    
-    current_ratio = safe_divide('current_assets', 'current_liabilities')
-    if current_ratio is not None:
-        liquidity_data['Current Ratio'] = current_ratio
-    
-    if metric_values['current_assets'] is not None and metric_values['inventory'] is not None:
-        quick_assets = metric_values['current_assets'] - metric_values['inventory']
-        if metric_values['current_liabilities'] is not None:
-            quick_ratio = quick_assets / metric_values['current_liabilities'].replace(0, np.nan)
-            liquidity_data['Quick Ratio'] = quick_ratio
-    
-    cash_ratio = safe_divide('cash', 'current_liabilities')
-    if cash_ratio is not None:
-        liquidity_data['Cash Ratio'] = cash_ratio
-    
-    if liquidity_data:
-        liquidity_df = pd.DataFrame(liquidity_data)
-        ratios['Liquidity'] = liquidity_df.T
-        
-    except Exception as e:
-    self._logger.error(f"Error calculating liquidity ratios: {e}")
-    
-    # Profitability Ratios
-    try:
-    profitability_data = {}
-    
-    npm = safe_divide('net_income', 'revenue', 100)
-    if npm is not None:
-        profitability_data['Net Profit Margin %'] = npm
-    
-    if metric_values['revenue'] is not None and metric_values['cost_of_goods_sold'] is not None:
-        gross_profit = metric_values['revenue'] - metric_values['cost_of_goods_sold']
-        gpm = (gross_profit / metric_values['revenue'].replace(0, np.nan)) * 100
-        profitability_data['Gross Profit Margin %'] = gpm
-    
-    roa = safe_divide('net_income', 'total_assets', 100)
-    if roa is not None:
-        profitability_data['Return on Assets %'] = roa
-    
-    roe = safe_divide('net_income', 'total_equity', 100)
-    if roe is not None:
-        profitability_data['Return on Equity %'] = roe
-    
-    if metric_values['ebit'] is not None and metric_values['total_assets'] is not None and metric_values['current_liabilities'] is not None:
-        capital_employed = metric_values['total_assets'] - metric_values['current_liabilities']
-        roce = (metric_values['ebit'] / capital_employed.replace(0, np.nan)) * 100
-        profitability_data['ROCE %'] = roce
-    
-    if profitability_data:
-        profitability_df = pd.DataFrame(profitability_data)
-        ratios['Profitability'] = profitability_df.T
-        
-    except Exception as e:
-    self._logger.error(f"Error calculating profitability ratios: {e}")
-    
-    # Leverage Ratios
-    try:
-    leverage_data = {}
-    
-    de_ratio = safe_divide('total_liabilities', 'total_equity')
-    if de_ratio is not None:
-        leverage_data['Debt to Equity'] = de_ratio
-    
-    debt_ratio = safe_divide('total_liabilities', 'total_assets')
-    if debt_ratio is not None:
-        leverage_data['Debt Ratio'] = debt_ratio
-    
-    icr = safe_divide('ebit', 'interest_expense')
-    if icr is not None:
-        leverage_data['Interest Coverage'] = icr
-    
-    if leverage_data:
-        leverage_df = pd.DataFrame(leverage_data)
-        ratios['Leverage'] = leverage_df.T
-        
-    except Exception as e:
-    self._logger.error(f"Error calculating leverage ratios: {e}")
-    
-    # Efficiency Ratios
-    try:
-    efficiency_data = {}
-    
-    asset_turnover = safe_divide('revenue', 'total_assets')
-    if asset_turnover is not None:
-        efficiency_data['Asset Turnover'] = asset_turnover
-    
-    inv_turnover = safe_divide('cost_of_goods_sold', 'inventory')
-    if inv_turnover is not None:
-        efficiency_data['Inventory Turnover'] = inv_turnover
-    
-    rec_turnover = safe_divide('revenue', 'receivables')
-    if rec_turnover is not None:
-        efficiency_data['Receivables Turnover'] = rec_turnover
-        efficiency_data['Days Sales Outstanding'] = 365 / rec_turnover.replace(0, np.nan)
-    
-    if efficiency_data:
-        efficiency_df = pd.DataFrame(efficiency_data)
-        ratios['Efficiency'] = efficiency_df.T
-        
-    except Exception as e:
-    self._logger.error(f"Error calculating efficiency ratios: {e}")
-    
-    return ratios
+            # Fallback implementation
+            metrics = self._extract_key_metrics(df)
+
+            metric_values = {}
+            metric_keys = [
+                'current_assets', 'current_liabilities', 'total_assets', 'total_liabilities',
+                'total_equity', 'inventory', 'cash', 'net_income', 'revenue',
+                'cost_of_goods_sold', 'ebit', 'interest_expense', 'receivables'
+            ]
+
+            for metric_key in metric_keys:
+                metric_value = self._get_metric_value(df, metrics, metric_key)
+                if metric_value is not None:
+                    if isinstance(metric_value, pd.DataFrame):
+                        metric_value = metric_value.iloc[0]
+                    metric_values[metric_key] = metric_value
+                else:
+                    metric_values[metric_key] = None
+
+            def safe_divide(numerator_key, denominator_key, multiplier=1):
+                """Safely divide two metrics"""
+                numerator = metric_values.get(numerator_key)
+                denominator = metric_values.get(denominator_key)
+
+                if numerator is None or denominator is None:
+                    return None
+
+                try:
+                    if hasattr(denominator, 'replace'):
+                        safe_denom = denominator.replace(0, np.nan)
+                    else:
+                        safe_denom = denominator if denominator != 0 else np.nan
+
+                    result = (numerator / safe_denom) * multiplier
+                    return result
+                except Exception as e:
+                    self._logger.warning(f"Division error: {e}")
+                    return None
+
+            # Liquidity Ratios
+            try:
+                liquidity_data = {}
+
+                current_ratio = safe_divide('current_assets', 'current_liabilities')
+                if current_ratio is not None:
+                    liquidity_data['Current Ratio'] = current_ratio
+
+                if metric_values['current_assets'] is not None and metric_values['inventory'] is not None:
+                    quick_assets = metric_values['current_assets'] - metric_values['inventory']
+                    if metric_values['current_liabilities'] is not None:
+                        quick_ratio = quick_assets / metric_values['current_liabilities'].replace(0, np.nan)
+                        liquidity_data['Quick Ratio'] = quick_ratio
+
+                cash_ratio = safe_divide('cash', 'current_liabilities')
+                if cash_ratio is not None:
+                    liquidity_data['Cash Ratio'] = cash_ratio
+
+                if liquidity_data:
+                    liquidity_df = pd.DataFrame(liquidity_data)
+                    ratios['Liquidity'] = liquidity_df.T
+
+            except Exception as e:
+                self._logger.error(f"Error calculating liquidity ratios: {e}")
+
+            # Profitability Ratios
+            try:
+                profitability_data = {}
+
+                npm = safe_divide('net_income', 'revenue', 100)
+                if npm is not None:
+                    profitability_data['Net Profit Margin %'] = npm
+
+                if metric_values['revenue'] is not None and metric_values['cost_of_goods_sold'] is not None:
+                    gross_profit = metric_values['revenue'] - metric_values['cost_of_goods_sold']
+                    gpm = (gross_profit / metric_values['revenue'].replace(0, np.nan)) * 100
+                    profitability_data['Gross Profit Margin %'] = gpm
+
+                roa = safe_divide('net_income', 'total_assets', 100)
+                if roa is not None:
+                    profitability_data['Return on Assets %'] = roa
+
+                roe = safe_divide('net_income', 'total_equity', 100)
+                if roe is not None:
+                    profitability_data['Return on Equity %'] = roe
+
+                if metric_values['ebit'] is not None and metric_values['total_assets'] is not None and metric_values['current_liabilities'] is not None:
+                    capital_employed = metric_values['total_assets'] - metric_values['current_liabilities']
+                    roce = (metric_values['ebit'] / capital_employed.replace(0, np.nan)) * 100
+                    profitability_data['ROCE %'] = roce
+
+                if profitability_data:
+                    profitability_df = pd.DataFrame(profitability_data)
+                    ratios['Profitability'] = profitability_df.T
+
+            except Exception as e:
+                self._logger.error(f"Error calculating profitability ratios: {e}")
+
+            # Leverage Ratios
+            try:
+                leverage_data = {}
+
+                de_ratio = safe_divide('total_liabilities', 'total_equity')
+                if de_ratio is not None:
+                    leverage_data['Debt to Equity'] = de_ratio
+
+                debt_ratio = safe_divide('total_liabilities', 'total_assets')
+                if debt_ratio is not None:
+                    leverage_data['Debt Ratio'] = debt_ratio
+
+                icr = safe_divide('ebit', 'interest_expense')
+                if icr is not None:
+                    leverage_data['Interest Coverage'] = icr
+
+                if leverage_data:
+                    leverage_df = pd.DataFrame(leverage_data)
+                    ratios['Leverage'] = leverage_df.T
+
+            except Exception as e:
+                self._logger.error(f"Error calculating leverage ratios: {e}")
+
+            # Efficiency Ratios
+            try:
+                efficiency_data = {}
+
+                asset_turnover = safe_divide('revenue', 'total_assets')
+                if asset_turnover is not None:
+                    efficiency_data['Asset Turnover'] = asset_turnover
+
+                inv_turnover = safe_divide('cost_of_goods_sold', 'inventory')
+                if inv_turnover is not None:
+                    efficiency_data['Inventory Turnover'] = inv_turnover
+
+                rec_turnover = safe_divide('revenue', 'receivables')
+                if rec_turnover is not None:
+                    efficiency_data['Receivables Turnover'] = rec_turnover
+                    efficiency_data['Days Sales Outstanding'] = 365 / rec_turnover.replace(0, np.nan)
+
+                if efficiency_data:
+                    efficiency_df = pd.DataFrame(efficiency_data)
+                    ratios['Efficiency'] = efficiency_df.T
+
+            except Exception as e:
+                self._logger.error(f"Error calculating efficiency ratios: {e}")
+
+        return ratios
     
     def _get_metric_value(self, df: pd.DataFrame, metrics: Dict, metric_type: str) -> Optional[pd.Series]:
-    """Get metric value from dataframe with fallback"""
-    if metric_type in metrics and metrics[metric_type]:
-    best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
-    metric_name = best_match['name']
-    
-    if metric_name in df.index:
-    result = df.loc[metric_name]
-    if isinstance(result, pd.DataFrame):
-        self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
-        result = result.iloc[0]
-    return result
-    
-    return None
+        """Get metric value from dataframe with fallback"""
+        if metric_type in metrics and metrics[metric_type]:
+        best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
+        metric_name = best_match['name']
+        
+        if metric_name in df.index:
+        result = df.loc[metric_name]
+        if isinstance(result, pd.DataFrame):
+            self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
+            result = result.iloc[0]
+        return result
+        
+        return None
     
     def _analyze_trends(self, df: pd.DataFrame) -> Dict[str, Any]:
-    """Analyze trends in financial data"""
-    trends = {}
-    numeric_df = df.select_dtypes(include=[np.number])
-    
-    if len(numeric_df.columns) < 2:
-    return {'error': 'Insufficient data for trend analysis'}
-    
-    for idx in numeric_df.index:
-    series = numeric_df.loc[idx]
-    
-    if isinstance(series, pd.DataFrame):
-    self._logger.warning(f"Multiple rows found for {idx}, taking first")
-    series = series.iloc[0]
-    
-    series = series.dropna()
-    
-    if len(series) >= 3:
-    years = np.arange(len(series))
-    values = series.values
-    
-    coefficients = np.polyfit(years, values, 1)
-    slope = float(coefficients[0])
-    intercept = float(coefficients[1])
-    
-    # CAGR calculation
-    try:
-        first_value = float(series.iloc[0])
-        last_value = float(series.iloc[-1])
+        """Analyze trends in financial data"""
+        trends = {}
+        numeric_df = df.select_dtypes(include=[np.number])
         
-        if first_value > 0 and last_value > 0:
-            years_diff = len(series) - 1
-            if years_diff > 0:
-                cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+        if len(numeric_df.columns) < 2:
+        return {'error': 'Insufficient data for trend analysis'}
+        
+        for idx in numeric_df.index:
+        series = numeric_df.loc[idx]
+        
+        if isinstance(series, pd.DataFrame):
+        self._logger.warning(f"Multiple rows found for {idx}, taking first")
+        series = series.iloc[0]
+        
+        series = series.dropna()
+        
+        if len(series) >= 3:
+        years = np.arange(len(series))
+        values = series.values
+        
+        coefficients = np.polyfit(years, values, 1)
+        slope = float(coefficients[0])
+        intercept = float(coefficients[1])
+        
+        # CAGR calculation
+        try:
+            first_value = float(series.iloc[0])
+            last_value = float(series.iloc[-1])
+            
+            if first_value > 0 and last_value > 0:
+                years_diff = len(series) - 1
+                if years_diff > 0:
+                    cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+                else:
+                    cagr = 0
             else:
                 cagr = 0
-        else:
+                
+        except Exception as e:
+            self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
             cagr = 0
-            
-    except Exception as e:
-        self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
-        cagr = 0
-    
-    # Volatility
-    try:
-        volatility = float(series.pct_change().std() * 100)
-        if pd.isna(volatility):
+        
+        # Volatility
+        try:
+            volatility = float(series.pct_change().std() * 100)
+            if pd.isna(volatility):
+                volatility = 0
+        except Exception:
             volatility = 0
-    except Exception:
-        volatility = 0
-    
-    trends[str(idx)] = {
-        'slope': slope,
-        'direction': 'increasing' if slope > 0 else 'decreasing',
-        'cagr': cagr,
-        'volatility': volatility,
-        'r_squared': self._calculate_r_squared(years, values, slope, intercept)
-    }
-    
-    return trends
+        
+        trends[str(idx)] = {
+            'slope': slope,
+            'direction': 'increasing' if slope > 0 else 'decreasing',
+            'cagr': cagr,
+            'volatility': volatility,
+            'r_squared': self._calculate_r_squared(years, values, slope, intercept)
+        }
+        
+        return trends
     
     def _calculate_r_squared(self, x: np.ndarray, y: np.ndarray, slope: float, intercept: float) -> float:
-    """Calculate R-squared for linear regression"""
-    y_pred = slope * x + intercept
-    ss_res = np.sum((y - y_pred) ** 2)
-    ss_tot = np.sum((y - np.mean(y)) ** 2)
-    
-    return 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-    
-    def _calculate_quality_score(self, df: pd.DataFrame) -> float:
-    """Calculate data quality score"""
-    scores = []
-    
-    completeness = (df.notna().sum().sum() / df.size) * 100
-    scores.append(completeness)
-    
-    numeric_df = df.select_dtypes(include=[np.number])
-    if not numeric_df.empty:
-    consistency_score = 100
-    
-    for idx in numeric_df.index:
-    positive_metrics = ['assets', 'revenue', 'equity']
-    if any(keyword in str(idx).lower() for keyword in positive_metrics):
-        row_data = numeric_df.loc[idx]
+        """Calculate R-squared for linear regression"""
+        y_pred = slope * x + intercept
+        ss_res = np.sum((y - y_pred) ** 2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
         
-        if isinstance(row_data, pd.DataFrame):
-            row_data = row_data.iloc[0]
+        return 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         
-        negative_count = int((row_data < 0).sum())
+        def _calculate_quality_score(self, df: pd.DataFrame) -> float:
+        """Calculate data quality score"""
+        scores = []
         
-        if negative_count > 0:
-            consistency_score -= (negative_count / len(numeric_df.columns)) * 20
-    
-    scores.append(max(0, consistency_score))
-    
-    if len(numeric_df.columns) > 1:
-    temporal_score = 100
-    extreme_changes = 0
-    
-    for idx in numeric_df.index:
-    series = numeric_df.loc[idx]
-    
-    if isinstance(series, pd.DataFrame):
-        series = series.iloc[0]
-    
-    series = series.dropna()
-    
-    if len(series) > 1:
-        pct_changes = series.pct_change().dropna()
-        extreme_count = int((pct_changes.abs() > 2).sum())
-        extreme_changes += extreme_count
-    
-    total_changes = len(numeric_df) * (len(numeric_df.columns) - 1)
-    if total_changes > 0:
-    temporal_score -= (extreme_changes / total_changes) * 50
-    
-    scores.append(max(0, temporal_score))
-    
-    return sum(scores) / len(scores) if scores else 0
+        completeness = (df.notna().sum().sum() / df.size) * 100
+        scores.append(completeness)
+        
+        numeric_df = df.select_dtypes(include=[np.number])
+        if not numeric_df.empty:
+        consistency_score = 100
+        
+        for idx in numeric_df.index:
+        positive_metrics = ['assets', 'revenue', 'equity']
+        if any(keyword in str(idx).lower() for keyword in positive_metrics):
+            row_data = numeric_df.loc[idx]
+            
+            if isinstance(row_data, pd.DataFrame):
+                row_data = row_data.iloc[0]
+            
+            negative_count = int((row_data < 0).sum())
+            
+            if negative_count > 0:
+                consistency_score -= (negative_count / len(numeric_df.columns)) * 20
+        
+        scores.append(max(0, consistency_score))
+        
+        if len(numeric_df.columns) > 1:
+        temporal_score = 100
+        extreme_changes = 0
+        
+        for idx in numeric_df.index:
+        series = numeric_df.loc[idx]
+        
+        if isinstance(series, pd.DataFrame):
+            series = series.iloc[0]
+        
+        series = series.dropna()
+        
+        if len(series) > 1:
+            pct_changes = series.pct_change().dropna()
+            extreme_count = int((pct_changes.abs() > 2).sum())
+            extreme_changes += extreme_count
+        
+        total_changes = len(numeric_df) * (len(numeric_df.columns) - 1)
+        if total_changes > 0:
+        temporal_score -= (extreme_changes / total_changes) * 50
+        
+        scores.append(max(0, temporal_score))
+        
+        return sum(scores) / len(scores) if scores else 0
     
     def _generate_insights(self, df: pd.DataFrame) -> List[str]:
-    """Generate actionable insights from analysis"""
-    insights = []
-    
-    ratios = self._calculate_ratios(df)
-    
-    if 'Liquidity' in ratios and 'Current Ratio' in ratios['Liquidity'].index:
-    current_ratios = ratios['Liquidity'].loc['Current Ratio'].dropna()
-    if len(current_ratios) > 0:
-    latest_cr = current_ratios.iloc[-1]
-    if latest_cr < 1:
-        insights.append(f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues")
-    elif latest_cr > 3:
-        insights.append(f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets")
-    
-    if len(current_ratios) > 1:
-        trend = 'improving' if current_ratios.iloc[-1] > current_ratios.iloc[0] else 'declining'
-        insights.append(f"📊 Current ratio is {trend} over the period")
-    
-    if 'Profitability' in ratios and 'Net Profit Margin %' in ratios['Profitability'].index:
-    npm = ratios['Profitability'].loc['Net Profit Margin %'].dropna()
-    if len(npm) > 1:
-    trend = 'improving' if npm.iloc[-1] > npm.iloc[0] else 'declining'
-    insights.append(f"📊 Net profit margin is {trend} ({npm.iloc[0]:.1f}% → {npm.iloc[-1]:.1f}%)")
-    
-    if npm.iloc[-1] < 5:
-        insights.append(f"⚠️ Low profit margin may indicate competitive pressure or cost issues")
-    
-    if 'Leverage' in ratios and 'Debt to Equity' in ratios['Leverage'].index:
-    de_ratio = ratios['Leverage'].loc['Debt to Equity'].dropna()
-    if len(de_ratio) > 0:
-    latest_de = de_ratio.iloc[-1]
-    if latest_de > 2:
-        insights.append(f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage")
-    elif latest_de < 0.3:
-        insights.append(f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth")
-    
-    if 'Efficiency' in ratios and 'Asset Turnover' in ratios['Efficiency'].index:
-    asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna()
-    if len(asset_turnover) > 0:
-    latest_at = asset_turnover.iloc[-1]
-    if latest_at < 0.5:
-        insights.append(f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets")
-    
-    trends = self._analyze_trends(df)
-    
-    revenue_trends = [v for k, v in trends.items() if 'revenue' in k.lower()]
-    if revenue_trends and revenue_trends[0].get('cagr') is not None:
-    cagr = revenue_trends[0]['cagr']
-    if cagr > 20:
-    insights.append(f"🚀 Strong revenue growth (CAGR: {cagr:.1f}%)")
-    elif cagr < 0:
-    insights.append(f"📉 Declining revenue (CAGR: {cagr:.1f}%)")
-    elif 0 < cagr < 5:
-    insights.append(f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies")
-    
-    profit_trends = [v for k, v in trends.items() if 'net income' in k.lower() or 'profit' in k.lower()]
-    if revenue_trends and profit_trends:
-    rev_cagr = revenue_trends[0].get('cagr', 0)
-    prof_cagr = profit_trends[0].get('cagr', 0)
-    if rev_cagr > 0 and prof_cagr < rev_cagr:
-    insights.append(f"⚠️ Profit growing slower than revenue - check cost management")
-    
-    quality_score = self._calculate_quality_score(df)
-    if quality_score < 70:
-    insights.append(f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable")
-    
-    anomalies = self._detect_anomalies(df)
-    if anomalies['value_anomalies']:
-    insights.append(f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy")
-    
-    return insights
+        """Generate actionable insights from analysis"""
+        insights = []
+        
+        ratios = self._calculate_ratios(df)
+        
+        if 'Liquidity' in ratios and 'Current Ratio' in ratios['Liquidity'].index:
+        current_ratios = ratios['Liquidity'].loc['Current Ratio'].dropna()
+        if len(current_ratios) > 0:
+        latest_cr = current_ratios.iloc[-1]
+        if latest_cr < 1:
+            insights.append(f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues")
+        elif latest_cr > 3:
+            insights.append(f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets")
+        
+        if len(current_ratios) > 1:
+            trend = 'improving' if current_ratios.iloc[-1] > current_ratios.iloc[0] else 'declining'
+            insights.append(f"📊 Current ratio is {trend} over the period")
+        
+        if 'Profitability' in ratios and 'Net Profit Margin %' in ratios['Profitability'].index:
+        npm = ratios['Profitability'].loc['Net Profit Margin %'].dropna()
+        if len(npm) > 1:
+        trend = 'improving' if npm.iloc[-1] > npm.iloc[0] else 'declining'
+        insights.append(f"📊 Net profit margin is {trend} ({npm.iloc[0]:.1f}% → {npm.iloc[-1]:.1f}%)")
+        
+        if npm.iloc[-1] < 5:
+            insights.append(f"⚠️ Low profit margin may indicate competitive pressure or cost issues")
+        
+        if 'Leverage' in ratios and 'Debt to Equity' in ratios['Leverage'].index:
+        de_ratio = ratios['Leverage'].loc['Debt to Equity'].dropna()
+        if len(de_ratio) > 0:
+        latest_de = de_ratio.iloc[-1]
+        if latest_de > 2:
+            insights.append(f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage")
+        elif latest_de < 0.3:
+            insights.append(f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth")
+        
+        if 'Efficiency' in ratios and 'Asset Turnover' in ratios['Efficiency'].index:
+        asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna()
+        if len(asset_turnover) > 0:
+        latest_at = asset_turnover.iloc[-1]
+        if latest_at < 0.5:
+            insights.append(f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets")
+        
+        trends = self._analyze_trends(df)
+        
+        revenue_trends = [v for k, v in trends.items() if 'revenue' in k.lower()]
+        if revenue_trends and revenue_trends[0].get('cagr') is not None:
+        cagr = revenue_trends[0]['cagr']
+        if cagr > 20:
+        insights.append(f"🚀 Strong revenue growth (CAGR: {cagr:.1f}%)")
+        elif cagr < 0:
+        insights.append(f"📉 Declining revenue (CAGR: {cagr:.1f}%)")
+        elif 0 < cagr < 5:
+        insights.append(f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies")
+        
+        profit_trends = [v for k, v in trends.items() if 'net income' in k.lower() or 'profit' in k.lower()]
+        if revenue_trends and profit_trends:
+        rev_cagr = revenue_trends[0].get('cagr', 0)
+        prof_cagr = profit_trends[0].get('cagr', 0)
+        if rev_cagr > 0 and prof_cagr < rev_cagr:
+        insights.append(f"⚠️ Profit growing slower than revenue - check cost management")
+        
+        quality_score = self._calculate_quality_score(df)
+        if quality_score < 70:
+        insights.append(f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable")
+        
+        anomalies = self._detect_anomalies(df)
+        if anomalies['value_anomalies']:
+        insights.append(f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy")
+        
+        return insights
     
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Callable

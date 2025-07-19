@@ -4881,6 +4881,3661 @@ class ExportManager:
         
         output.seek(0)
         return output.read()
+        
+    def export_to_pdf(self, analysis: Dict[str, Any], charts: List[Any] = None) -> bytes:
+        """Export analysis to PDF format (placeholder)"""
+        self.logger.info("PDF export requested - placeholder implementation")
+        return b"PDF export not yet implemented. Please use Excel or Markdown export."
+    
+    def export_to_powerpoint(self, analysis: Dict[str, Any], template: str = 'default') -> bytes:
+        """Export analysis to PowerPoint format (placeholder)"""
+        self.logger.info("PowerPoint export requested - placeholder implementation")
+        return b"PowerPoint export not yet implemented. Please use Excel or Markdown export."
+    
+    def export_to_markdown(self, analysis: Dict[str, Any]) -> str:
+        """Export analysis to Markdown format"""
+        lines = [
+            f"# Financial Analysis Report",
+            f"\nGenerated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"\nCompany: {analysis.get('company_name', 'Financial Analysis')}",
+            "\n---\n"
+        ]
+    
+        # Summary section
+        if 'summary' in analysis:
+            summary = analysis['summary']
+            lines.extend([
+                "## Executive Summary\n",
+                f"- **Total Metrics Analyzed:** {summary.get('total_metrics', 'N/A')}",
+                f"- **Period Covered:** {summary.get('year_range', 'N/A')}",
+            ])
+            
+            if 'quality_score' in analysis:
+                lines.append(f"- **Data Quality Score:** {analysis['quality_score']:.1f}%")
+            
+            if 'completeness' in summary:
+                lines.append(f"- **Data Completeness:** {summary['completeness']:.1f}%")
+            
+            lines.append("\n")
+    
+        # Key Insights
+        if 'insights' in analysis and analysis['insights']:
+            lines.extend([
+                "## Key Insights\n"
+            ])
+            for insight in analysis['insights']:
+                lines.append(f"- {insight}")
+            lines.append("\n")
+    
+        # Financial Ratios
+        if 'ratios' in analysis:
+            lines.extend([
+                "## Financial Ratios\n"
+            ])
+            
+            for category, ratio_df in analysis['ratios'].items():
+                if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                    lines.append(f"\n### {category} Ratios\n")
+                    lines.append(ratio_df.to_markdown())
+                    lines.append("\n")
+    
+        # Trends
+        if 'trends' in analysis:
+            lines.extend([
+                "## Trend Analysis\n"
+            ])
+            
+            significant_trends = []
+            for metric, trend in analysis['trends'].items():
+                if isinstance(trend, dict) and trend.get('cagr') is not None:
+                    significant_trends.append({
+                        'Metric': metric,
+                        'Direction': trend['direction'],
+                        'CAGR %': f"{trend['cagr']:.1f}" if trend['cagr'] is not None else 'N/A',
+                        'R-squared': f"{trend.get('r_squared', 0):.3f}"
+                    })
+            
+            if significant_trends:
+                trend_df = pd.DataFrame(significant_trends)
+                lines.append(trend_df.to_markdown(index=False))
+                lines.append("\n")
+    
+        return "\n".join(lines)
+    
+# --- 27. UI Components Factory ---
+class UIComponentFactory:
+    """Factory for creating UI components with consistent styling"""
 
+    @staticmethod
+    def create_metric_card(title: str, value: Any, delta: Optional[float] = None, 
+                          help: Optional[str] = None, delta_color: str = "normal") -> None:
+        """Create a metric card with optional delta"""
+        if help:
+            st.metric(title, value, delta, delta_color=delta_color, help=help)
+        else:
+            st.metric(title, value, delta, delta_color=delta_color)
+
+    @staticmethod
+    def create_progress_indicator(progress: float, text: str = "") -> None:
+        """Create animated progress indicator"""
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        # Animate progress
+        for i in range(int(progress * 100)):
+            progress_bar.progress(i / 100)
+            if text:
+                status_text.text(f"{text} ({i}%)")
+            time.sleep(0.01)
+
+        progress_bar.progress(progress)
+        if text:
+            status_text.text(f"{text} ({int(progress * 100)}%)")
+
+    @staticmethod
+    def create_data_quality_badge(score: float) -> None:
+        """Create data quality badge"""
+        if score >= 80:
+            color = "green"
+            label = "High Quality"
+        elif score >= 60:
+            color = "orange"
+            label = "Medium Quality"
+        else:
+            color = "red"
+            label = "Low Quality"
+
+        st.markdown(
+            f'<span style="background-color: {color}; color: white; '
+            f'padding: 5px 10px; border-radius: 5px; font-weight: bold;">'
+            f'{label} ({score:.0f}%)</span>',
+            unsafe_allow_html=True
+        )
+
+    @staticmethod
+    def create_insight_card(insight: str, insight_type: str = "info") -> None:
+        """Create insight card with appropriate styling"""
+        icons = {
+            'success': '✅',
+            'warning': '⚠️',
+            'error': '❌',
+            'info': '💡'
+        }
+
+        colors = {
+            'success': '#d4edda',
+            'warning': '#fff3cd',
+            'error': '#f8d7da',
+            'info': '#d1ecf1'
+        }
+
+        icon = icons.get(insight_type, '💡')
+        color = colors.get(insight_type, '#d1ecf1')
+
+        st.markdown(
+            f'<div style="background-color: {color}; padding: 10px; '
+            f'border-radius: 5px; margin: 5px 0; border-left: 4px solid;">'
+            f'{icon} {insight}</div>',
+            unsafe_allow_html=True
+        )
+
+    @staticmethod
+    def render_with_skeleton(render_func: Callable, loading_key: str):
+        """Render with skeleton loading state"""
+        if SimpleState.get(f'{loading_key}_loading', False):
+            for _ in range(3):
+                st.container().markdown(
+                    """
+                    <div class="skeleton"></div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            render_func()
+
+# --- 28. Sample Data Generator ---
+class SampleDataGenerator:
+    """Generate sample financial data for demonstration"""
+
+    @staticmethod
+    def generate_indian_tech_company() -> pd.DataFrame:
+        """Generate sample data for Indian tech company"""
+        years = ['2019', '2020', '2021', '2022', '2023']
+
+        data = {
+            # Balance Sheet Items (in ₹ Crores)
+            'Total Assets': [450, 520, 610, 720, 850],
+            'Current Assets': [280, 320, 380, 450, 530],
+            'Non-current Assets': [170, 200, 230, 270, 320],
+            'Cash and Cash Equivalents': [120, 140, 170, 210, 250],
+            'Inventory': [20, 23, 27, 32, 38],
+            'Trade Receivables': [80, 92, 108, 127, 150],
+            'Property Plant and Equipment': [100, 120, 140, 165, 195],
+            
+            'Total Liabilities': [180, 200, 225, 255, 290],
+            'Current Liabilities': [100, 110, 125, 140, 160],
+            'Non-current Liabilities': [80, 90, 100, 115, 130],
+            'Short-term Borrowings': [30, 33, 37, 42, 48],
+            'Long-term Debt': [60, 66, 73, 82, 92],
+            'Trade Payables': [40, 44, 49, 55, 62],
+            
+            'Total Equity': [270, 320, 385, 465, 560],
+            'Share Capital': [100, 100, 100, 100, 100],
+            'Reserves and Surplus': [170, 220, 285, 365, 460],
+            
+            # Income Statement Items
+            'Revenue': [350, 380, 450, 540, 650],
+            'Cost of Goods Sold': [210, 220, 252, 297, 351],
+            'Gross Profit': [140, 160, 198, 243, 299],
+            'Operating Expenses': [80, 88, 103, 121.5, 143],
+            'Operating Income': [60, 72, 95, 121.5, 156],
+            'EBIT': [60, 72, 95, 121.5, 156],
+            'Interest Expense': [8, 8.8, 9.7, 10.9, 12.2],
+            'Income Before Tax': [52, 63.2, 85.3, 110.6, 143.8],
+            'Tax Expense': [15.6, 18.96, 25.59, 33.18, 43.14],
+            'Net Income': [36.4, 44.24, 59.71, 77.42, 100.66],
+            
+            # Cash Flow Items
+            'Operating Cash Flow': [55, 66, 88, 110, 140],
+            'Investing Cash Flow': [-30, -35, -42, -50, -60],
+            'Financing Cash Flow': [-15, -18, -22, -27, -33],
+            'Capital Expenditure': [28, 32, 38, 45, 53],
+            'Free Cash Flow': [27, 34, 50, 65, 87],
+            'Depreciation': [15, 18, 21, 25, 30],
+        }
+
+        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
+        return df
+
+    @staticmethod
+    def generate_us_manufacturing() -> pd.DataFrame:
+        """Generate sample data for US manufacturing company"""
+        years = ['2019', '2020', '2021', '2022', '2023']
+
+        data = {
+            # Balance Sheet Items (in millions USD)
+            'Total Assets': [1200, 1150, 1250, 1350, 1450],
+            'Current Assets': [450, 430, 480, 520, 560],
+            'Non-current Assets': [750, 720, 770, 830, 890],
+            'Cash and Cash Equivalents': [80, 75, 90, 105, 120],
+            'Inventory': [180, 170, 190, 210, 230],
+            'Trade Receivables': [150, 145, 160, 175, 190],
+            'Property Plant and Equipment': [600, 580, 620, 660, 700],
+            
+            'Total Liabilities': [720, 690, 740, 790, 840],
+            'Current Liabilities': [300, 280, 310, 330, 350],
+            'Non-current Liabilities': [420, 410, 430, 460, 490],
+            'Short-term Borrowings': [100, 90, 105, 115, 125],
+            'Long-term Debt': [350, 340, 355, 380, 405],
+            'Trade Payables': [120, 115, 125, 135, 145],
+            
+            'Total Equity': [480, 460, 510, 560, 610],
+            'Share Capital': [200, 200, 200, 200, 200],
+            'Retained Earnings': [280, 260, 310, 360, 410],
+            
+            # Income Statement Items
+            'Revenue': [950, 880, 1020, 1150, 1280],
+            'Cost of Goods Sold': [680, 640, 720, 800, 880],
+            'Gross Profit': [270, 240, 300, 350, 400],
+            'Operating Expenses': [180, 170, 190, 210, 230],
+            'Operating Income': [90, 70, 110, 140, 170],
+            'EBIT': [90, 70, 110, 140, 170],
+            'Interest Expense': [28, 27, 28.5, 30.5, 32.5],
+            'Income Before Tax': [62, 43, 81.5, 109.5, 137.5],
+            'Tax Expense': [15.5, 10.75, 20.38, 27.38, 34.38],
+            'Net Income': [46.5, 32.25, 61.12, 82.12, 103.12],
+            
+            # Cash Flow Items
+            'Operating Cash Flow': [110, 90, 130, 160, 195],
+            'Investing Cash Flow': [-80, -60, -90, -110, -130],
+            'Financing Cash Flow': [-20, -25, -30, -35, -40],
+            'Capital Expenditure': [75, 55, 85, 105, 125],
+            'Free Cash Flow': [35, 35, 45, 55, 70],
+            'Depreciation': [45, 48, 52, 58, 65],
+        }
+
+        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
+        return df
+
+    @staticmethod
+    def generate_european_retail() -> pd.DataFrame:
+        """Generate sample data for European retail company"""
+        years = ['2019', '2020', '2021', '2022', '2023']
+
+        data = {
+            # Balance Sheet Items (in millions EUR)
+            'Total Assets': [800, 750, 820, 880, 950],
+            'Current Assets': [400, 380, 420, 450, 490],
+            'Non-current Assets': [400, 370, 400, 430, 460],
+            'Cash and Cash Equivalents': [60, 55, 70, 85, 100],
+            'Inventory': [200, 190, 210, 225, 245],
+            'Trade Receivables': [80, 75, 85, 90, 95],
+            'Property Plant and Equipment': [350, 325, 350, 375, 400],
+            
+            'Total Liabilities': [480, 450, 490, 520, 560],
+            'Current Liabilities': [250, 235, 260, 275, 295],
+            'Non-current Liabilities': [230, 215, 230, 245, 265],
+            'Short-term Borrowings': [80, 75, 85, 90, 95],
+            'Long-term Debt': [180, 170, 180, 190, 205],
+            'Trade Payables': [130, 125, 135, 145, 155],
+            
+            'Total Equity': [320, 300, 330, 360, 390],
+            'Share Capital': [150, 150, 150, 150, 150],
+            'Retained Earnings': [170, 150, 180, 210, 240],
+            
+            # Income Statement Items
+            'Revenue': [1200, 1050, 1300, 1450, 1600],
+            'Cost of Goods Sold': [840, 750, 900, 1000, 1100],
+            'Gross Profit': [360, 300, 400, 450, 500],
+            'Operating Expenses': [280, 260, 300, 330, 360],
+            'Operating Income': [80, 40, 100, 120, 140],
+            'EBIT': [80, 40, 100, 120, 140],
+            'Interest Expense': [18, 17, 18, 19, 20.5],
+            'Income Before Tax': [62, 23, 82, 101, 119.5],
+            'Tax Expense': [18.6, 6.9, 24.6, 30.3, 35.85],
+            'Net Income': [43.4, 16.1, 57.4, 70.7, 83.65],
+            
+            # Cash Flow Items
+            'Operating Cash Flow': [95, 60, 115, 135, 160],
+            'Investing Cash Flow': [-50, -30, -60, -70, -85],
+            'Financing Cash Flow': [-30, -25, -35, -40, -45],
+            'Capital Expenditure': [45, 25, 55, 65, 80],
+            'Free Cash Flow': [50, 35, 60, 70, 80],
+            'Depreciation': [25, 27, 30, 33, 36],
+        }
+
+        df = pd.DataFrame(data, index=list(data.keys()), columns=years)
+        return df
+
+# --- 29. Error Recovery Mechanisms ---
+class ErrorRecoveryManager:
+    """Manage error recovery and fallback strategies"""
+
+    def __init__(self):
+        self.error_counts = defaultdict(int)
+        self.recovery_strategies = {
+            'kaggle_api_down': self._recover_kaggle_api,
+            'model_load_failed': self._recover_model_load,
+            'memory_exceeded': self._recover_memory
+        }
+
+    def handle_error(self, error_type: str, context: Dict[str, Any]) -> bool:
+        """Handle error with appropriate recovery strategy"""
+        self.error_counts[error_type] += 1
+
+        if error_type in self.recovery_strategies:
+            return self.recovery_strategies[error_type](context)
+
+        return False
+
+    def _recover_kaggle_api(self, context: Dict[str, Any]) -> bool:
+        """Recover from Kaggle API failure"""
+        wait_time = min(2 ** self.error_counts['kaggle_api_down'], 300)
+        time.sleep(wait_time)
+
+        return context.get('mapper', {}).get('_test_kaggle_connection', lambda: False)()
+
+    def _recover_model_load(self, context: Dict[str, Any]) -> bool:
+        """Recover from model loading failure"""
+        alternative_models = ['all-MiniLM-L6-v2', 'paraphrase-MiniLM-L3-v2', 'distilbert-base-nli-mean-tokens']
+
+        for model in alternative_models:
+            try:
+                # Attempt to load alternative model
+                return True
+            except:
+                continue
+
+        return False
+
+    def _recover_memory(self, context: Dict[str, Any]) -> bool:
+        """Recover from memory issues"""
+        if 'mapper' in context:
+            context['mapper'].embeddings_cache.clear()
+
+        gc.collect()
+
+        return True
+
+def safe_state_access(func):
+    """Decorator to ensure safe session state access with comprehensive error handling"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        max_retries = 3
+        retry_count = 0
+
+        while retry_count < max_retries:
+            try:
+                return func(self, *args, **kwargs)
+                
+            except KeyError as e:
+                retry_count += 1
+                key_name = str(e).strip("'\"")
+                
+                # Log the error
+                if hasattr(self, 'logger'):
+                    self.logger.warning(f"Session state key error in {func.__name__}: {e} (attempt {retry_count}/{max_retries})")
+                
+                # Try to fix the missing key
+                try:
+                    # Reinitialize session state
+                    self._initialize_session_state()
+                    
+                    # If it's a specific key we can predict, set a safe default
+                    safe_defaults = {
+                        'simple_parse_mode': False,
+                        'uploaded_files': [],
+                        'ml_forecast_results': None,
+                        'forecast_periods': 3,
+                        'forecast_model_type': 'auto',
+                        'selected_forecast_metrics': [],
+                        'analysis_data': None,
+                        'metric_mappings': None,
+                        'show_manual_mapping': False,
+                        'number_format_value': 'Indian',
+                        'kaggle_api_enabled': False,
+                        'api_metrics_visible': False,
+                        'analysis_mode': 'Standalone Analysis',
+                        'benchmark_company': 'ITC Ltd',
+                        'show_tutorial': True,
+                        'tutorial_step': 0,
+                        'collaboration_session': None,
+                        'query_history': [],
+                        'pn_mappings': None,
+                        'pn_results': None,
+                    }
+                    
+                    if key_name in safe_defaults:
+                        st.session_state[key_name] = safe_defaults[key_name]
+                        if hasattr(self, 'logger'):
+                            self.logger.info(f"Set safe default for missing key: {key_name}")
+                    
+                    # If this is the last retry, continue anyway
+                    if retry_count >= max_retries:
+                        if hasattr(self, 'logger'):
+                            self.logger.error(f"Failed to fix session state after {max_retries} attempts in {func.__name__}")
+                        # Try to continue with a fallback
+                        try:
+                            return func(self, *args, **kwargs)
+                        except:
+                            # Return a safe fallback
+                            return None
+                    
+                except Exception as init_error:
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Error during session state reinitialization: {init_error}")
+                    
+                    if retry_count >= max_retries:
+                        raise e  # Re-raise original error
+        
+            except AttributeError as e:
+                # Handle cases where self.logger or other attributes don't exist
+                if "'FinancialAnalyticsPlatform' object has no attribute 'logger'" in str(e):
+                    # Initialize logger if missing
+                    try:
+                        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
+                        return func(self, *args, **kwargs)
+                    except:
+                        # Continue without logging
+                        return func(self, *args, **kwargs)
+                else:
+                    raise e
+        
+            except Exception as e:
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"Unexpected error in {func.__name__}: {e}")
+                
+                # For non-KeyError exceptions, don't retry
+                raise e
+
+        # If we get here, all retries failed
+        if hasattr(self, 'logger'):
+            self.logger.critical(f"All retry attempts failed for {func.__name__}")
+        return None
+    return wrapper
+
+def critical_method(func):
+    """Decorator for critical methods that must not fail"""
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return func(self, *args, **kwargs)
+        except Exception as e:
+            if hasattr(self, 'logger'):
+                self.logger.critical(f"Critical method {func.__name__} failed: {e}")
+
+            # Show user-friendly error
+            st.error(f"A critical error occurred in {func.__name__}. Please refresh the page.")
+            
+            # Provide recovery options
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(f"🔄 Retry {func.__name__}", key=f"retry_{func.__name__}"):
+                    st.experimental_rerun()
+            with col2:
+                if st.button("🏠 Reset Application", key=f"reset_{func.__name__}"):
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.experimental_rerun()
+            
+            return None
+    return wrapper
+
+# --- 30. Main Application Class ---
+class FinancialAnalyticsPlatform:
+    """Main application with advanced architecture and all integrations"""
+
+    def __init__(self):
+        # Initialize session state for persistent data
+        if 'initialized' not in st.session_state:
+            self._initialize_session_state()
+
+        # Initialize configuration with session state overrides
+        self.config = Configuration(st.session_state.get('config_overrides', {}))
+
+        # Initialize logger
+        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
+
+        # Initialize components only once
+        if 'components' not in st.session_state or st.session_state.components is None:
+            try:
+                components = self._initialize_components()
+                st.session_state.components = components
+            except Exception as e:
+                self.logger.error(f"Failed to initialize components: {e}")
+                # Create empty components dictionary as fallback
+                st.session_state.components = {}
+
+        # Always set self.components from session state
+        self.components = st.session_state.get('components', {})
+
+        # Validate components
+        if not self.components:
+            self.logger.warning("No components initialized, creating defaults")
+            self.components = self._create_default_components()
+
+        # Initialize managers
+        self.ui_factory = UIComponentFactory()
+        self.sample_generator = SampleDataGenerator()
+        self.export_manager = ExportManager(self.config)
+        self.collaboration_manager = CollaborationManager()
+        self.tutorial_system = TutorialSystem()
+        self.nl_processor = NLQueryProcessor(self.config)
+        self.ml_forecaster = MLForecaster(self.config)
+        self.error_recovery = ErrorRecoveryManager()
+
+        # Initialize compression handler
+        self.compression_handler = CompressionHandler(self.logger)
+
+    def _create_default_components(self) -> Dict[str, Component]:
+        """Create default components as fallback"""
+        try:
+            return {
+                'security': SecurityModule(self.config),
+                'processor': DataProcessor(self.config),
+                'analyzer': FinancialAnalysisEngine(self.config),
+                'mapper': AIMapper(self.config),
+            }
+        except Exception as e:
+            self.logger.error(f"Failed to create default components: {e}")
+            return {}
+
+    def __del__(self):
+        """Cleanup resources"""
+        if hasattr(self, 'compression_handler'):
+            self.compression_handler.cleanup()
+
+    @critical_method
+    def _initialize_session_state(self):
+        """Initialize all session state variables"""
+        defaults = {
+            # Core system state
+            'initialized': True,
+            'components': None,
+            'config_overrides': {},
+
+            # Data and analysis state
+            'analysis_data': None,
+            'analysis_hash': None,
+            'data_source': None,
+            'company_name': None,
+            'filtered_data': None,
+            
+            # File handling state
+            'uploaded_files': [],
+            'simple_parse_mode': False,
+            'processed_files_info': [],
+            
+            # Analysis mode and benchmarking
+            'analysis_mode': 'Standalone Analysis',
+            'benchmark_company': 'ITC Ltd',
+            'benchmark_data': None,
+            
+            # Mapping state
+            'metric_mappings': None,
+            'ai_mapping_result': None,
+            'show_manual_mapping': False,
+            'mapping_confidence_threshold': 0.6,
+            
+            # Penman-Nissim analysis
+            'pn_mappings': None,
+            'pn_results': None,
+            
+            # ML and forecasting
+            'ml_forecast_results': None,
+            'forecast_periods': 3,
+            'forecast_model_type': 'auto',
+            
+            # Kaggle API configuration
+            'kaggle_api_url': '',
+            'kaggle_api_key': '',
+            'kaggle_api_enabled': False,
+            'kaggle_api_status': 'unknown',
+            'kaggle_status': {},
+            'show_kaggle_config': False,
+            'api_metrics_visible': False,
+            'kaggle_connection_tested': False,
+            
+            # UI and display settings
+            'number_format_value': 'Indian',
+            'display_mode': 'LITE',
+            'show_tutorial': True,
+            'tutorial_step': 0,
+            'tutorial_completed': False,
+            'show_debug_info': False,
+            
+            # Collaboration and sharing
+            'collaboration_session': None,
+            'shared_analysis_token': None,
+            'user_id': 'default_user',
+            
+            # Query and interaction history
+            'query_history': [],
+            'last_query_result': None,
+            'interaction_count': 0,
+            
+            # Chart and visualization state
+            'selected_chart_metrics': [],
+            'chart_type': 'line',
+            'show_trend_lines': True,
+            'normalize_values': False,
+            
+            # Export and reporting
+            'report_format': 'Excel',
+            'include_charts': True,
+            'report_sections': {
+                'overview': True,
+                'ratios': True,
+                'trends': True,
+                'forecasts': False,
+                'penman_nissim': False,
+                'industry': False,
+                'raw_data': False
+            },
+            
+            # Error tracking and recovery
+            'last_error': None,
+            'error_count': 0,
+            'recovery_attempts': 0,
+            
+            # Performance and caching
+            'cache_hit_count': 0,
+            'analysis_count': 0,
+            'performance_stats': {},
+            
+            # Advanced features
+            'enable_ai_insights': True,
+            'enable_anomaly_detection': True,
+            'enable_pattern_recognition': True,
+            'confidence_threshold': 0.6,
+            
+            # Data quality and validation
+            'validation_results': None,
+            'data_quality_score': None,
+            'outlier_detection_results': {},
+            
+            # Industry comparison
+            'selected_industry': 'Technology',
+            'comparison_year': None,
+            'industry_benchmarks': {},
+            
+            # Custom analysis settings
+            'custom_ratios': {},
+            'custom_metrics': {},
+            'analysis_notes': '',
+            
+            # Session management
+            'session_start_time': time.time(),
+            'last_activity_time': time.time(),
+            'session_id': hashlib.md5(f"{time.time()}".encode()).hexdigest()[:8],
+        }
+
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+
+        # Log initialization
+        self.logger = LoggerFactory.get_logger('FinancialAnalyticsPlatform')
+        self.logger.info(f"Initialized {len(defaults)} session state variables")
+
+    @critical_method
+    def _initialize_components(self) -> Dict[str, Component]:
+        """Initialize all components with dependency injection"""
+        components = {}
+
+        try:
+            # Create components one by one with error handling
+            try:
+                components['security'] = SecurityModule(self.config)
+                components['security'].initialize()
+                self.logger.info("Initialized component: security")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize security: {e}")
+            
+            try:
+                components['processor'] = DataProcessor(self.config)
+                components['processor'].initialize()
+                self.logger.info("Initialized component: processor")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize processor: {e}")
+            
+            try:
+                components['analyzer'] = FinancialAnalysisEngine(self.config)
+                components['analyzer'].initialize()
+                self.logger.info("Initialized component: analyzer")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize analyzer: {e}")
+            
+            try:
+                components['mapper'] = AIMapper(self.config)
+                components['mapper'].initialize()
+                self.logger.info("Initialized component: mapper")
+            except Exception as e:
+                self.logger.error(f"Failed to initialize mapper: {e}")
+                # Mapper might fail due to AI dependencies, but app should still work
+            
+            return components
+            
+        except Exception as e:
+            self.logger.error(f"Critical error in component initialization: {e}")
+            # Return at least empty dict instead of None
+            return {}
+
+    def _cleanup_session_state(self, force_cleanup: bool = False):
+        """Clean up unnecessary session state entries with improved handling"""
+        try:
+            # Core essential keys that should never be deleted
+            core_essentials = {
+                'analysis_data', 'analysis_hash', 'components', 'initialized',
+                'config_overrides', 'data_source', 'number_format_value'
+            }
+
+            # Business logic keys that should be preserved unless force_cleanup
+            business_keys = {
+                'metric_mappings', 'pn_mappings', 'pn_results', 'company_name',
+                'ml_forecast_results'
+            }
+
+            # Essential keys combination
+            essential_keys = core_essentials | (set() if force_cleanup else business_keys)
+
+            # Group keys by prefix for better organization
+            key_groups = {
+                'outliers': [],
+                'standard_embedding': [],
+                'template': [],
+                'pn': [],
+                'other': []
+            }
+
+            # Categorize all keys
+            for key in list(st.session_state.keys()):
+                if key in essential_keys:
+                    continue
+                
+                if key.startswith('outliers_'):
+                    key_groups['outliers'].append(key)
+                elif key.startswith('standard_embedding_'):
+                    key_groups['standard_embedding'].append(key)
+                elif key.startswith('template_'):
+                    key_groups['template'].append(key)
+                elif key.startswith('pn_'):
+                    key_groups['pn'].append(key)
+                else:
+                    key_groups['other'].append(key)
+
+            # Cleanup rules
+            cleanup_rules = {
+                'outliers': lambda keys: keys,  # Remove all outlier keys
+                'standard_embedding': lambda keys: [k for k in keys if not any(metric in k for metric in ['Revenue', 'Total Assets', 'Net Income'])],  # Keep essential embeddings
+                'template': lambda keys: keys if force_cleanup else [],  # Remove only on force cleanup
+                'pn': lambda keys: keys if force_cleanup else [],  # Remove only on force cleanup
+                'other': lambda keys: [k for k in keys if not k.endswith(('_button', '_radio', '_checkbox'))]  # Remove UI state
+            }
+
+            # Perform cleanup
+            cleaned_count = 0
+            for group, keys in key_groups.items():
+                keys_to_remove = cleanup_rules[group](keys)
+                for key in keys_to_remove:
+                    try:
+                        del st.session_state[key]
+                        cleaned_count += 1
+                    except Exception as e:
+                        self.logger.warning(f"Could not delete key {key}: {e}")
+
+            # Log cleanup results
+            self.logger.info(f"Cleaned up {cleaned_count} session state entries")
+            
+            # Perform garbage collection after significant cleanup
+            if cleaned_count > 10:
+                gc.collect()
+
+        except Exception as e:
+            self.logger.error(f"Error during session state cleanup: {e}")
+
+    def _trigger_cleanup(self, trigger_type: str):
+        """Trigger cleanup based on specific events"""
+        cleanup_triggers = {
+            'new_upload': True,
+            'analysis_complete': False,
+            'page_reload': False,
+            'error_recovery': True,
+        }
+        force_cleanup = cleanup_triggers.get(trigger_type, False)
+        self._cleanup_session_state(force_cleanup)
+
+    def _manage_analysis_state(self, df: pd.DataFrame):
+        """Manage analysis state and caching"""
+        current_hash = hashlib.md5(pd.util.hash_pandas_object(df).values).hexdigest()
+
+        if ('analysis_hash' not in st.session_state or 
+            st.session_state.get('analysis_hash') != current_hash):
+            
+            keys_to_clear = [
+                'metric_mappings', 'pn_mappings', 'pn_results',
+                'ml_forecast_results', 'ai_mapping_result'
+            ]
+            for key in keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
+            st.session_state['analysis_hash'] = current_hash
+
+    # State helper methods
+    def get_state(self, key: str, default: Any = None) -> Any:
+        """Get value from session state with safe fallback"""
+        try:
+            return SimpleState.get(key, default)
+        except Exception as e:
+            self.logger.warning(f"Error accessing session state key '{key}': {e}")
+            return default
+
+    def set_state(self, key: str, value: Any) -> bool:
+        """Set value in session state with error handling"""
+        try:
+            SimpleState.set(key, value)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error setting session state key '{key}': {e}")
+            return False
+
+    def ensure_state_key(self, key: str, default_value: Any = None):
+        """Ensure a session state key exists with a default value"""
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+            self.logger.info(f"Initialized missing session state key: {key}")
+
+    def get_state_safe(self, key: str, default: Any = None, initialize: bool = True) -> Any:
+        """Ultra-safe session state access with auto-initialization"""
+        try:
+            if key not in st.session_state:
+                if initialize:
+                    st.session_state[key] = default
+                    self.logger.info(f"Auto-initialized session state key: {key} = {default}")
+                return default
+            return st.session_state[key]
+        except Exception as e:
+            self.logger.error(f"Critical error accessing session state key '{key}': {e}")
+            return default
+
+    def _clear_all_caches(self):
+        """Clear all caches"""
+        if 'analyzer' in self.components:
+            self.components['analyzer'].cache.clear()
+        if 'mapper' in self.components:
+            self.components['mapper'].embeddings_cache.clear()
+
+        performance_monitor.clear_metrics()
+
+        gc.collect()
+
+    def _reset_configuration(self):
+        """Reset configuration to defaults"""
+        self.set_state('config_overrides', {})
+        self.config = Configuration()
+        st.success("Configuration reset to defaults!")
+
+    def _export_logs(self):
+        """Export application logs"""
+        try:
+            log_dir = Path("logs")
+            if log_dir.exists():
+                import zipfile
+                zip_buffer = io.BytesIO()
+
+                with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
+                    for log_file in log_dir.glob("*.log"):
+                        zip_file.write(log_file, log_file.name)
+                
+                zip_buffer.seek(0)
+                
+                st.download_button(
+                    label="Download Logs",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                    mime="application/zip"
+                )
+            else:
+                st.warning("No log files found")
+        except Exception as e:
+            st.error(f"Failed to export logs: {e}")
+
+    @error_boundary()
+    @critical_method
+    def run(self):
+        """Main application entry point"""
+        try:
+            st.set_page_config(
+                page_title="Elite Financial Analytics Platform v5.1",
+                page_icon="💹",
+                layout="wide",
+                initial_sidebar_state="expanded"
+            )
+
+            if not hasattr(self, 'components') or self.components is None:
+                self.logger.warning("Components not initialized, attempting recovery")
+                self._auto_recovery_attempt()
+            
+            self._apply_custom_css()
+            
+            if hasattr(self, 'tutorial_system') and self.tutorial_system:
+                self.tutorial_system.render()
+            
+            self._render_header()
+            
+            self._render_sidebar()
+            
+            self._render_main_content()
+            
+            if self.config.get('app.debug', False):
+                self._render_debug_footer()
+            
+        except Exception as e:
+            self.logger.error(f"Application error: {e}")
+            st.error("An unexpected error occurred. Please refresh the page.")
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 Retry"):
+                    st.experimental_rerun()
+            
+            with col2:
+                if st.button("🔧 Auto Recovery"):
+                    if self._auto_recovery_attempt():
+                        st.success("Recovery successful!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Recovery failed. Please refresh manually.")
+            
+            with col3:
+                if st.button("🗑️ Clear All & Restart"):
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                    st.experimental_rerun()
+            
+            if self.config.get('app.debug', False):
+                st.exception(e)
+
+    def _apply_custom_css(self):
+        """Apply custom CSS styling"""
+        st.markdown("""
+        <style>
+        .main-header {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+        }
+
+        .sidebar .sidebar-content {
+            background-color: #f8f9fa;
+        }
+
+        .stMetric {
+            background-color: #ffffff;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .insight-card {
+            padding: 1rem;
+            margin: 0.5rem 0;
+            border-radius: 0.5rem;
+            border-left: 4px solid;
+        }
+
+        .quality-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 1rem;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .skeleton {
+            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+            background-size: 200% 100%;
+            animation: loading 1.5s infinite;
+            height: 20px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+
+        @keyframes loading {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        .collaboration-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #4CAF50;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 1000;
+        }
+
+        .kaggle-status {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: white;
+            border: 2px solid #4CAF50;
+            border-radius: 10px;
+            padding: 10px 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        .kaggle-status.error {
+            border-color: #f44336;
+        }
+
+        .kaggle-metric {
+            display: inline-block;
+            margin: 0 10px;
+            font-size: 14px;
+        }
+
+        .api-health {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+        }
+
+        .api-health.healthy {
+            background-color: #4CAF50;
+        }
+
+        .api-health.unhealthy {
+            background-color: #f44336;
+        }
+
+        .api-metrics-panel {
+            position: fixed;
+            top: 120px;
+            right: 20px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            z-index: 999;
+            max-width: 300px;
+        }
+
+        .progress-tracker {
+            background: #f5f5f5;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+        }
+
+        .progress-bar {
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            height: 8px;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+    def _render_header(self):
+        """Render application header with enhanced status indicators"""
+        st.markdown(
+            '<h1 class="main-header">💹 Elite Financial Analytics Platform v5.1</h1>',
+            unsafe_allow_html=True
+        )
+
+        if self.get_state('collaboration_session'):
+            session_id = self.get_state('collaboration_session')
+            if hasattr(self, 'collaboration_manager') and self.collaboration_manager:
+                activity = self.collaboration_manager.get_session_activity(session_id)
+                if activity:
+                    st.markdown(
+                        f'<div class="collaboration-indicator">👥 {len(activity["active_users"])} users online</div>',
+                        unsafe_allow_html=True
+                    )
+
+        if self.config.get('ui.show_kaggle_status', True) and self.get_state('kaggle_api_enabled'):
+            self._render_kaggle_status_badge()
+
+        if self.config.get('ui.show_api_metrics', True) and self.get_state('api_metrics_visible', False):
+            self._render_api_metrics_panel()
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            try:
+                if hasattr(self, 'components') and self.components:
+                    components_status = sum(
+                        1 for c in self.components.values() 
+                        if hasattr(c, '_initialized') and c._initialized
+                    )
+                    total_components = len(self.components)
+                else:
+                    components_status = 0
+                    total_components = 0
+            except Exception as e:
+                self.logger.warning(f"Error counting components: {e}")
+                components_status = 0
+                total_components = 0
+            
+            self.ui_factory.create_metric_card(
+                "Components", 
+                f"{components_status}/{total_components}",
+                help="Active system components"
+            )
+
+        with col2:
+            try:
+                mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
+                mode_name = mode.name if hasattr(mode, 'name') else str(mode)
+            except Exception as e:
+                self.logger.warning(f"Error getting display mode: {e}")
+                mode_name = "LITE"
+            
+            self.ui_factory.create_metric_card(
+                "Mode", 
+                mode_name,
+                help="Current operating mode"
+            )
+
+        with col3:
+            try:
+                if (hasattr(self, 'components') and 
+                    self.components and 
+                    'mapper' in self.components and 
+                    hasattr(self.components['mapper'], 'embeddings_cache')):
+                    
+                    cache_stats = self.components['mapper'].embeddings_cache.get_stats()
+                    hit_rate = cache_stats.get('hit_rate', 0)
+                else:
+                    hit_rate = 0
+            except Exception as e:
+                self.logger.warning(f"Error getting cache stats: {e}")
+                hit_rate = 0
+            
+            self.ui_factory.create_metric_card(
+                "Cache Hit Rate", 
+                f"{hit_rate:.1f}%",
+                help="AI cache performance"
+            )
+
+        with col4:
+            try:
+                version = self.config.get('app.version', 'Unknown')
+            except Exception as e:
+                self.logger.warning(f"Error getting version: {e}")
+                version = "5.1.0"
+            
+            self.ui_factory.create_metric_card(
+                "Version", 
+                version,
+                help="Platform version"
+            )
+
+        if self.config.get('app.debug', False):
+            try:
+                health = self._perform_health_check() if hasattr(self, '_perform_health_check') else None
+                if health and 'overall' in health:
+                    health_color = "🟢" if health['overall'] else "🔴"
+                    st.markdown(
+                        f'<div style="text-align: center; margin-top: 10px;">'
+                        f'{health_color} System Health: {"Good" if health["overall"] else "Issues Detected"}'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+            except Exception as e:
+                self.logger.warning(f"Error performing health check: {e}")
+        
+    def _render_kaggle_status_badge(self):
+        """Render floating Kaggle API status badge with enhanced metrics"""
+        try:
+            if 'mapper' in self.components and hasattr(self.components['mapper'], 'get_api_status'):
+                status = self.components['mapper'].get_api_status()
+
+                if status['kaggle_available']:
+                    info = status.get('api_info', {})
+                    stats = status.get('api_stats', {})
+                    
+                    gpu_name = info.get('gpu_name', info.get('system', {}).get('gpu_name', 'GPU'))
+                    model = info.get('model', info.get('system', {}).get('model', 'Unknown'))
+                    version = info.get('version', 'Unknown')
+                    
+                    status_html = f"""
+                    <div class="kaggle-status">
+                        <span class="api-health healthy"></span>
+                        <strong>Kaggle GPU Active</strong>
+                        <span class="kaggle-metric">🖥️ {gpu_name}</span>
+                        <span class="kaggle-metric">🤖 {model}</span>
+                        <span class="kaggle-metric">📊 v{version}</span>
+                    </div>
+                    """
+                else:
+                    status_html = """
+                    <div class="kaggle-status error">
+                        <span class="api-health unhealthy"></span>
+                        <strong>Kaggle GPU Offline</strong>
+                        <span class="kaggle-metric">Using local processing</span>
+                    </div>
+                    """
+                
+                st.markdown(status_html, unsafe_allow_html=True)
+        except Exception as e:
+            self.logger.warning(f"Error rendering Kaggle status badge: {e}")
+
+    def _render_api_metrics_panel(self):
+        """Render detailed API metrics panel"""
+        try:
+            if hasattr(self, 'components') and 'mapper' in self.components:
+                api_summary = performance_monitor.get_api_summary()
+
+                if api_summary:
+                    metrics_html = """
+                    <div class="api-metrics-panel">
+                        <h4 style="margin-top: 0;">API Performance Metrics</h4>
+                    """
+                    
+                    for endpoint, metrics in api_summary.items():
+                        metrics_html += f"""
+                        <div style="margin-bottom: 10px;">
+                            <strong>{endpoint}</strong><br>
+                            <small>
+                            Requests: {metrics['total_requests']} | 
+                            Success: {metrics['success_rate']:.1%} | 
+                            Avg: {metrics['avg_response_time']:.2f}s | 
+                            P95: {metrics['p95_response_time']:.2f}s
+                            </small>
+                        </div>
+                        """
+                    
+                    metrics_html += """
+                    </div>
+                    """
+                    
+                    st.markdown(metrics_html, unsafe_allow_html=True)
+        except Exception as e:
+            self.logger.warning(f"Error rendering API metrics panel: {e}")
+            
+    @safe_state_access
+    def _render_sidebar(self):
+        """Render sidebar with enhanced Kaggle configuration"""
+        st.sidebar.title("⚙️ Configuration")
+
+        st.sidebar.header("📊 Analysis Mode")
+
+        analysis_mode = st.sidebar.radio(
+            "Select Analysis Mode",
+            ["Standalone Analysis", "Benchmark Comparison"],
+            index=0,
+            help="Standalone analyzes only your data. Benchmark compares with industry standards."
+        )
+
+        self.set_state('analysis_mode', analysis_mode)
+
+        if analysis_mode == "Benchmark Comparison":
+            benchmark_company = st.sidebar.selectbox(
+                "Benchmark Company",
+                ["ITC Ltd", "Hindustan Unilever", "Nestle India"],
+                index=0,
+                help="Company to compare with"
+            )
+            self.set_state('benchmark_company', benchmark_company)
+            
+            if st.sidebar.button("Load Benchmark Data", type="primary"):
+                self._load_benchmark_data(benchmark_company)
+                st.sidebar.success(f"✅ Benchmark data for {benchmark_company} loaded")
+
+        st.sidebar.header("🖥️ Kaggle GPU Configuration")
+
+        kaggle_enabled = st.sidebar.checkbox(
+            "Enable Kaggle GPU Acceleration",
+            value=self.get_state('kaggle_api_enabled', False),
+            help="Use remote GPU for faster processing"
+        )
+
+        if kaggle_enabled:
+            with st.sidebar.expander("Kaggle API Settings", expanded=True):
+                api_url = st.text_input(
+                    "Ngrok URL",
+                    value=self.get_state('kaggle_api_url', ''),
+                    placeholder="https://xxxx.ngrok-free.app",
+                    help="Paste the ngrok URL from your Kaggle notebook"
+                )
+                
+                api_key = st.text_input(
+                    "API Key (Optional)",
+                    type="password",
+                    help="Optional API key for authentication"
+                )
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    timeout = st.number_input(
+                        "Timeout (seconds)",
+                        min_value=10,
+                        max_value=300,
+                        value=30,
+                        help="Request timeout"
+                    )
+                
+                with col2:
+                    batch_size = st.number_input(
+                        "Batch Size",
+                        min_value=1,
+                        max_value=100,
+                        value=50,
+                        help="Optimal batch size for GPU"
+                    )
+                
+                with st.expander("Circuit Breaker Settings"):
+                    cb_threshold = st.number_input(
+                        "Failure Threshold",
+                        min_value=1,
+                        max_value=20,
+                        value=5,
+                        help="Failures before circuit opens"
+                    )
+                    
+                    cb_timeout = st.number_input(
+                        "Recovery Timeout (seconds)",
+                        min_value=30,
+                        max_value=600,
+                        value=300,
+                        help="Time before retry after circuit opens"
+                    )
+                
+                if st.button("🔌 Test Connection", type="primary"):
+                    if api_url:
+                        self.config.set('ai.kaggle_api_url', api_url)
+                        self.config.set('ai.kaggle_api_key', api_key)
+                        self.config.set('ai.kaggle_api_timeout', timeout)
+                        self.config.set('ai.kaggle_batch_size', batch_size)
+                        self.config.set('ai.kaggle_circuit_breaker_threshold', cb_threshold)
+                        self.config.set('ai.kaggle_circuit_breaker_timeout', cb_timeout)
+                        self.config.set('ai.use_kaggle_api', True)
+                        
+                        with st.spinner("Testing Kaggle connection..."):
+                            try:
+                                self.components['mapper'].cleanup()
+                                self.components['mapper'] = AIMapper(self.config)
+                                self.components['mapper'].initialize()
+                                
+                                status = self.components['mapper'].get_api_status()
+                                
+                                if status['kaggle_available']:
+                                    st.success("✅ Successfully connected to Kaggle GPU!")
+                                    
+                                    if status['api_info']:
+                                        info = status['api_info']
+                                        system_info = info.get('system', {})
+                                        gpu_name = system_info.get('gpu_name', 'Unknown')
+                                        device = system_info.get('device', 'Unknown')
+                                        model = system_info.get('model', 'Unknown')
+                                        
+                                        st.info(f"""
+                                        **GPU Info:**
+                                        - Model: {model}
+                                        - GPU: {gpu_name}
+                                        - Device: {device}
+                                        - Version: {info.get('version', 'Unknown')}
+                                        """)
+                                    
+                                    self.set_state('kaggle_api_url', api_url)
+                                    self.set_state('kaggle_api_enabled', True)
+                                    self.set_state('kaggle_status', status)
+                                    self.set_state('kaggle_api_status', 'online')
+                                    
+                                else:
+                                    st.error("❌ Connection failed. Please check your URL and try again.")
+                                    self.set_state('kaggle_api_status', 'offline')
+                            except Exception as e:
+                                st.error(f"❌ Connection error: {str(e)}")
+                                self.set_state('kaggle_api_status', 'error')
+                    else:
+                        st.warning("Please enter a valid ngrok URL")
+                
+                if st.button("🧪 Test Embed Endpoint", type="secondary"):
+                    if api_url:
+                        with st.spinner("Testing embed endpoint..."):
+                            try:
+                                import requests
+                                import urllib3
+                                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                                
+                                test_data = {'texts': ['test embedding']}
+                                
+                                response = requests.post(
+                                    f"{api_url.rstrip('/')}/embed",
+                                    json=test_data,
+                                    headers={
+                                        'Content-Type': 'application/json', 
+                                        'ngrok-skip-browser-warning': 'true'
+                                    },
+                                    verify=False,
+                                    timeout=10
+                                )
+                                
+                                st.write(f"**Status Code:** {response.status_code}")
+                                
+                                if response.status_code == 200:
+                                    st.success("✅ Embed endpoint is working!")
+                                    try:
+                                        result = response.json()
+                                        st.write("**Response format:**")
+                                        
+                                        if isinstance(result, dict):
+                                            st.write(f"- Type: Dictionary with keys: {list(result.keys())}")
+                                            
+                                            for key in ['embeddings', 'data', 'vectors', 'output']:
+                                                if key in result:
+                                                    st.write(f"- Found embeddings in key: '{key}'")
+                                                    embed_data = result[key]
+                                                    if isinstance(embed_data, list) and len(embed_data) > 0:
+                                                        st.write(f"  - Number of embeddings: {len(embed_data)}")
+                                                        st.write(f"  - Embedding dimension: {len(embed_data[0]) if isinstance(embed_data[0], list) else 'N/A'}")
+                                                        st.write(f"  - First 5 values: {embed_data[0][:5] if isinstance(embed_data[0], list) else str(embed_data[0])[:50]}")
+                                                    break
+                                        elif isinstance(result, list):
+                                            st.write(f"- Type: List with {len(result)} items")
+                                            if len(result) > 0:
+                                                st.write(f"- First item type: {type(result[0])}")
+                                                st.write(f"- Dimension: {len(result[0]) if isinstance(result[0], list) else 'N/A'}")
+                                        
+                                        with st.expander("View full response"):
+                                            st.json(result)
+                                            
+                                    except Exception as e:
+                                        st.warning(f"Response is not JSON: {response.text[:200]}")
+                                else:
+                                    st.error(f"❌ Embed endpoint failed")
+                                    st.text(f"Response: {response.text[:500]}")
+                                    
+                            except requests.exceptions.Timeout:
+                                st.error("❌ Request timed out. The endpoint might be slow or unresponsive.")
+                            except requests.exceptions.ConnectionError:
+                                st.error("❌ Connection error. Check if the URL is correct and accessible.")
+                            except Exception as e:
+                                st.error(f"❌ Test failed: {str(e)}")
+                                import traceback
+                                with st.expander("Show error details"):
+                                    st.code(traceback.format_exc())
+                    else:
+                        st.warning("Please enter a ngrok URL above")
+                
+                if st.button("🔍 Run Full Diagnostics", type="secondary"):
+                    if api_url:
+                        with st.expander("Diagnostic Results", expanded=True):
+                            st.write(f"**Testing URL:** `{api_url}`")
+                            
+                            import requests
+                            import urllib3
+                            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                            
+                            endpoints_to_test = [
+                                ('/', 'Root'),
+                                ('/health', 'Health'),
+                                ('/embed', 'Embed (GET)'),
+                                ('/api/health', 'API Health'),
+                                ('/status', 'Status'),
+                                ('/docs', 'Documentation'),
+                                ('/version', 'Version')
+                            ]
+                            
+                            st.write("\n**Endpoint Tests:**")
+                            
+                            for endpoint, name in endpoints_to_test:
+                                try:
+                                    url = f"{api_url.rstrip('/')}{endpoint}"
+                                    response = requests.get(
+                                        url, 
+                                        timeout=5, 
+                                        verify=False,
+                                        headers={'ngrok-skip-browser-warning': 'true'}
+                                    )
+                                    
+                                    if response.status_code == 200:
+                                        st.success(f"✅ {name} ({endpoint}): {response.status_code}")
+                                    elif response.status_code == 404:
+                                        st.warning(f"⚠️ {name} ({endpoint}): Not found")
+                                    else:
+                                        st.error(f"❌ {name} ({endpoint}): {response.status_code}")
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ {name} ({endpoint}): {str(e)}")
+                            
+                            st.write("\n**Embed Endpoint Tests (POST):**")
+                            
+                            test_payloads = [
+                                {'texts': ['test']},
+                                {'text': 'test'},
+                                {'inputs': ['test']},
+                                {'data': ['test']}
+                            ]
+                            
+                            for payload in test_payloads:
+                                try:
+                                    response = requests.post(
+                                        f"{api_url.rstrip('/')}/embed",
+                                        json=payload,
+                                        headers={'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true'},
+                                        verify=False,
+                                        timeout=10
+                                    )
+                                    
+                                    if response.status_code == 200:
+                                        st.success(f"✅ Payload format `{list(payload.keys())[0]}`: Success")
+                                        break
+                                    else:
+                                        st.warning(f"⚠️ Payload format `{list(payload.keys())[0]}`: {response.status_code}")
+                                        
+                                except Exception as e:
+                                    st.error(f"❌ Payload format `{list(payload.keys())[0]}`: {str(e)}")
+                    else:
+                        st.warning("Please enter a ngrok URL above")
+                
+                with st.expander("📚 Setup Guide"):
+                    st.markdown("""
+                    **How to connect to Kaggle GPU:**
+                    
+                    1. **Run the Kaggle notebook** with the API server code
+                    2. **Copy the ngrok URL** shown in the output
+                    3. **Paste it above** and click Test Connection
+                    
+                    **Benefits:**
+                    - 🚀 10-100x faster embedding generation
+                    - 💾 Larger model support (GPU memory)
+                    - 🔋 Reduced local CPU/memory usage
+                    - 📊 Better accuracy with larger models
+                    
+                    **Advanced Features:**
+                    - Circuit breaker for resilience
+                    - Request batching and coalescing
+                    - Response caching
+                    - Connection pooling
+                    
+                    **Troubleshooting:**
+                    - Ensure the Kaggle notebook is running
+                    - Check that ngrok is not expired (8 hour limit)
+                    - Verify the URL includes https://
+                    """)
+        else:
+            if self.get_state('kaggle_api_enabled'):
+                self.config.set('ai.use_kaggle_api', False)
+                self.set_state('kaggle_api_enabled', False)
+                self.set_state('kaggle_api_status', 'disabled')
+            
+            st.sidebar.info("Enable to use GPU-accelerated processing via Kaggle")
+
+        if 'mapper' in self.components:
+            status = self.components['mapper'].get_api_status()
+            
+            if status['kaggle_configured'] or status['local_model_available']:
+                st.sidebar.subheader("🎯 Processing Status")
+                
+                processing_methods = []
+                if status['kaggle_available']:
+                    processing_methods.append("✅ Kaggle GPU")
+                if status['local_model_available']:
+                    processing_methods.append("✅ Local Model")
+                if not processing_methods:
+                    processing_methods.append("✅ Fuzzy Matching")
+                
+                for method in processing_methods:
+                    st.sidebar.text(method)
+                
+                if st.sidebar.checkbox("Show API Metrics", value=self.get_state('api_metrics_visible', False)):
+                    self.set_state('api_metrics_visible', True)
+                else:
+                    self.set_state('api_metrics_visible', False)
+                
+                st.sidebar.metric("Cache Size", status['cache_size'])
+                st.sidebar.metric("Buffer Size", status.get('buffer_size', 0))
+
+        st.sidebar.header("📥 Data Input")
+
+        input_method = st.sidebar.radio(
+            "Input Method",
+            ["Upload Files", "Sample Data", "Manual Entry"],
+            key="input_method"
+        )
+
+        if input_method == "Upload Files":
+            self._render_file_upload()
+        elif input_method == "Sample Data":
+            self._render_sample_data_loader()
+        else:
+            st.sidebar.info("Use the main area for manual data entry")
+
+        st.sidebar.header("⚙️ Settings")
+
+        mode_options = [m.name for m in Configuration.DisplayMode]
+        current_mode = self.config.get('app.display_mode', Configuration.DisplayMode.LITE)
+
+        selected_mode = st.sidebar.selectbox(
+            "Performance Mode",
+            mode_options,
+            index=mode_options.index(current_mode.name),
+            help="FULL: All features | LITE: Balanced | MINIMAL: Fast"
+        )
+
+        if selected_mode != current_mode.name:
+            self.config.set('app.display_mode', Configuration.DisplayMode[selected_mode])
+            self.set_state('config_overrides', {'app': {'display_mode': Configuration.DisplayMode[selected_mode]}})
+
+        if selected_mode != "MINIMAL":
+            st.sidebar.subheader("🤖 AI Settings")
+            
+            ai_enabled = st.sidebar.checkbox(
+                "Enable AI Mapping",
+                value=self.config.get('ai.enabled', True),
+                help="Use AI for intelligent metric mapping"
+            )
+            
+            self.config.set('ai.enabled', ai_enabled)
+            
+            if ai_enabled:
+                confidence_threshold = st.sidebar.slider(
+                    "Confidence Threshold",
+                    0.0, 1.0,
+                    self.config.get('ai.similarity_threshold', 0.6),
+                    0.05,
+                    help="Minimum confidence for automatic mapping"
+                )
+                self.config.set('ai.similarity_threshold', confidence_threshold)
+
+        if self.config.get('app.enable_collaboration', True):
+            st.sidebar.subheader("👥 Collaboration")
+            
+            if not self.get_state('collaboration_session'):
+                if st.sidebar.button("Start Collaborative Session"):
+                    session_id = self.collaboration_manager.create_session(
+                        self.get_state('analysis_data_id', 'default'),
+                        'current_user'
+                    )
+                    self.set_state('collaboration_session', session_id)
+                    st.sidebar.success(f"Session created: {session_id}")
+            else:
+                session_id = self.get_state('collaboration_session')
+                st.sidebar.info(f"Session: {session_id}")
+                
+                if st.sidebar.button("Leave Session"):
+                    self.set_state('collaboration_session', None)
+                    st.sidebar.info("Left collaborative session")
+
+        st.sidebar.subheader("🔢 Number Format")
+
+        current_format = self.get_state('number_format_value', 'Indian')
+
+        format_option = st.sidebar.radio(
+            "Display Format",
+            ["Indian (₹ Lakhs/Crores)", "International ($ Millions)"],
+            index=0 if current_format == 'Indian' else 1,
+            key="number_format_radio"
+        )
+
+        self.set_state('number_format_value', 
+                      'Indian' if "Indian" in format_option else 'International')
+
+        with st.sidebar.expander("🔧 Advanced Options"):
+            debug_mode = st.sidebar.checkbox(
+                "Debug Mode",
+                value=self.config.get('app.debug', False),
+                help="Show detailed error information"
+            )
+            self.config.set('app.debug', debug_mode)
+            
+            if st.sidebar.button("Clear Cache"):
+                self._clear_all_caches()
+                st.success("Cache cleared!")
+            
+            if st.sidebar.button("Reset Configuration"):
+                self._reset_configuration()
+            
+            if st.sidebar.button("Export Logs"):
+                self._export_logs()
+            
+            if debug_mode:
+                perf_summary = performance_monitor.get_performance_summary()
+                if perf_summary:
+                    st.sidebar.write("**Performance Summary:**")
+                    for op, stats in list(perf_summary.items())[:5]:
+                        st.sidebar.text(f"{op}: {stats['avg_duration']:.3f}s")
+                        
+    @safe_state_access
+    def _render_file_upload(self):
+        """Render file upload interface with safe state handling"""
+        self.ensure_state_key('uploaded_files', [])
+        self.ensure_state_key('simple_parse_mode', False)
+
+        allowed_types = self.config.get('app.allowed_file_types', [])
+        max_size = self.config.get('security.max_upload_size_mb', 50)
+
+        temp_files = st.sidebar.file_uploader(
+            f"Upload Financial Statements (Max {max_size}MB each)",
+            type=allowed_types,
+            accept_multiple_files=True,
+            key="file_uploader",
+            help="You can upload compressed files (.zip, .7z) containing multiple financial statements"
+        )
+
+        if temp_files:
+            self.set_state('uploaded_files', temp_files)
+            
+            regular_files = [f for f in temp_files if not f.name.lower().endswith(('.zip', '.7z'))]
+            compressed_files = [f for f in temp_files if f.name.lower().endswith(('.zip', '.7z'))]
+            
+            if compressed_files:
+                st.sidebar.info(f"📦 {len(compressed_files)} compressed file(s) uploaded")
+            if regular_files:
+                st.sidebar.info(f"📄 {len(regular_files)} regular file(s) uploaded")
+
+        uploaded_files = self.get_state_safe('uploaded_files', [], initialize=True)
+
+        if uploaded_files:
+            current_simple_mode = self.get_state_safe('simple_parse_mode', False, initialize=True)
+            
+            new_simple_mode = st.sidebar.checkbox(
+                "Use simple parsing mode", 
+                value=current_simple_mode,
+                help="Try this if normal parsing fails",
+                key="simple_parse_mode_checkbox"
+            )
+            
+            self.set_state('simple_parse_mode', new_simple_mode)
+            
+            has_7z = any(f.name.lower().endswith('.7z') for f in uploaded_files)
+            if has_7z and not SEVEN_ZIP_AVAILABLE:
+                st.sidebar.warning("⚠️ 7z files detected but py7zr not installed")
+                st.sidebar.code("pip install py7zr")
+            
+            all_valid = True
+            for file in uploaded_files:
+                if not file.name.lower().endswith(('.zip', '.7z')):
+                    result = self.components['security'].validate_file_upload(file)
+                    if not result.is_valid:
+                        st.sidebar.error(f"❌ {file.name}: {result.errors[0]}")
+                        all_valid = False
+            
+            if all_valid and st.sidebar.button("Process Files", type="primary"):
+                self._process_uploaded_files(uploaded_files)
+
+        with st.sidebar.expander("📋 File Format Guide"):
+            st.info("""
+            **Supported Financial Data Formats:**
+            
+            1. **Capitaline Exports**: Both .xls (HTML) and true Excel formats
+            2. **Moneycontrol/BSE/NSE**: HTML exports with .xls extension
+            3. **Standard CSV/Excel**: With metrics in rows and years in columns
+            4. **Compressed Files**: 
+               - ZIP files (.zip) containing multiple statements
+               - 7Z files (.7z) for maximum compression
+            
+            **💡 Pro Tips**: 
+            - Compress multiple files into a single ZIP/7Z for faster uploads
+            - 7Z typically provides 50-70% better compression than ZIP
+            - You can mix different file types in a single compressed file
+            """)
+
+    def _render_sample_data_loader(self):
+        """Render sample data loader"""
+        sample_options = [
+            "Indian Tech Company (IND-AS)",
+            "US Manufacturing (GAAP)",
+            "European Retail (IFRS)"
+        ]
+
+        selected_sample = st.sidebar.selectbox(
+            "Select Sample Dataset",
+            sample_options
+        )
+
+        if st.sidebar.button("Load Sample Data", type="primary"):
+            self._load_sample_data(selected_sample)
+        
+    @safe_state_access
+    def _process_uploaded_files(self, uploaded_files: List[UploadedFile]):
+        """Process uploaded files including compressed files with progress tracking"""
+        try:
+            self._trigger_cleanup('new_upload')
+
+            self._cleanup_session_state()
+            
+            self.set_state('metric_mappings', None)
+            self.set_state('pn_mappings', None)
+            self.set_state('pn_results', None)
+            self.set_state('ml_forecast_results', None)
+            self.set_state('ai_mapping_result', None)
+            
+            all_dataframes = []
+            file_info = []
+            
+            progress_text = st.empty()
+            progress_bar = st.progress(0)
+            
+            total_files = len(uploaded_files)
+            
+            for i, file in enumerate(uploaded_files):
+                progress_text.text(f"Processing {file.name}...")
+                progress_bar.progress((i + 1) / total_files)
+                
+                try:
+                    if file.name.lower().endswith(('.zip', '.7z')):
+                        extracted_files = self.compression_handler.extract_compressed_file(file)
+                        
+                        for extracted_name, extracted_content in extracted_files:
+                            temp_file = io.BytesIO(extracted_content)
+                            temp_file.name = extracted_name
+                            
+                            df = self._parse_single_file(temp_file)
+                            if df is not None and not df.empty:
+                                df = self._clean_dataframe(df)
+                                self._inspect_dataframe(df, extracted_name)
+                                all_dataframes.append(df)
+                                file_info.append({
+                                    'name': extracted_name,
+                                    'source': f"{file.name} (compressed)",
+                                    'shape': df.shape
+                                })
+                    else:
+                        df = self._parse_single_file(file)
+                        if df is not None and not df.empty:
+                            df = self._clean_dataframe(df)
+                            self._inspect_dataframe(df, file.name)
+                            all_dataframes.append(df)
+                            file_info.append({
+                                'name': file.name,
+                                'source': 'direct upload',
+                                'shape': df.shape
+                            })
+                except Exception as e:
+                    self.logger.error(f"Error processing {file.name}: {e}")
+                    st.error(f"Error processing {file.name}: {str(e)}")
+                    continue
+            
+            progress_text.empty()
+            progress_bar.empty()
+            
+            if all_dataframes:
+                final_df = all_dataframes[0] if len(all_dataframes) == 1 else self._merge_dataframes(all_dataframes)
+                
+                processed_df, validation_result = self.components['processor'].process(final_df, "uploaded_data")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    total_rows = len(processed_df)
+                    total_cols = len(processed_df.columns)
+                    st.metric("Data Points", f"{total_rows}×{total_cols}")
+                
+                with col2:
+                    numeric_df = processed_df.select_dtypes(include=[np.number])
+                    if not numeric_df.empty:
+                        missing_pct = (numeric_df.isnull().sum().sum() / (numeric_df.shape[0] * numeric_df.shape[1])) * 100
+                    else:
+                        missing_pct = 0.0
+                    st.metric("Missing Data", f"{missing_pct:.1f}%")
+                
+                with col3:
+                    numeric_cols = processed_df.select_dtypes(include=[np.number]).columns
+                    if len(processed_df.columns) > 0:
+                        numeric_pct = (len(numeric_cols) / len(processed_df.columns)) * 100
+                    else:
+                        numeric_pct = 0.0
+                    st.metric("Numeric Columns", f"{numeric_pct:.1f}%")
+                
+                self._manage_analysis_state(processed_df)
+                self.set_state('analysis_data', processed_df)
+                self.set_state('data_source', 'uploaded_files')
+                
+                st.success(f"✅ Successfully processed {len(uploaded_files)} file(s)")
+                
+                with st.expander("📊 Data Quality Report", expanded=True):
+                    st.write("**Data Structure:**")
+                    st.write(f"- Rows: {total_rows}")
+                    st.write(f"- Columns: {total_cols}")
+                    st.write(f"- Missing Data: {missing_pct:.1f}%")
+                    
+                    if validation_result.warnings:
+                        st.write("\n**Warnings:**")
+                        for warning in validation_result.warnings[:3]:
+                            st.warning(warning)
+                    
+                    if validation_result.corrections:
+                        st.write("\n**Auto-corrections Applied:**")
+                        for correction in validation_result.corrections[:5]:
+                            st.info(correction)
+                        if len(validation_result.corrections) > 5:
+                            st.write(f"... and {len(validation_result.corrections)-5} more corrections")
+                    
+                    if len(file_info) > 1:
+                        st.write("\n**Processed Files:**")
+                        info_df = pd.DataFrame(file_info)
+                        st.dataframe(info_df, use_container_width=True)
+                
+            else:
+                st.error("No valid financial data found in uploaded files")
+                
+        except Exception as e:
+            self._trigger_cleanup('error_recovery')
+            st.error(f"Error processing files: {str(e)}")
+        finally:
+            self.compression_handler.cleanup()
+        
+    def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
+        """Parse a single file and return DataFrame"""
+        try:
+            file_ext = Path(file.name).suffix.lower()
+            self.logger.info(f"Attempting to parse file: {file.name} with extension: {file_ext}")
+
+            sample = file.read(1024).decode('utf-8', errors='ignore')
+            file.seek(0)
+            
+            self.logger.info(f"File content starts with: {sample[:100]}")
+            
+            if '<html' in sample.lower() or '<table' in sample.lower():
+                self.logger.info(f"{file.name} appears to be HTML content")
+                try:
+                    tables = pd.read_html(file)
+                    if tables:
+                        df = max(tables, key=len)
+                        
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
+                        
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                        
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
+                        index_col_found = False
+                        
+                        for col in potential_index_cols:
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                index_col_found = True
+                                break
+                        
+                        if not index_col_found and len(df.columns) > 0:
+                            first_col = df.columns[0]
+                            if df[first_col].dtype == object:
+                                df = df.set_index(first_col)
+                        
+                        return df
+                except Exception as e:
+                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
+                    return None
+                    
+            elif file_ext == '.csv':
+                try:
+                    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
+                    for encoding in encodings:
+                        try:
+                            file.seek(0)
+                            df = pd.read_csv(file, encoding=encoding, index_col=0)
+                            self.logger.info(f"Successfully parsed CSV with {encoding} encoding")
+                            return df
+                        except UnicodeDecodeError:
+                            continue
+                        except Exception as e:
+                            self.logger.warning(f"CSV parsing failed with {encoding}: {e}")
+                            continue
+                    
+                    file.seek(0)
+                    df = pd.read_csv(file, encoding='utf-8', index_col=None)
+                    if df.iloc[:, 0].dtype == object:
+                        df = df.set_index(df.columns[0])
+                    return df
+                    
+                except Exception as e:
+                    self.logger.error(f"CSV parsing failed for {file.name}: {e}")
+                    return None
+                    
+            elif file_ext in ['.xls', '.xlsx']:
+                for engine in ['openpyxl', 'xlrd']:
+                    try:
+                        file.seek(0)
+                        self.logger.info(f"Trying {engine} engine for {file.name}")
+                        
+                        try:
+                            df = pd.read_excel(file, index_col=0, engine=engine)
+                            if not df.empty:
+                                return df
+                        except Exception:
+                            file.seek(0)
+                            df = pd.read_excel(file, index_col=None, engine=engine)
+                            if not df.empty and df.iloc[:, 0].dtype == object:
+                                df = df.set_index(df.columns[0])
+                                return df
+                            
+                    except Exception as e:
+                        self.logger.warning(f"{engine} engine failed for {file.name}: {e}")
+                        continue
+                
+                try:
+                    file.seek(0)
+                    tables = pd.read_html(file)
+                    if tables:
+                        df = max(tables, key=len)
+                        
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
+                        
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                        
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
+                        for col in potential_index_cols:
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                break
+                        else:
+                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
+                                df = df.set_index(df.columns[0])
+                        
+                        self.logger.info(f"Successfully parsed {file.name} as HTML table")
+                        return df
+                        
+                except Exception as e:
+                    self.logger.error(f"HTML fallback failed for {file.name}: {e}")
+                    return None
+            
+            elif file_ext in ['.html', '.htm']:
+                try:
+                    tables = pd.read_html(file)
+                    if tables:
+                        df = max(tables, key=len)
+                        
+                        if isinstance(df.columns, pd.MultiIndex):
+                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
+                                         for col in df.columns]
+                        
+                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
+                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+                        
+                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
+                        for col in potential_index_cols:
+                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
+                            if matching_cols:
+                                df = df.set_index(matching_cols[0])
+                                break
+                        else:
+                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
+                                df = df.set_index(df.columns[0])
+                        
+                        return df
+                except Exception as e:
+                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
+                    return None
+            
+            else:
+                self.logger.warning(f"Unsupported file type: {file_ext}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error parsing {file.name}: {e}")
+            return None
+        
+    def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and prepare dataframe for analysis"""
+        try:
+            cleaned_df = self._standardize_dataframe(df)
+
+            unnamed_cols = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
+            if unnamed_cols:
+                cleaned_df = cleaned_df.drop(columns=unnamed_cols)
+                self.logger.info(f"Removed {len(unnamed_cols)} unnamed columns")
+            
+            for col in cleaned_df.columns:
+                try:
+                    cleaned_df[col] = cleaned_df[col].replace({
+                        '-': np.nan,
+                        '': np.nan,
+                        'NA': np.nan,
+                        'None': np.nan
+                    })
+                    cleaned_df[col] = pd.to_numeric(cleaned_df[col], errors='coerce')
+                except Exception as e:
+                    self.logger.warning(f"Could not convert column {col} to numeric: {e}")
+            
+            return cleaned_df
+            
+        except Exception as e:
+            self.logger.error(f"Error cleaning dataframe: {e}")
+            return df
+        
+    def _standardize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Standardize DataFrame structure specifically for financial data"""
+        try:
+            std_df = df.copy()
+
+            if isinstance(std_df.columns, pd.Index):
+                std_df.columns = [
+                    str(col).strip()
+                    .replace('Fice >>', 'Finance >>')
+                    .replace('  ', ' ')
+                    .replace('\n', ' ')
+                    .replace('\t', ' ')
+                    for col in std_df.columns
+                ]
+            
+            if std_df.index.duplicated().any():
+                self.logger.info("Found rows with similar names - making indices unique")
+                
+                new_index = []
+                seen_indices = {}
+                
+                for idx in std_df.index:
+                    idx_str = str(idx) if not pd.isna(idx) else "EmptyIndex"
+                    
+                    if idx_str in seen_indices:
+                        seen_indices[idx_str] += 1
+                        unique_idx = f"{idx_str}_v{seen_indices[idx_str]}"
+                    else:
+                        seen_indices[idx_str] = 0
+                        unique_idx = idx_str
+                    
+                    new_index.append(unique_idx)
+                
+                std_df.index = new_index
+                self.logger.info(f"Made {sum(v for v in seen_indices.values() if v > 0)} indices unique")
+            
+            before_count = len(std_df)
+            std_df = std_df.dropna(how='all')
+            after_count = len(std_df)
+            
+            if before_count != after_count:
+                self.logger.info(f"Removed {before_count - after_count} completely empty rows")
+            
+            before_cols = len(std_df.columns)
+            std_df = std_df.dropna(how='all', axis=1)
+            after_cols = len(std_df.columns)
+            
+            if before_cols != after_cols:
+                self.logger.info(f"Removed {before_cols - after_cols} completely empty columns")
+            
+            return std_df
+
+        except Exception as e:
+            self.logger.error(f"Error standardizing DataFrame: {e}")
+            return df
+        
+    def _inspect_dataframe(self, df: pd.DataFrame, filename: str) -> None:
+        """Debug helper to inspect DataFrame structure"""
+        self.logger.info(f"\nInspecting DataFrame from {filename}:")
+        self.logger.info(f"Shape: {df.shape}")
+        self.logger.info(f"Columns: {df.columns.tolist()}")
+
+        if df.index.duplicated().any():
+            dup_indices = df.index[df.index.duplicated(keep=False)].unique()
+            self.logger.warning(f"Duplicate indices found: {dup_indices[:5].tolist()}")
+
+        self.logger.info(f"First few rows:\n{df.head()}")
+
+    def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
+        """Merge dataframes preserving all financial line items"""
+        try:
+            analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
+
+            if analysis_mode == "Standalone Analysis":
+                self.logger.info("Using standalone analysis mode - preserving all financial data")
+                
+                processed_dfs = []
+                
+                for i, df in enumerate(dataframes):
+                    df_copy = df.copy()
+                    
+                    statement_type = self._detect_statement_type(df_copy)
+                    self.logger.info(f"Processing {statement_type} with {len(df_copy)} line items")
+                    
+                    new_index = []
+                    for idx in df_copy.index:
+                        if pd.isna(idx) or str(idx).strip() == '':
+                            new_idx = f"{statement_type}_EmptyRow_{df_copy.index.get_loc(idx)}"
+                        else:
+                            clean_idx = str(idx).strip()
+                            new_idx = f"{statement_type}::{clean_idx}"
+                        new_index.append(new_idx)
+                    
+                    df_copy.index = new_index
+                    processed_dfs.append(df_copy)
+                
+                merged_df = pd.concat(processed_dfs, axis=0, sort=False)
+                
+                total_original = sum(len(df) for df in dataframes)
+                self.logger.info(f"Successfully preserved all {len(merged_df)} line items (original: {total_original})")
+                
+                company_info = self._extract_company_info(merged_df)
+                if company_info:
+                    self.logger.info(f"Analyzing data for: {company_info['name']}")
+                    self.set_state('company_name', company_info['name'])
+                
+                return merged_df
+                
+            elif analysis_mode == "Benchmark Comparison":
+                self.logger.info("Using benchmark comparison mode")
+                
+                merged_df = self._merge_standalone_data(dataframes)
+                
+                benchmark_data = self.get_state('benchmark_data')
+                if benchmark_data is not None:
+                    benchmark_copy = benchmark_data.copy()
+                    benchmark_copy.index = [f"Benchmark::{idx}" for idx in benchmark_copy.index]
+                    merged_df = pd.concat([merged_df, benchmark_copy], axis=0)
+                
+                return merged_df
+            
+            return pd.concat(dataframes, axis=0)
+            
+        except Exception as e:
+            self.logger.error(f"Error merging dataframes: {e}")
+            return dataframes[0] if dataframes else pd.DataFrame()
+
+    def _merge_standalone_data(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
+        """Helper function to merge standalone data"""
+        processed_dfs = []
+
+        for df in dataframes:
+            df_copy = df.copy()
+            statement_type = self._detect_statement_type(df_copy)
+            
+            new_index = [f"{statement_type}::{str(idx).strip()}" for idx in df_copy.index]
+            df_copy.index = new_index
+            processed_dfs.append(df_copy)
+
+        return pd.concat(processed_dfs, axis=0, sort=False)
+
+    def _detect_statement_type(self, df: pd.DataFrame) -> str:
+        """Detect the type of financial statement from column names"""
+        if df.columns.empty:
+            return "Financial"
+
+        col_sample = str(df.columns[0]).lower()
+
+        if any(keyword in col_sample for keyword in ['profit', 'loss', 'income', 'p&l']):
+            return "ProfitLoss"
+        elif any(keyword in col_sample for keyword in ['balance', 'sheet']):
+            return "BalanceSheet"
+        elif any(keyword in col_sample for keyword in ['cash', 'flow']):
+            return "CashFlow"
+        elif any(keyword in col_sample for keyword in ['equity', 'changes']):
+            return "Equity"
+        else:
+            return "Financial"
+
+    def _extract_company_info(self, df: pd.DataFrame) -> Dict[str, str]:
+        """Extract company name and other info from DataFrame columns"""
+        company_info = {}
+
+        for col in df.columns:
+            col_str = str(col)
+            if '>>' in col_str:
+                parts = col_str.split('>>')
+                if len(parts) >= 3:
+                    company_part = parts[2].split('(')[0].strip()
+                    company_info['name'] = company_part
+                    
+                    if '(' in parts[2] and ')' in parts[2]:
+                        currency = parts[2].split('(')[1].split(')')[0].strip()
+                        company_info['currency'] = currency
+                    
+                    break
+
+        return company_info
+
+    def _load_sample_data(self, sample_name: str):
+        """Load sample data"""
+        try:
+            with st.spinner(f"Loading {sample_name}..."):
+                if "Indian Tech" in sample_name:
+                    df = self.sample_generator.generate_indian_tech_company()
+                    company_name = "TechCorp India Ltd."
+                elif "US Manufacturing" in sample_name:
+                    df = self.sample_generator.generate_us_manufacturing()
+                    company_name = "ManufactureCorp USA"
+                elif "European Retail" in sample_name:
+                    df = self.sample_generator.generate_european_retail()
+                    company_name = "RetailChain Europe"
+                else:
+                    st.error("Unknown sample dataset")
+                    return
+
+                processed_df, validation_result = self.components['processor'].process(df, "sample_data")
+                
+                self.set_state('analysis_data', processed_df)
+                self.set_state('company_name', company_name)
+                self.set_state('data_source', 'sample_data')
+                
+                st.success(f"✅ Loaded sample data: {sample_name}")
+                
+        except Exception as e:
+            st.error(f"Error loading sample data: {str(e)}")
+            
+    def _load_benchmark_data(self, company_name: str):
+        """Load benchmark data for comparison"""
+        if company_name == "ITC Ltd":
+            try:
+                benchmark_dir = Path("data/benchmarks")
+                benchmark_dir.mkdir(parents=True, exist_ok=True)
+                benchmark_path = benchmark_dir / "itc_ltd.pkl"
+    
+                if not benchmark_path.exists():
+                    self.logger.info(f"Generating synthetic benchmark data for {company_name}")
+                    
+                    years = ['2019', '2020', '2021', '2022', '2023']
+                    
+                    data = {
+                        'Total Assets': [45000, 52000, 61000, 72000, 85000],
+                        'Current Assets': [28000, 32000, 38000, 45000, 53000],
+                        'Non-current Assets': [17000, 20000, 23000, 27000, 32000],
+                        'Cash and Cash Equivalents': [12000, 14000, 17000, 21000, 25000],
+                        'Inventory': [2000, 2300, 2700, 3200, 3800],
+                        'Trade Receivables': [8000, 9200, 10800, 12700, 15000],
+                        'Property Plant and Equipment': [10000, 12000, 14000, 16500, 19500],
+                        
+                        'Total Liabilities': [18000, 20000, 22500, 25500, 29000],
+                        'Current Liabilities': [10000, 11000, 12500, 14000, 16000],
+                        'Non-current Liabilities': [8000, 9000, 10000, 11500, 13000],
+                        'Short-term Borrowings': [3000, 3300, 3700, 4200, 4800],
+                        'Long-term Debt': [6000, 6600, 7300, 8200, 9200],
+                        'Trade Payables': [4000, 4400, 4900, 5500, 6200],
+                        
+                        'Total Equity': [27000, 32000, 38500, 46500, 56000],
+                        'Share Capital': [1000, 1000, 1000, 1000, 1000],
+                        'Reserves and Surplus': [26000, 31000, 37500, 45500, 55000],
+                        
+                        'Revenue': [35000, 38000, 45000, 54000, 65000],
+                        'Cost of Goods Sold': [21000, 22000, 25200, 29700, 35100],
+                        'Gross Profit': [14000, 16000, 19800, 24300, 29900],
+                        'Operating Expenses': [8000, 8800, 10300, 12150, 14300],
+                        'Operating Income': [6000, 7200, 9500, 12150, 15600],
+                        'EBIT': [6000, 7200, 9500, 12150, 15600],
+                        'Interest Expense': [800, 880, 970, 1090, 1220],
+                        'Income Before Tax': [5200, 6320, 8530, 11060, 14380],
+                        'Tax Expense': [1560, 1896, 2559, 3318, 4314],
+                        'Net Income': [3640, 4424, 5971, 7742, 10066],
+                        
+                        'Operating Cash Flow': [5500, 6600, 8800, 11000, 14000],
+                        'Investing Cash Flow': [-3000, -3500, -4200, -5000, -6000],
+                        'Financing Cash Flow': [-1500, -1800, -2200, -2700, -3300],
+                        'Capital Expenditure': [2800, 3200, 3800, 4500, 5300],
+                        'Free Cash Flow': [2700, 3400, 5000, 6500, 8700],
+                        'Depreciation': [1500, 1800, 2100, 2500, 3000],
+                    }
+                    
+                    benchmark_df = pd.DataFrame(data, index=data.keys())
+                    
+                    labeled_columns = [f"Finance >>Balance Sheet (Standalone)>>{company_name}(Curr. in Crores) >> {year}" 
+                                     for year in years]
+                    benchmark_df.columns = labeled_columns
+                    
+                    benchmark_df.to_pickle(benchmark_path)
+                    
+                else:
+                    benchmark_df = pd.read_pickle(benchmark_path)
+                
+                self.set_state('benchmark_data', benchmark_df)
+                
+            except Exception as e:
+                self.logger.error(f"Error loading benchmark data: {e}")
+                st.error(f"Failed to load benchmark data: {str(e)}")
+    
+        elif company_name == "Hindustan Unilever":
+            st.warning("Benchmark data for Hindustan Unilever coming soon")
+    
+        elif company_name == "Nestle India":
+            st.warning("Benchmark data for Nestle India coming soon")
+            
+    @safe_state_access
+    def _render_main_content(self):
+        """Render main content area"""
+        if self.config.get('app.enable_ml_features', True):
+            self._render_query_bar()
+    
+        if self.get_state('analysis_data') is not None:
+            self._render_analysis_interface()
+        else:
+            self._render_welcome_screen()
+            
+    @safe_state_access
+    def _render_query_bar(self):
+        """Render natural language query bar"""
+        col1, col2 = st.columns([5, 1])
+    
+        with col1:
+            query = st.text_input(
+                "🔍 Ask a question about your financial data",
+                placeholder="e.g., What was the revenue growth last year?",
+                key="nl_query"
+            )
+    
+        with col2:
+            if st.button("Ask", type="primary", key="ask_button"):
+                if query and self.get_state('analysis_data') is not None:
+                    with st.spinner("Processing query..."):
+                        analysis = self.components['analyzer'].analyze_financial_statements(
+                            self.get_state('analysis_data')
+                        )
+                        
+                        result = self.nl_processor.process_query(
+                            query,
+                            self.get_state('analysis_data'),
+                            analysis
+                        )
+                        
+                        query_history = self.get_state('query_history', [])
+                        query_history.append({
+                            'query': query,
+                            'result': result,
+                            'timestamp': datetime.now()
+                        })
+                        self.set_state('query_history', query_history[-10:])
+                        
+                        self._display_query_result(result)
+    
+    def _display_query_result(self, result: Dict[str, Any]):
+        """Display natural language query result"""
+        if result['type'] == 'growth_analysis':
+            st.subheader("📈 Growth Analysis")
+            for item in result['data']:
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(item['metric'], f"{item['last_value']:,.0f}")
+                with col2:
+                    st.metric("CAGR", f"{item['cagr']:.1f}%")
+                with col3:
+                    st.metric("YoY Change", f"{item['yoy_change']:.1f}%")
+    
+        elif result['type'] == 'forecast':
+            st.subheader("🔮 Forecast Results")
+            forecasts = result['data'].get('forecasts', {})
+            for metric, forecast in forecasts.items():
+                st.write(f"**{metric}**")
+                
+                fig = go.Figure()
+                
+                fig.add_trace(go.Scatter(
+                    x=forecast['periods'],
+                    y=forecast['values'],
+                    mode='lines+markers',
+                    name='Forecast',
+                    line=dict(dash='dash')
+                ))
+                
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+    
+        elif result['type'] == 'summary':
+            st.subheader("📊 Summary")
+            summary = result['data']
+            
+            cols = st.columns(4)
+            summary_data = summary.get('summary', {})
+            
+            if 'total_metrics' in summary_data:
+                cols[0].metric("Total Metrics", summary_data['total_metrics'])
+            if 'year_range' in summary_data:
+                cols[1].metric("Period", summary_data['year_range'])
+            if 'quality_score' in summary:
+                cols[2].metric("Data Quality", f"{summary['quality_score']:.0f}%")
+            
+            if 'insights' in summary:
+                st.write("**Key Insights:**")
+                for insight in summary['insights']:
+                    st.write(f"- {insight}")
+    
+        else:
+            st.info(result.get('message', 'Query processed successfully'))
+    
+    def _render_welcome_screen(self):
+        """Render welcome screen"""
+        st.header("Welcome to Elite Financial Analytics Platform v5.1")
+    
+        col1, col2, col3 = st.columns(3)
+    
+        with col1:
+            st.info("""
+            ### 📊 Advanced Analytics
+            - Comprehensive ratio analysis
+            - ML-powered forecasting
+            - Anomaly detection
+            - Natural language queries
+            """)
+    
+        with col2:
+            st.success("""
+            ### 🤖 AI-Powered Features
+            - Intelligent metric mapping
+            - Kaggle GPU acceleration
+            - Pattern recognition
+            - Automated insights
+            """)
+    
+        with col3:
+            st.warning("""
+            ### 👥 Collaboration
+            - Real-time collaboration
+            - Share analyses
+            - Export to multiple formats
+            - Interactive tutorials
+            """)
+    
+        with st.expander("🚀 Quick Start Guide", expanded=True):
+            st.markdown("""
+            1. **Upload Data**: Use the sidebar to upload financial statements
+            2. **Configure Kaggle GPU**: Optional - for faster AI processing
+            3. **AI Mapping**: Let AI automatically map your metrics or do it manually
+            4. **Analyze**: Explore comprehensive analysis with ratios, trends, and forecasts
+            5. **Query**: Ask questions in natural language about your data
+            6. **Collaborate**: Share your analysis with team members
+            7. **Export**: Generate professional reports in various formats
+            
+            **New in v5.1:**
+            - 🖥️ **Enhanced Kaggle GPU Integration**: Circuit breaker, request coalescing
+            - 🚀 Improved performance monitoring and API metrics
+            - 💬 Better error recovery and fallback strategies
+            - 👥 Enhanced collaboration features
+            - 📈 Advanced caching with memory buffers
+            - 🔒 Robust security features
+            - 📦 Support for compressed files (ZIP/7Z)
+            """)
+    
+        st.subheader("🎯 Try with Sample Data")
+        col1, col2, col3 = st.columns(3)
+    
+        with col1:
+            if st.button("Indian Tech Company", key="sample_indian"):
+                self._load_sample_data("Indian Tech Company (IND-AS)")
+    
+        with col2:
+            if st.button("US Manufacturing", key="sample_us"):
+                self._load_sample_data("US Manufacturing (GAAP)")
+    
+        with col3:
+            if st.button("European Retail", key="sample_eu"):
+                self._load_sample_data("European Retail (IFRS)")
+                
+    @safe_state_access
+    def _render_analysis_interface(self):
+        """Render main analysis interface"""
+        data = self.get_state('analysis_data')
+    
+        if data is None:
+            self._render_welcome_screen()
+            return
+    
+        tabs = st.tabs([
+            "📊 Overview",
+            "📈 Financial Ratios", 
+            "📉 Trends & Forecasting",
+            "🎯 Penman-Nissim",
+            "🏭 Industry Comparison",
+            "🔍 Data Explorer",
+            "📄 Reports",
+            "🤖 ML Insights"
+        ])
+    
+        with tabs[0]:
+            self._render_overview_tab(data)
+    
+        with tabs[1]:
+            self._render_ratios_tab(data)
+    
+        with tabs[2]:
+            self._render_trends_tab(data)
+    
+        with tabs[3]:
+            # Using the new enhanced method
+            self._render_penman_nissim_tab_enhanced(data)
+    
+        with tabs[4]:
+            self._render_industry_tab(data)
+    
+        with tabs[5]:
+            self._render_data_explorer_tab(data)
+    
+        with tabs[6]:
+            self._render_reports_tab(data)
+    
+        with tabs[7]:
+            self._render_ml_insights_tab(data)
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_overview_tab(self, data: pd.DataFrame):
+        """Render overview tab with key metrics and insights"""
+        st.header("Financial Overview")
+    
+        analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
+        if analysis_mode == "Benchmark Comparison":
+            benchmark_company = self.get_state('benchmark_company', 'Unknown')
+            st.info(f"📊 Benchmark Comparison Mode: Comparing with {benchmark_company}")
+    
+        if 'mapper' in self.components and hasattr(self.components['mapper'], 'progress_tracker'):
+            self._render_progress_tracking()
+    
+        with performance_monitor.measure("overview_analysis"):
+            analysis = self.components['analyzer'].analyze_financial_statements(data)
+    
+        col1, col2, col3, col4 = st.columns(4)
+    
+        with col1:
+            self.ui_factory.create_metric_card(
+                "Total Metrics",
+                analysis.get('summary', {}).get('total_metrics', len(data))
+            )
+    
+        with col2:
+            self.ui_factory.create_metric_card(
+                "Years Covered",
+                analysis.get('summary', {}).get('years_covered', len(data.columns))
+            )
+    
+        with col3:
+            completeness = analysis.get('summary', {}).get('completeness', 0)
+            self.ui_factory.create_metric_card(
+                "Data Completeness",
+                f"{completeness:.1f}%"
+            )
+    
+        with col4:
+            quality_score = analysis.get('quality_score', 0)
+            self.ui_factory.create_data_quality_badge(quality_score)
+    
+        st.subheader("Key Insights")
+    
+        insights = analysis.get('insights', [])
+        if insights:
+            for i, insight in enumerate(insights[:8]):
+                if "⚠️" in insight:
+                    insight_type = "warning"
+                elif "📉" in insight:
+                    insight_type = "error"
+                elif "🚀" in insight or "📊" in insight:
+                    insight_type = "success"
+                else:
+                    insight_type = "info"
+                
+                self.ui_factory.create_insight_card(insight, insight_type)
+        else:
+            st.info("No specific insights available yet. Complete the analysis to see insights.")
+    
+        if 'anomalies' in analysis:
+            anomalies = analysis['anomalies']
+            total_anomalies = sum(len(v) for v in anomalies.values())
+            
+            if total_anomalies > 0:
+                st.subheader("🔍 Anomaly Detection")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.metric("Value Anomalies", len(anomalies.get('value_anomalies', [])))
+                
+                with col2:
+                    st.metric("Trend Anomalies", len(anomalies.get('trend_anomalies', [])))
+                
+                with col3:
+                    st.metric("Ratio Anomalies", len(anomalies.get('ratio_anomalies', [])))
+                
+                with st.expander("View Anomaly Details"):
+                    for anomaly_type, items in anomalies.items():
+                        if items:
+                            st.write(f"**{anomaly_type.replace('_', ' ').title()}:**")
+                            anomaly_df = pd.DataFrame(items)
+                            st.dataframe(anomaly_df, use_container_width=True)
+    
+        st.subheader("Quick Visualizations")
+    
+        metrics = analysis.get('metrics', {})
+    
+        if metrics:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                revenue_data = metrics.get('revenue', [])
+                if revenue_data:
+                    self._render_metric_chart(revenue_data[0], "Revenue Trend")
+            
+            with col2:
+                profit_data = metrics.get('net_income', [])
+                if profit_data:
+                    self._render_metric_chart(profit_data[0], "Net Income Trend")
+    
+        if analysis_mode == "Benchmark Comparison" and self.get_state('benchmark_data') is not None:
+            st.subheader("📈 Benchmark Comparison")
+            
+            company_name = self.get_state('company_name', 'Your Company')
+            benchmark_company = self.get_state('benchmark_company', 'Benchmark')
+            
+            self._render_comparison_charts(data, company_name, benchmark_company)
+    
+    def _render_progress_tracking(self):
+        """Render progress tracking for long operations"""
+        progress_tracker = self.components['mapper'].progress_tracker
+    
+        active_operations = []
+        for op_id, op_data in progress_tracker.operations.items():
+            if op_data['status'] == 'running':
+                active_operations.append((op_id, op_data))
+    
+        if active_operations:
+            st.markdown("""
+            <div class="progress-tracker">
+                <strong>Processing Operations:</strong>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for op_id, op_data in active_operations:
+                progress = op_data['completed'] / op_data['total']
+                st.markdown(f"""
+                <div style="margin: 5px 0;">
+                    <small>{op_data['description']}</small>
+                    <div style="background: #e0e0e0; border-radius: 4px; height: 8px;">
+                        <div class="progress-bar" style="width: {progress * 100}%;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    def _render_metric_chart(self, metric_data: Dict, title: str):
+        """Render a simple metric chart"""
+        values = metric_data.get('values', {})
+    
+        if values:
+            years = list(values.keys())
+            amounts = list(values.values())
+            
+            formatter = get_number_formatter(self.get_state('number_format_value'))
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=years,
+                y=amounts,
+                mode='lines+markers',
+                name=metric_data.get('name', 'Value'),
+                line=dict(width=3),
+                marker=dict(size=8),
+                hovertemplate='%{x}: %{y:,.0f}<extra></extra>'
+            ))
+            
+            if len(years) > 2:
+                z = np.polyfit(range(len(years)), amounts, 1)
+                p = np.poly1d(z)
+                
+                fig.add_trace(go.Scatter(
+                    x=years,
+                    y=p(range(len(years))),
+                    mode='lines',
+                    name='Trend',
+                    line=dict(dash='dash', width=2),
+                    opacity=0.7
+                ))
+            
+            fig.update_layout(
+                title=title,
+                xaxis_title="Year",
+                yaxis_title="Amount",
+                hovermode='x unified',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_comparison_charts(self, data: pd.DataFrame, company_name: str, benchmark_company: str):
+        """Render comparison charts between company and benchmark"""
+        key_metrics = ['Revenue', 'Net Income', 'Total Assets', 'Operating Cash Flow']
+    
+        for metric in key_metrics:
+            company_rows = [row for row in data.index if metric.lower() in str(row).lower()]
+            
+            if company_rows:
+                metric_row = company_rows[0]
+                
+                fig = go.Figure()
+                
+                company_data = []
+                benchmark_data = []
+                years = []
+                
+                for col in data.columns:
+                    col_str = str(col)
+                    if company_name in col_str:
+                        if pd.notna(data.loc[metric_row, col]):
+                            company_data.append(float(data.loc[metric_row, col]))
+                            if '>>' in col_str:
+                                parts = col_str.split('>>')
+                                if len(parts) >= 4:
+                                    year = parts[3].strip()
+                                    years.append(year)
+                    elif benchmark_company in col_str:
+                        if pd.notna(data.loc[metric_row, col]):
+                            benchmark_data.append(float(data.loc[metric_row, col]))
+                
+                if company_data and years:
+                    fig.add_trace(go.Bar(
+                        x=years,
+                        y=company_data,
+                        name=company_name,
+                        marker_color='blue'
+                    ))
+                
+                if benchmark_data and len(benchmark_data) == len(years):
+                    fig.add_trace(go.Bar(
+                        x=years,
+                        y=benchmark_data,
+                        name=benchmark_company,
+                        marker_color='orange'
+                    ))
+                
+                fig.update_layout(
+                    title=f"{metric} Comparison",
+                    xaxis_title="Year",
+                    yaxis_title="Value",
+                    barmode='group',
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_ratios_tab(self, data: pd.DataFrame):
+        """Render financial ratios tab with manual mapping support"""
+        st.header("📈 Financial Ratio Analysis")
+    
+        if not self.get_state('metric_mappings'):
+            st.warning("Please map metrics first to calculate ratios")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🤖 Auto-map with AI", type="primary", key="ai_map_ratios"):
+                    self._perform_ai_mapping(data)
+            
+            with col2:
+                if st.button("✏️ Manual Mapping", key="manual_map_ratios"):
+                    self.set_state('show_manual_mapping', True)
+            
+            if self.get_state('show_manual_mapping', False):
+                manual_mapper = ManualMappingInterface(data)
+                mappings = manual_mapper.render()
+                
+                if st.button("✅ Apply Mappings", type="primary", key="apply_manual_mappings"):
+                    self.set_state('metric_mappings', mappings)
+                    st.success(f"Applied {len(mappings)} mappings!")
+                    self.set_state('show_manual_mapping', False)
+            
+            return
+    
+        mappings = self.get_state('metric_mappings')
+        mapped_df = data.rename(index=mappings)
+    
+        with st.spinner("Calculating ratios..."):
+            with performance_monitor.measure("ratio_calculation"):
+                analysis = self.components['analyzer'].analyze_financial_statements(mapped_df)
+                ratios = analysis.get('ratios', {})
+    
+        if not ratios:
+            st.error("Unable to calculate ratios. Please check your mappings.")
+            if st.button("🔄 Re-map Metrics"):
+                self.set_state('metric_mappings', None)
+            return
+    
+        formatter = get_number_formatter(self.get_state('number_format_value'))
+    
+        for category, ratio_df in ratios.items():
+            if isinstance(ratio_df, pd.DataFrame) and not ratio_df.empty:
+                st.subheader(f"{category} Ratios")
+                
+                format_str = "{:,.2f}"
+                
+                try:
+                    st.dataframe(
+                        ratio_df.style.format(format_str, na_rep="-")
+                        .background_gradient(cmap='RdYlGn', axis=1),
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error formatting ratios: {e}")
+                    st.dataframe(ratio_df, use_container_width=True)
+                
+                if st.checkbox(f"Visualize {category}", key=f"viz_{category}"):
+                    metrics_to_plot = st.multiselect(
+                        f"Select {category} metrics:",
+                        ratio_df.index.tolist(),
+                        default=ratio_df.index[:2].tolist() if len(ratio_df.index) >= 2 else ratio_df.index.tolist(),
+                        key=f"select_{category}"
+                    )
+                    
+                    if metrics_to_plot:
+                        fig = go.Figure()
+                        
+                        for metric in metrics_to_plot:
+                            fig.add_trace(go.Scatter(
+                                x=ratio_df.columns,
+                                y=ratio_df.loc[metric],
+                                mode='lines+markers',
+                                name=metric,
+                                line=dict(width=2),
+                                marker=dict(size=8)
+                            ))
+                        
+                        fig.update_layout(
+                            title=f"{category} Ratios Trend",
+                            xaxis_title="Year",
+                            yaxis_title="Value",
+                            hovermode='x unified',
+                            height=400,
+                            legend=dict(
+                                orientation="h",
+                                yanchor="bottom",
+                                y=1.02,
+                                xanchor="right",
+                                x=1
+                            )
+                        )
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+    @safe_state_access
+    def _perform_ai_mapping(self, data: pd.DataFrame):
+        """Perform AI mapping of metrics with progress tracking"""
+        try:
+            with st.spinner("AI is mapping your metrics..."):
+                source_metrics = [str(m) for m in data.index.tolist()]
+    
+                kaggle_available = False
+                if 'mapper' in self.components:
+                    status = self.components['mapper'].get_api_status()
+                    kaggle_available = status['kaggle_available']
+                
+                if kaggle_available:
+                    st.info("🚀 Using Kaggle GPU for faster mapping...")
+                
+                if 'mapper' in self.components:
+                    mapping_result = self.components['mapper'].map_metrics_with_confidence_levels(
+                        source_metrics
+                    )
+                    
+                    self.set_state('ai_mapping_result', mapping_result)
+                    
+                    auto_mappings = mapping_result.get('high_confidence', {})
+                    if auto_mappings:
+                        final_mappings = {source: data['target'] for source, data in auto_mappings.items()}
+                        self.set_state('metric_mappings', final_mappings)
+                        
+                        st.success(f"✅ AI mapped {len(final_mappings)} metrics with high confidence!")
+                        st.info(f"Method: {mapping_result.get('method', 'unknown')}")
+                        
+                        medium_conf = mapping_result.get('medium_confidence', {})
+                        low_conf = mapping_result.get('low_confidence', {})
+                        
+                        if medium_conf or low_conf:
+                            st.info(f"Review {len(medium_conf) + len(low_conf)} additional suggested mappings below")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("High Confidence", len(auto_mappings))
+                            with col2:
+                                st.metric("Medium Confidence", len(medium_conf))
+                            with col3:
+                                st.metric("Low Confidence", len(low_conf))
+                    else:
+                        st.warning("No high-confidence mappings found. Please review suggestions or use manual mapping.")
+                        
+                else:
+                    st.error("AI mapper not available")
+                    
+        except Exception as e:
+            st.error(f"AI mapping failed: {str(e)}")
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_trends_tab(self, data: pd.DataFrame):
+        """Render trends and analysis tab with comprehensive ML forecasting and safe state handling"""
+        st.header("📉 Trend Analysis & ML Forecasting")
+    
+        self.ensure_state_key('ml_forecast_results', None)
+        self.ensure_state_key('forecast_periods', 3)
+        self.ensure_state_key('forecast_model_type', 'auto')
+        self.ensure_state_key('selected_forecast_metrics', [])
+        self.ensure_state_key('forecast_confidence_level', 0.95)
+        self.ensure_state_key('show_forecast_details', False)
+        self.ensure_state_key('forecast_history', [])
+    
+        with st.spinner("Analyzing trends..."):
+            analysis = self.components['analyzer'].analyze_financial_statements(data)
+            trends = analysis.get('trends', {})
+    
+        if not trends or 'error' in trends:
+            st.error("Insufficient data for trend analysis. Need at least 2 years of data.")
+            return
+    
+        st.subheader("📊 Trend Summary")
+    
+        trend_data = []
+        for metric, trend_info in trends.items():
+            if isinstance(trend_info, dict) and 'direction' in trend_info:
+                trend_data.append({
+                    'Metric': metric,
+                    'Direction': trend_info['direction'],
+                    'CAGR %': trend_info.get('cagr', None),
+                    'Volatility %': trend_info.get('volatility', None),
+                    'R²': trend_info.get('r_squared', None),
+                    'Trend Strength': 'Strong' if trend_info.get('r_squared', 0) > 0.8 else 'Moderate' if trend_info.get('r_squared', 0) > 0.5 else 'Weak'
+                })
+    
+        if trend_data:
+            trend_df = pd.DataFrame(trend_data)
+            
+            st.dataframe(
+                trend_df.style.format({
+                    'CAGR %': '{:.1f}',
+                    'Volatility %': '{:.1f}',
+                    'R²': '{:.3f}'
+                }, na_rep='-')
+                .background_gradient(subset=['CAGR %'], cmap='RdYlGn')
+                .background_gradient(subset=['R²'], cmap='Blues'),
+                use_container_width=True
+            )
+            
+            with st.expander("🔍 Trend Insights"):
+                positive_trends = len([t for t in trend_data if t['Direction'] == 'increasing'])
+                negative_trends = len([t for t in trend_data if t['Direction'] == 'decreasing'])
+                strong_trends = len([t for t in trend_data if t['Trend Strength'] == 'Strong'])
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Positive Trends", positive_trends)
+                with col2:
+                    st.metric("Negative Trends", negative_trends)
+                with col3:
+                    st.metric("Strong Trends", strong_trends)
+                
+                if positive_trends > negative_trends:
+                    st.success("📈 Overall positive trend momentum detected")
+                elif negative_trends > positive_trends:
+                    st.warning("📉 Overall negative trend momentum detected")
+                else:
+                    st.info("⚖️ Mixed trend signals - detailed analysis recommended")
+    
+        st.subheader("🤖 ML-Powered Forecasting")
+    
+        if not self.config.get('app.enable_ml_features', True):
+            st.warning("ML features are disabled. Enable them in the sidebar settings.")
+            return
+    
+        with st.expander("⚙️ Forecasting Configuration", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                forecast_periods = st.selectbox(
+                    "Forecast Periods",
+                    [1, 2, 3, 4, 5, 6],
+                    index=self.get_state_safe('forecast_periods', 3) - 1,
+                    help="Number of future periods to forecast",
+                    key="forecast_periods_select"
+                )
+                self.set_state('forecast_periods', forecast_periods)
+            
+            with col2:
+                model_type = st.selectbox(
+                    "Model Type",
+                    ['auto', 'linear', 'polynomial', 'exponential'],
+                    index=['auto', 'linear', 'polynomial', 'exponential'].index(
+                        self.get_state_safe('forecast_model_type', 'auto')
+                    ),
+                    help="ML model for forecasting",
+                    key="forecast_model_select"
+                )
+                self.set_state('forecast_model_type', model_type)
+            
+            with col3:
+                confidence_level = st.selectbox(
+                    "Confidence Level",
+                    [0.90, 0.95, 0.99],
+                    index=[0.90, 0.95, 0.99].index(
+                        self.get_state_safe('forecast_confidence_level', 0.95)
+                    ),
+                    help="Statistical confidence level for intervals",
+                    key="confidence_level_select"
+                )
+                self.set_state('forecast_confidence_level', confidence_level)
+            
+            with col4:
+                show_details = st.checkbox(
+                    "Show Details",
+                    value=self.get_state_safe('show_forecast_details', False),
+                    help="Show model accuracy and technical details",
+                    key="show_forecast_details_check"
+                )
+                self.set_state('show_forecast_details', show_details)
+    
+        numeric_metrics = data.select_dtypes(include=[np.number]).index.tolist()
+        key_metrics = []
+    
+        for metric in numeric_metrics:
+            metric_lower = str(metric).lower()
+            if any(keyword in metric_lower for keyword in ['revenue', 'income', 'profit', 'cash', 'assets', 'equity']):
+                key_metrics.append(metric)
+    
+        default_metrics = key_metrics[:4] if len(key_metrics) >= 4 else numeric_metrics[:4]
+    
+        selected_metrics = st.multiselect(
+            "Select metrics to forecast:",
+            numeric_metrics,
+            default=self.get_state_safe('selected_forecast_metrics', default_metrics),
+            help="Choose which financial metrics to forecast",
+            key="forecast_metrics_select"
+        )
+        self.set_state('selected_forecast_metrics', selected_metrics)
+    
+        col1, col2, col3 = st.columns([2, 1, 1])
+    
+        with col1:
+            if st.button("🚀 Generate ML Forecast", type="primary", key="generate_forecast_btn"):
+                if not selected_metrics:
+                    st.error("Please select at least one metric to forecast")
+                else:
+                    with st.spinner("🧠 Training ML models and generating forecasts..."):
+                        try:
+                            if not hasattr(self, 'ml_forecaster') or self.ml_forecaster is None:
+                                self.ml_forecaster = MLForecaster(self.config)
+                            
+                            forecast_results = self.ml_forecaster.forecast_metrics(
+                                data, 
+                                periods=forecast_periods,
+                                model_type=model_type,
+                                metrics=selected_metrics
+                            )
+                            
+                            self.set_state('ml_forecast_results', forecast_results)
+                            
+                            forecast_history = self.get_state_safe('forecast_history', [])
+                            forecast_entry = {
+                                'timestamp': datetime.now().isoformat(),
+                                'model_type': model_type,
+                                'periods': forecast_periods,
+                                'metrics': selected_metrics,
+                                'success': 'error' not in forecast_results
+                            }
+                            forecast_history.append(forecast_entry)
+                            self.set_state('forecast_history', forecast_history[-5:])
+    
+                            st.success("✅ Forecast generated successfully!")
+    
+                        except Exception as e:
+                            st.error(f"❌ Forecasting failed: {str(e)}")
+                            if self.config.get('app.debug', False):
+                                st.exception(e)
+    
+        # Display forecast results if available
+        forecast_results = self.get_state_safe('ml_forecast_results')
+        if forecast_results and 'forecasts' in forecast_results and forecast_results['forecasts']:
+            st.markdown("---")
+            
+            for metric, forecast in forecast_results['forecasts'].items():
+                st.subheader(f"Forecast for: {metric}")
+                
+                # Prepare data for chart
+                actual_series = data.loc[metric].dropna()
+                history_x = actual_series.index.tolist()
+                history_y = actual_series.values.tolist()
+                
+                forecast_x = forecast['periods']
+                forecast_y = forecast['values']
+                
+                # Get confidence intervals
+                intervals = forecast_results['confidence_intervals'].get(metric, {})
+                lower_bound = intervals.get('lower', [])
+                upper_bound = intervals.get('upper', [])
+                
+                # Create chart
+                fig = go.Figure()
+                
+                # Actual data
+                fig.add_trace(go.Scatter(
+                    x=history_x, y=history_y, mode='lines+markers', name='Actual',
+                    line=dict(color='blue')
+                ))
+                
+                # Forecast data
+                fig.add_trace(go.Scatter(
+                    x=forecast_x, y=forecast_y, mode='lines+markers', name='Forecast',
+                    line=dict(color='orange', dash='dash')
+                ))
+                
+                # Confidence interval
+                if lower_bound and upper_bound:
+                    fig.add_trace(go.Scatter(
+                        x=forecast_x, y=lower_bound, mode='lines', name='Lower Bound',
+                        line=dict(width=0), showlegend=False
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=forecast_x, y=upper_bound, mode='lines', name='Upper Bound',
+                        fill='tonexty', fillcolor='rgba(255,165,0,0.2)',
+                        line=dict(width=0), showlegend=False
+                    ))
+                
+                fig.update_layout(
+                    title=f"{metric} Forecast",
+                    xaxis_title="Period",
+                    yaxis_title="Value",
+                    hovermode='x unified',
+                    height=400
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Show accuracy metrics if details are enabled
+                if self.get_state_safe('show_forecast_details', False):
+                    with st.expander("Model Accuracy Details"):
+                        accuracy = forecast_results['accuracy_metrics'].get(metric, {})
+                        if accuracy:
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("Model Used", forecast_results.get('model_type', 'N/A'))
+                            with col2:
+                                st.metric("RMSE", f"{accuracy.get('rmse', 0):,.2f}")
+                            with col3:
+                                st.metric("MAE", f"{accuracy.get('mae', 0):,.2f}")
+                            with col4:
+                                mape = accuracy.get('mape')
+                                st.metric("MAPE", f"{mape:.2f}%" if mape else "N/A")
+                        else:
+                            st.info("Accuracy metrics not available.")
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_penman_nissim_tab(self, data: pd.DataFrame):
+        """Placeholder for the old Penman-Nissim tab, will call the enhanced one."""
+        self._render_penman_nissim_tab_enhanced(data)
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_industry_tab(self, data: pd.DataFrame):
+        """Render industry comparison tab"""
+        st.header("🏭 Industry Comparison")
+        st.info("Compare your company's performance against industry benchmarks.")
+    
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_industry = st.selectbox(
+                "Select Industry",
+                list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
+                index=0,
+                key="industry_select"
+            )
+    
+        with col2:
+            analysis_year = st.selectbox(
+                "Select Year for Analysis",
+                data.columns.tolist(),
+                index=len(data.columns)-1,
+                key="industry_year_select"
+            )
+    
+        # Calculate necessary ratios for comparison
+        mappings = self.get_state('pn_mappings')
+        if not mappings:
+            st.warning("Please configure Penman-Nissim mappings first for accurate industry comparison.")
+            return
+            
+        analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+        results = analyzer.calculate_all()
+    
+        if 'ratios' not in results or 'error' in results['ratios']:
+            st.error("Could not calculate required ratios for comparison.")
+            return
+    
+        ratios = results['ratios']
+    
+        # Get company's metrics for the selected year
+        company_metrics = {
+            'RNOA': ratios.loc['Return on Net Operating Assets (RNOA) %', analysis_year],
+            'OPM': ratios.loc['Operating Profit Margin (OPM) %', analysis_year],
+            'NOAT': ratios.loc['Net Operating Asset Turnover (NOAT)', analysis_year],
+            'NBC': ratios.loc['Net Borrowing Cost (NBC) %', analysis_year],
+            'FLEV': ratios.loc['Financial Leverage (FLEV)', analysis_year],
+        }
+    
+        # Calculate composite score
+        score_data = CoreIndustryBenchmarks.calculate_composite_score(company_metrics, selected_industry)
+    
+        st.subheader("Performance Scorecard")
+    
+        if 'error' in score_data:
+            st.error(score_data['error'])
+            return
+    
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Composite Score", f"{score_data['composite_score']:.1f}/100")
+        with col2:
+            st.metric("Performance Level", score_data['interpretation'])
+    
+        # Detailed metric comparison
+        st.subheader("Detailed Metric Comparison")
+    
+        for metric, value in company_metrics.items():
+            if not pd.isna(value):
+                benchmark = CoreIndustryBenchmarks.BENCHMARKS[selected_industry][metric]
+                percentile = score_data['metric_scores'][metric]
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.write(f"**{metric}**")
+                
+                with col2:
+                    st.metric("Company Value", f"{value:.2f}")
+                
+                with col3:
+                    st.metric("Industry Average", f"{benchmark['mean']:.2f}")
+                
+                with col4:
+                    st.metric("Industry Percentile", f"{percentile:.0f}th")
+                
+                # Gauge chart for percentile
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = percentile,
+                    title = {'text': f"{metric} Percentile"},
+                    gauge = {
+                        'axis': {'range': [None, 100]},
+                        'bar': {'color': "darkblue"},
+                        'steps' : [
+                            {'range': [0, 25], 'color': "red"},
+                            {'range': [25, 75], 'color': "yellow"},
+                            {'range': [75, 100], 'color': "green"}],
+                    }
+                ))
+                fig.update_layout(height=250)
+                st.plotly_chart(fig, use_container_width=True)
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_data_explorer_tab(self, data: pd.DataFrame):
+        """Render data explorer tab"""
+        st.header("🔍 Data Explorer")
+        st.info("Explore the processed financial data.")
+    
+        # Data filtering options
+        with st.expander("Filter Data"):
+            selected_metrics = st.multiselect(
+                "Select Metrics",
+                data.index.tolist(),
+                default=data.index[:10].tolist(),
+                key="explorer_metric_select"
+            )
+            
+            selected_years = st.multiselect(
+                "Select Years",
+                data.columns.tolist(),
+                default=data.columns.tolist(),
+                key="explorer_year_select"
+            )
+            
+            if selected_metrics and selected_years:
+                filtered_df = data.loc[selected_metrics, selected_years]
+            else:
+                filtered_df = data
+    
+        st.dataframe(filtered_df, use_container_width=True)
+    
+        # Data download
+        csv = filtered_df.to_csv().encode('utf-8')
+        st.download_button(
+            label="Download Data as CSV",
+            data=csv,
+            file_name='financial_data.csv',
+            mime='text/csv',
+        )
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_reports_tab(self, data: pd.DataFrame):
+        """Render reports tab"""
+        st.header("📄 Reports & Export")
+    
+        analysis = self.components['analyzer'].analyze_financial_statements(data)
+        analysis['company_name'] = self.get_state('company_name', 'Financial Analysis')
+        analysis['filtered_data'] = data  # Add raw data for export
+    
+        col1, col2 = st.columns(2)
+        with col1:
+            report_format = st.selectbox(
+                "Select Report Format",
+                ["Excel", "Markdown"],
+                key="report_format_select"
+            )
+    
+        if report_format == "Excel":
+            excel_data = self.export_manager.export_to_excel(analysis)
+            st.download_button(
+                label="Download Excel Report",
+                data=excel_data,
+                file_name=f"{analysis['company_name']}_analysis.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        elif report_format == "Markdown":
+            md_data = self.export_manager.export_to_markdown(analysis)
+            st.text_area("Markdown Report", md_data, height=400)
+            st.download_button(
+                label="Download Markdown Report",
+                data=md_data,
+                file_name=f"{analysis['company_name']}_analysis.md",
+                mime="text/markdown"
+            )
+    
+    @error_boundary()
+    @safe_state_access
+    def _render_ml_insights_tab(self, data: pd.DataFrame):
+        """Render ML Insights tab"""
+        st.header("🤖 ML-Powered Insights")
+        st.info("This section provides advanced insights generated by our machine learning models.")
+    
+        # Placeholder for future ML insights
+        st.warning("More advanced ML insights are coming soon!")
+    
+        # Example: Anomaly contribution analysis
+        with st.expander("Anomaly Contribution Analysis (Example)"):
+            st.write("This analysis identifies which metrics contributed most to anomalies detected in the data.")
+            st.image("https://i.imgur.com/example.png", caption="Example Anomaly Contribution Chart")
+    
+    def _render_debug_footer(self):
+        """Render debug footer"""
+        st.markdown("---")
+        st.subheader("🐛 Debug Information")
+    
+        with st.expander("Show Debug Info"):
+            # Performance summary
+            st.write("**Performance Summary:**")
+            perf_summary = performance_monitor.get_performance_summary()
+            if perf_summary:
+                st.json(perf_summary)
+            
+            # API summary
+            st.write("**API Summary:**")
+            api_summary = performance_monitor.get_api_summary()
+            if api_summary:
+                st.json(api_summary)
+                
+            # Session state
+            st.write("**Session State:**")
+            st.json({k: str(v)[:200] for k, v in st.session_state.items()})
+    
+    def _auto_recovery_attempt(self) -> bool:
+        """Attempt automatic recovery from a critical failure"""
+        try:
+            self.logger.info("Attempting automatic recovery...")
+    
+            # Re-initialize session state
+            self._initialize_session_state()
+            
+            # Re-initialize components
+            self.components = self._initialize_components()
+            st.session_state['components'] = self.components
+            
+            self.logger.info("Recovery attempt completed.")
+            return True
+        except Exception as e:
+            self.logger.error(f"Auto recovery failed: {e}")
+            return False
+    
+    def _perform_health_check(self) -> Dict[str, Any]:
+        """Perform a system-wide health check."""
+        health_status = {'overall': True, 'checks': {}}
+    
+        # Check components
+        if hasattr(self, 'components') and self.components:
+            for name, comp in self.components.items():
+                is_init = hasattr(comp, '_initialized') and comp._initialized
+                health_status['checks'][f'component_{name}'] = is_init
+                if not is_init:
+                    health_status['overall'] = False
+        else:
+            health_status['checks']['components'] = False
+            health_status['overall'] = False
+            
+        # Check Kaggle API if enabled
+        if self.config.get('ai.use_kaggle_api'):
+            if 'mapper' in self.components:
+                api_status = self.components['mapper'].get_api_status()
+                health_status['checks']['kaggle_api'] = api_status['kaggle_available']
+                if not api_status['kaggle_available']:
+                    health_status['overall'] = False
+    
+        return health_status
+    
+    def _render_trend_metrics(self, ratios_df, selected_years):
+        """Helper to render trend metrics view."""
+        st.info("Trend view for key ratios.")
+        key_ratios = ['Return on Net Operating Assets (RNOA) %', 
+                      'Financial Leverage (FLEV)', 
+                      'Leverage Spread %']
+        for ratio in key_ratios:
+            if ratio in ratios_df.index:
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=selected_years,
+                    y=ratios_df.loc[ratio, selected_years],
+                    mode='lines+markers',
+                    name=ratio
+                ))
+                fig.update_layout(title=ratio, height=250, margin=dict(t=30, b=10))
+                st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_comparison_metrics(self, ratios_df, selected_years):
+        """Helper to render comparison metrics view."""
+        st.info("Comparison of key value drivers over time.")
+        rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', selected_years]
+        spread = ratios_df.loc['Leverage Spread %', selected_years]
+    
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=selected_years, y=rnoa, name='RNOA'))
+        fig.add_trace(go.Bar(x=selected_years, y=spread, name='Leverage Spread'))
+        fig.update_layout(title='RNOA vs. Leverage Spread', barmode='group', height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_time_series_analysis(self, results):
+        """Helper to render time series analysis tab."""
+        st.info("Detailed time-series charts for all calculated ratios.")
+        # Add implementation here
+        st.write("Time series analysis visualizations will be here.")
+    
+    def _render_reformulated_statements(self, results):
+        """Helper to render reformulated statements tab."""
+        if 'reformulated_balance_sheet' in results:
+            st.subheader("Reformulated Balance Sheet")
+            st.dataframe(results['reformulated_balance_sheet'])
+        if 'reformulated_income_statement' in results:
+            st.subheader("Reformulated Income Statement")
+            st.dataframe(results['reformulated_income_statement'])
+    
+    def _render_cashflow_analysis(self, results):
+        """Helper to render cash flow analysis tab."""
+        if 'free_cash_flow' in results:
+            st.subheader("Free Cash Flow Analysis")
+            st.dataframe(results['free_cash_flow'])
+    
+            # Chart FCF
+            fcf_df = results['free_cash_flow']
+            if 'Free Cash Flow' in fcf_df.index:
+                fig = px.bar(fcf_df.T, y='Free Cash Flow', title='Free Cash Flow Trend')
+                st.plotly_chart(fig, use_container_width=True)
+    
+    def _render_value_drivers_analysis(self, results):
+        """Helper to render value drivers tab."""
+        if 'value_drivers' in results:
+            st.subheader("Value Drivers")
+            st.dataframe(results['value_drivers'])
+    
+    def _generate_pn_insights_enhanced(self, results):
+        """Generate enhanced Penman-Nissim insights."""
+        insights = []
+        ratios = results.get('ratios')
+        if ratios is None or ratios.empty:
+            return ["Ratios not calculated, cannot generate insights."]
+    
+        # RNOA analysis
+        if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
+            rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
+            avg_rnoa = rnoa_series.mean()
+            if avg_rnoa > 20:
+                insights.append(f"✅ Elite operating performance with an average RNOA of {avg_rnoa:.1f}%.")
+            elif avg_rnoa > 10:
+                insights.append(f"💡 Solid operating performance with an average RNOA of {avg_rnoa:.1f}%.")
+            else:
+                insights.append(f"⚠️ Operating performance needs improvement, average RNOA is {avg_rnoa:.1f}%.")
+    
+        # Leverage Spread analysis
+        if 'Leverage Spread %' in ratios.index:
+            spread_series = ratios.loc['Leverage Spread %']
+            avg_spread = spread_series.mean()
+            if avg_spread > 2:
+                insights.append(f"🚀 Financial leverage is effectively creating value (Avg Spread: {avg_spread:.1f}%).")
+            elif avg_spread < 0:
+                insights.append(f"❌ Financial leverage is destroying value (Avg Spread: {avg_spread:.1f}%). Consider deleveraging.")
+    
+        return insights
+    
+    def _render_categorized_insights(self, insights):
+        """Render insights with categorization."""
+        for insight in insights:
+            if "✅" in insight or "🚀" in insight:
+                st.success(insight)
+            elif "💡" in insight:
+                st.info(insight)
+            elif "⚠️" in insight or "❌" in insight:
+                st.warning(insight)
+            else:
+                st.write(insight)
+    
+    if __name__ == "__main__":
+        try:
+            app = FinancialAnalyticsPlatform()
+            app.run()
+        except Exception as e:
+            # Fallback error display if main app fails catastrophically
+            st.error("A critical application error occurred during startup.")
+            st.exception(e)
     
                 

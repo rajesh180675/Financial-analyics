@@ -8217,6 +8217,543 @@ class FinancialAnalyticsPlatform:
     def _render_penman_nissim_tab(self, data: pd.DataFrame):
         """Placeholder for the old Penman-Nissim tab, will call the enhanced one."""
         self._render_penman_nissim_tab_enhanced(data)
+
+    @error_boundary()
+    @safe_state_access
+    def _render_penman_nissim_tab_enhanced(self, data: pd.DataFrame):
+        """Render the enhanced Penman-Nissim tab."""
+        st.header("🎯 Penman-Nissim Analysis (Enhanced)")
+        
+        # Check if mappings exist
+        mappings = self.get_state('pn_mappings')
+        if not mappings:
+            st.warning("Please configure Penman-Nissim mappings first.")
+            
+            # Provide mapping interface
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🤖 Auto-map with AI", type="primary", key="pn_ai_map"):
+                    self._perform_ai_mapping(data)
+                    # Use the AI mappings for PN
+                    ai_mappings = self.get_state('metric_mappings')
+                    if ai_mappings:
+                        self.set_state('pn_mappings', ai_mappings)
+                        st.success("Applied AI mappings to Penman-Nissim analysis")
+                        st.experimental_rerun()
+            
+            with col2:
+                if st.button("✏️ Manual Mapping", key="pn_manual_map"):
+                    self.set_state('show_manual_mapping', True)
+            
+            if self.get_state('show_manual_mapping', False):
+                manual_mapper = ManualMappingInterface(data)
+                mappings = manual_mapper.render()
+                
+                if st.button("✅ Apply PN Mappings", type="primary", key="apply_pn_mappings"):
+                    self.set_state('pn_mappings', mappings)
+                    st.success(f"Applied {len(mappings)} mappings!")
+                    self.set_state('show_manual_mapping', False)
+                    st.experimental_rerun()
+            
+            return
+        
+        # Perform analysis
+        with st.spinner("Running Penman-Nissim analysis..."):
+            analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+            results = analyzer.calculate_all()
+            self.set_state('pn_results', results)
+        
+        if 'error' in results:
+            st.error(f"Analysis failed: {results['error']}")
+            return
+        
+        # Display validation results
+        if 'validation_results' in results:
+            validation = results['validation_results']
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Data Quality Score", f"{validation.get('data_quality_score', 0):.0f}%")
+            
+            with col2:
+                st.metric("Issues", len(validation.get('issues', [])))
+            
+            with col3:
+                st.metric("Warnings", len(validation.get('warnings', [])))
+            
+            if validation.get('issues') or validation.get('warnings'):
+                with st.expander("⚠️ Data Quality Details"):
+                    if validation.get('issues'):
+                        st.subheader("Issues")
+                        for issue in validation['issues']:
+                            st.error(issue)
+                    
+                    if validation.get('warnings'):
+                        st.subheader("Warnings")
+                        for warning in validation['warnings']:
+                            st.warning(warning)
+        
+        # Create tabs for different views
+        tabs = st.tabs([
+            "📊 Key Ratios",
+            "📈 Trend Analysis", 
+            "🔄 Comparison",
+            "📑 Reformulated Statements",
+            "💰 Cash Flow Analysis",
+            "🎯 Value Drivers",
+            "📉 Time Series"
+        ])
+        
+        with tabs[0]:
+            # Key Ratios Tab
+            if 'ratios' in results and not results['ratios'].empty:
+                st.subheader("Penman-Nissim Key Ratios")
+                
+                ratios_df = results['ratios']
+                
+                # Display latest year metrics
+                if len(ratios_df.columns) > 0:
+                    latest_year = ratios_df.columns[-1]
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
+                            rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
+                            st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
+                                    
+                    with col2:
+                        if 'Financial Leverage (FLEV)' in ratios_df.index:
+                            flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
+                            st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
+                    
+                    with col3:
+                        if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
+                            nbc = ratios_df.loc['Net Borrowing Cost (NBC) %', latest_year]
+                            st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
+                    
+                    with col4:
+                        if 'Spread %' in ratios_df.index:
+                            spread = ratios_df.loc['Spread %', latest_year]
+                            delta_color = "normal" if spread > 0 else "inverse"
+                            st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
+                
+                # Full ratios table
+                st.dataframe(
+                    ratios_df.style.format("{:.2f}", na_rep="-")
+                    .background_gradient(cmap='RdYlGn', axis=1),
+                    use_container_width=True
+                )
+                
+                # Generate insights
+                insights = self._generate_pn_insights_enhanced(results)
+                if insights:
+                    st.subheader("💡 Key Insights")
+                    for insight in insights:
+                        if "✅" in insight or "🚀" in insight:
+                            st.success(insight)
+                        elif "⚠️" in insight or "❌" in insight:
+                            st.warning(insight)
+                        else:
+                            st.info(insight)
+            else:
+                st.warning("No ratio data available")
+        
+        with tabs[1]:
+            # Trend Analysis Tab
+            if 'ratios' in results and not results['ratios'].empty:
+                st.subheader("Trend Analysis")
+                
+                ratios_df = results['ratios']
+                
+                # Select years for analysis
+                available_years = ratios_df.columns.tolist()
+                if len(available_years) > 1:
+                    selected_years = st.multiselect(
+                        "Select years for trend analysis",
+                        available_years,
+                        default=available_years[-min(5, len(available_years)):],
+                        key="pn_trend_years"
+                    )
+                    
+                    if selected_years:
+                        # Create trend charts
+                        key_ratios = [
+                            'Return on Net Operating Assets (RNOA) %',
+                            'Financial Leverage (FLEV)',
+                            'Net Borrowing Cost (NBC) %',
+                            'Spread %',
+                            'Operating Profit Margin (OPM) %',
+                            'Net Operating Asset Turnover (NOAT)'
+                        ]
+                        
+                        for ratio in key_ratios:
+                            if ratio in ratios_df.index:
+                                fig = go.Figure()
+                                
+                                values = ratios_df.loc[ratio, selected_years]
+                                fig.add_trace(go.Scatter(
+                                    x=selected_years,
+                                    y=values,
+                                    mode='lines+markers',
+                                    name=ratio,
+                                    line=dict(width=3),
+                                    marker=dict(size=10)
+                                ))
+                                
+                                # Add trend line
+                                if len(selected_years) > 2:
+                                    x_numeric = list(range(len(selected_years)))
+                                    z = np.polyfit(x_numeric, values.values, 1)
+                                    p = np.poly1d(z)
+                                    fig.add_trace(go.Scatter(
+                                        x=selected_years,
+                                        y=p(x_numeric),
+                                        mode='lines',
+                                        name='Trend',
+                                        line=dict(dash='dash', color='gray')
+                                    ))
+                                
+                                fig.update_layout(
+                                    title=ratio,
+                                    xaxis_title="Year",
+                                    yaxis_title="Value",
+                                    height=350,
+                                    showlegend=True
+                                )
+                                
+                                st.plotly_chart(fig, use_container_width=True)
+        
+        with tabs[2]:
+            # Comparison Tab
+            if 'ratios' in results and not results['ratios'].empty:
+                st.subheader("Value Driver Comparison")
+                
+                ratios_df = results['ratios']
+                
+                # RNOA decomposition comparison
+                if all(metric in ratios_df.index for metric in ['Return on Net Operating Assets (RNOA) %', 
+                                                                'Operating Profit Margin (OPM) %',
+                                                                'Net Operating Asset Turnover (NOAT)']):
+                    
+                    years = ratios_df.columns[-min(3, len(ratios_df.columns)):]
+                    
+                    fig = go.Figure()
+                    
+                    for year in years:
+                        rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', year]
+                        opm = ratios_df.loc['Operating Profit Margin (OPM) %', year]
+                        noat = ratios_df.loc['Net Operating Asset Turnover (NOAT)', year]
+                        
+                        fig.add_trace(go.Bar(
+                            name=str(year),
+                            x=['RNOA %', 'OPM %', 'NOAT'],
+                            y=[rnoa, opm, noat],
+                            text=[f"{rnoa:.1f}", f"{opm:.1f}", f"{noat:.2f}"],
+                            textposition='auto',
+                        ))
+                    
+                    fig.update_layout(
+                        title="RNOA Decomposition Comparison",
+                        xaxis_title="Metric",
+                        yaxis_title="Value",
+                        barmode='group',
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Leverage effect visualization
+                    if 'Financial Leverage (FLEV)' in ratios_df.index and 'Spread %' in ratios_df.index:
+                        leverage_effect = ratios_df.loc['Financial Leverage (FLEV)'] * ratios_df.loc['Spread %']
+                        
+                        fig2 = go.Figure()
+                        
+                        fig2.add_trace(go.Bar(
+                            x=ratios_df.columns,
+                            y=ratios_df.loc['Return on Net Operating Assets (RNOA) %'],
+                            name='Operating Return (RNOA)',
+                            marker_color='blue'
+                        ))
+                        
+                        fig2.add_trace(go.Bar(
+                            x=ratios_df.columns,
+                            y=leverage_effect,
+                            name='Leverage Effect',
+                            marker_color='orange'
+                        ))
+                        
+                        fig2.update_layout(
+                            title="ROE Components: Operating Return vs Leverage Effect",
+                            xaxis_title="Year",
+                            yaxis_title="Percentage",
+                            barmode='stack',
+                            height=400
+                        )
+                        
+                        st.plotly_chart(fig2, use_container_width=True)
+        
+        with tabs[3]:
+            # Reformulated Statements Tab
+            st.subheader("Reformulated Financial Statements")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if 'reformulated_balance_sheet' in results:
+                    st.write("**Reformulated Balance Sheet**")
+                    ref_bs = results['reformulated_balance_sheet']
+                    st.dataframe(
+                        ref_bs.style.format("{:,.0f}", na_rep="-"),
+                        use_container_width=True
+                    )
+            
+            with col2:
+                if 'reformulated_income_statement' in results:
+                    st.write("**Reformulated Income Statement**")
+                    ref_is = results['reformulated_income_statement']
+                    st.dataframe(
+                        ref_is.style.format("{:,.0f}", na_rep="-"),
+                        use_container_width=True
+                    )
+        
+        with tabs[4]:
+            # Cash Flow Analysis Tab
+            if 'free_cash_flow' in results:
+                st.subheader("Free Cash Flow Analysis")
+                
+                fcf_df = results['free_cash_flow']
+                
+                # Display FCF metrics
+                if not fcf_df.empty and len(fcf_df.columns) > 0:
+                    latest_year = fcf_df.columns[-1]
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if 'Operating Cash Flow' in fcf_df.index:
+                            ocf = fcf_df.loc['Operating Cash Flow', latest_year]
+                            st.metric("Operating Cash Flow", format_indian_number(ocf))
+                    
+                    with col2:
+                        if 'Free Cash Flow' in fcf_df.index:
+                            fcf = fcf_df.loc['Free Cash Flow', latest_year]
+                            st.metric("Free Cash Flow", format_indian_number(fcf))
+                    
+                    with col3:
+                        if 'FCF Yield %' in fcf_df.index:
+                            fcf_yield = fcf_df.loc['FCF Yield %', latest_year]
+                            st.metric("FCF Yield", f"{fcf_yield:.1f}%")
+                
+                # FCF trend chart
+                if 'Free Cash Flow' in fcf_df.index:
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Bar(
+                        x=fcf_df.columns,
+                        y=fcf_df.loc['Operating Cash Flow'],
+                        name='Operating Cash Flow',
+                        marker_color='green'
+                    ))
+                    
+                    if 'Capital Expenditure' in fcf_df.index:
+                        fig.add_trace(go.Bar(
+                            x=fcf_df.columns,
+                            y=-fcf_df.loc['Capital Expenditure'],
+                            name='Capital Expenditure',
+                            marker_color='red'
+                        ))
+                    
+                    fig.add_trace(go.Scatter(
+                        x=fcf_df.columns,
+                        y=fcf_df.loc['Free Cash Flow'],
+                        mode='lines+markers',
+                        name='Free Cash Flow',
+                        line=dict(color='blue', width=3),
+                        yaxis='y2'
+                    ))
+                    
+                    fig.update_layout(
+                        title="Free Cash Flow Analysis",
+                        xaxis_title="Year",
+                        yaxis_title="Cash Flow Components",
+                        yaxis2=dict(
+                            title="Free Cash Flow",
+                            overlaying='y',
+                            side='right'
+                        ),
+                        barmode='relative',
+                        height=400,
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        with tabs[5]:
+            # Value Drivers Tab
+            if 'value_drivers' in results:
+                st.subheader("Value Drivers Analysis")
+                
+                drivers_df = results['value_drivers']
+                
+                # Revenue growth analysis
+                if 'Revenue Growth %' in drivers_df.index:
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Bar(
+                        x=drivers_df.columns,
+                        y=drivers_df.loc['Revenue Growth %'],
+                        name='Revenue Growth %',
+                        marker_color='green',
+                        text=[f"{v:.1f}%" for v in drivers_df.loc['Revenue Growth %']],
+                        textposition='auto'
+                    ))
+                    
+                    # Add average line
+                    avg_growth = drivers_df.loc['Revenue Growth %'].mean()
+                    fig.add_hline(
+                        y=avg_growth,
+                        line_dash="dash",
+                        line_color="gray",
+                        annotation_text=f"Avg: {avg_growth:.1f}%"
+                    )
+                    
+                    fig.update_layout(
+                        title="Revenue Growth Trend",
+                        xaxis_title="Year",
+                        yaxis_title="Growth %",
+                        height=350
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Display all value drivers
+                st.dataframe(
+                    drivers_df.style.format("{:.2f}", na_rep="-")
+                    .background_gradient(cmap='RdYlGn', axis=1),
+                    use_container_width=True
+                )
+        
+        with tabs[6]:
+            # Time Series Analysis Tab
+            st.subheader("Time Series Analysis")
+            
+            if 'ratios' in results and not results['ratios'].empty:
+                # Allow selection of multiple metrics for comparison
+                available_metrics = results['ratios'].index.tolist()
+                
+                selected_metrics = st.multiselect(
+                    "Select metrics to compare",
+                    available_metrics,
+                    default=available_metrics[:3] if len(available_metrics) >= 3 else available_metrics,
+                    key="pn_ts_metrics"
+                )
+                
+                if selected_metrics:
+                    # Normalize option
+                    normalize = st.checkbox("Normalize to base 100", key="pn_normalize")
+                    
+                    fig = go.Figure()
+                    
+                    for metric in selected_metrics:
+                        values = results['ratios'].loc[metric]
+                        
+                        if normalize:
+                            base_value = values.iloc[0]
+                            if base_value != 0:
+                                normalized_values = (values / base_value) * 100
+                            else:
+                                normalized_values = values
+                            
+                            fig.add_trace(go.Scatter(
+                                x=values.index,
+                                y=normalized_values,
+                                mode='lines+markers',
+                                name=metric
+                            ))
+                        else:
+                            fig.add_trace(go.Scatter(
+                                x=values.index,
+                                y=values,
+                                mode='lines+markers',
+                                name=metric
+                            ))
+                    
+                    fig.update_layout(
+                        title="Multi-Metric Time Series Comparison",
+                        xaxis_title="Year",
+                        yaxis_title="Value" + (" (Base 100)" if normalize else ""),
+                        height=500,
+                        hovermode='x unified'
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+    
+    def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
+        """Generate enhanced insights from Penman-Nissim analysis"""
+        insights = []
+        
+        if 'ratios' not in results or results['ratios'].empty:
+            return ["Unable to generate insights due to insufficient data."]
+        
+        ratios = results['ratios']
+        
+        # RNOA Analysis
+        if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
+            rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
+            latest_rnoa = rnoa_series.iloc[-1]
+            avg_rnoa = rnoa_series.mean()
+            
+            if latest_rnoa > 20:
+                insights.append(f"✅ Excellent operating performance with RNOA of {latest_rnoa:.1f}% (Elite level)")
+            elif latest_rnoa > 15:
+                insights.append(f"✅ Strong operating performance with RNOA of {latest_rnoa:.1f}%")
+            elif latest_rnoa > 10:
+                insights.append(f"💡 Moderate operating performance with RNOA of {latest_rnoa:.1f}%")
+            else:
+                insights.append(f"⚠️ Low operating performance with RNOA of {latest_rnoa:.1f}%")
+            
+            # RNOA trend
+            if len(rnoa_series) > 1:
+                trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
+                insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+        
+        # Spread Analysis
+        if 'Spread %' in ratios.index:
+            spread_series = ratios.loc['Spread %']
+            latest_spread = spread_series.iloc[-1]
+            
+            if latest_spread > 5:
+                insights.append(f"🚀 Strong positive spread ({latest_spread:.1f}%) - Financial leverage is creating significant value")
+            elif latest_spread > 0:
+                insights.append(f"✅ Positive spread ({latest_spread:.1f}%) - Financial leverage is value accretive")
+            else:
+                insights.append(f"❌ Negative spread ({latest_spread:.1f}%) - Financial leverage is destroying value")
+        
+        # Financial Leverage Analysis
+        if 'Financial Leverage (FLEV)' in ratios.index:
+            flev_series = ratios.loc['Financial Leverage (FLEV)']
+            latest_flev = flev_series.iloc[-1]
+            
+            if latest_flev > 2:
+                insights.append(f"⚠️ High financial leverage ({latest_flev:.2f}) indicates significant financial risk")
+            elif latest_flev < 0:
+                insights.append(f"💡 Negative leverage ({latest_flev:.2f}) indicates net financial assets position")
+        
+        # OPM and NOAT Analysis
+        if 'Operating Profit Margin (OPM) %' in ratios.index and 'Net Operating Asset Turnover (NOAT)' in ratios.index:
+            opm = ratios.loc['Operating Profit Margin (OPM) %'].iloc[-1]
+            noat = ratios.loc['Net Operating Asset Turnover (NOAT)'].iloc[-1]
+            
+            if opm > 15 and noat > 2:
+                insights.append(f"✅ Excellent combination of profitability (OPM: {opm:.1f}%) and efficiency (NOAT: {noat:.2f})")
+            elif opm < 5:
+                insights.append(f"⚠️ Low operating margin ({opm:.1f}%) suggests pricing or cost challenges")
+            elif noat < 1:
+                insights.append(f"⚠️ Low asset turnover ({noat:.2f}) indicates asset utilization issues")
+        
+        return insights
+    
     
     @error_boundary()
     @safe_state_access

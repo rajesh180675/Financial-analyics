@@ -5856,6 +5856,132 @@ class EnhancedPenmanNissimValidator:
             )
         
         return suggestions
+
+
+
+class MappingTemplateManager:
+    """Manage saved mapping templates for Penman-Nissim analysis"""
+    
+    def __init__(self, save_dir: str = "mapping_templates"):
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(exist_ok=True)
+        self.templates_file = self.save_dir / "pn_mapping_templates.json"
+        self.logger = LoggerFactory.get_logger('MappingTemplateManager')
+        
+    def save_template(self, name: str, mappings: Dict[str, str], 
+                     description: str = "", company: str = "", 
+                     metadata: Dict[str, Any] = None) -> bool:
+        """Save a mapping template"""
+        try:
+            # Load existing templates
+            templates = self._load_all_templates()
+            
+            # Create new template
+            template = {
+                'name': name,
+                'mappings': mappings,
+                'description': description,
+                'company': company,
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat(),
+                'version': '1.0',
+                'metrics_count': len(mappings),
+                'metadata': metadata or {}
+            }
+            
+            # Add or update template
+            templates[name] = template
+            
+            # Save to file
+            with open(self.templates_file, 'w') as f:
+                json.dump(templates, f, indent=2)
+            
+            self.logger.info(f"Saved mapping template: {name}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error saving template: {e}")
+            return False
+    
+    def load_template(self, name: str) -> Optional[Dict[str, str]]:
+        """Load a specific mapping template"""
+        try:
+            templates = self._load_all_templates()
+            if name in templates:
+                self.logger.info(f"Loaded mapping template: {name}")
+                return templates[name]['mappings']
+            return None
+        except Exception as e:
+            self.logger.error(f"Error loading template: {e}")
+            return None
+    
+    def get_all_templates(self) -> Dict[str, Dict[str, Any]]:
+        """Get all saved templates with metadata"""
+        return self._load_all_templates()
+    
+    def delete_template(self, name: str) -> bool:
+        """Delete a mapping template"""
+        try:
+            templates = self._load_all_templates()
+            if name in templates:
+                del templates[name]
+                with open(self.templates_file, 'w') as f:
+                    json.dump(templates, f, indent=2)
+                self.logger.info(f"Deleted mapping template: {name}")
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error deleting template: {e}")
+            return False
+    
+    def _load_all_templates(self) -> Dict[str, Dict[str, Any]]:
+        """Load all templates from file"""
+        if self.templates_file.exists():
+            try:
+                with open(self.templates_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                self.logger.error(f"Error reading templates file: {e}")
+                return {}
+        return {}
+    
+    def export_template(self, name: str, export_path: str) -> bool:
+        """Export a template to a separate file"""
+        try:
+            template = self._load_all_templates().get(name)
+            if template:
+                with open(export_path, 'w') as f:
+                    json.dump(template, f, indent=2)
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error exporting template: {e}")
+            return False
+    
+    def import_template(self, import_path: str) -> Optional[str]:
+        """Import a template from a file"""
+        try:
+            with open(import_path, 'r') as f:
+                template = json.load(f)
+            
+            # Validate template structure
+            if 'name' in template and 'mappings' in template:
+                # Update timestamps
+                template['imported_at'] = datetime.now().isoformat()
+                template['updated_at'] = datetime.now().isoformat()
+                
+                # Save the template
+                templates = self._load_all_templates()
+                templates[template['name']] = template
+                
+                with open(self.templates_file, 'w') as f:
+                    json.dump(templates, f, indent=2)
+                
+                return template['name']
+            return None
+        except Exception as e:
+            self.logger.error(f"Error importing template: {e}")
+            return None
         
 # --- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:
@@ -9211,10 +9337,16 @@ class FinancialAnalyticsPlatform:
                     
                     st.plotly_chart(fig, use_container_width=True)
                 
-
+    #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
-        """Enhanced mapping interface specifically for Penman-Nissim"""
+        """Enhanced mapping interface with save/load functionality"""
         st.subheader("🎯 Penman-Nissim Mapping Configuration")
+        
+        # Initialize template manager
+        if 'template_manager' not in st.session_state:
+            st.session_state.template_manager = MappingTemplateManager()
+        
+        template_manager = st.session_state.template_manager
         
         # Initialize enhanced mapper
         pn_mapper = EnhancedPenmanNissimMapper()
@@ -9222,15 +9354,118 @@ class FinancialAnalyticsPlatform:
         # Get source metrics
         source_metrics = [str(m) for m in data.index.tolist()]
         
-        # Initialize session state for mappings if not exists
-        if 'temp_pn_mappings' not in st.session_state:
-            # Try template-based mapping first
-            template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
-                source_metrics, 
-                pn_mapper.template
+        # Template Selection UI
+        st.markdown("### 📋 Mapping Templates")
+        
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            # Get available templates
+            templates = template_manager.get_all_templates()
+            template_options = ["🆕 Create New Mapping"] + ["🤖 Auto-Map (Default)"] + list(templates.keys())
+            
+            selected_template = st.selectbox(
+                "Select Mapping Template",
+                template_options,
+                key="pn_template_select",
+                help="Choose a saved template or create a new mapping"
             )
-            st.session_state.temp_pn_mappings = template_mappings
-            st.session_state.pn_unmapped = unmapped
+        
+        with col2:
+            if st.button("💾 Save Current", key="save_mapping_template", 
+                         disabled=('temp_pn_mappings' not in st.session_state)):
+                # Show save dialog
+                st.session_state.show_save_dialog = True
+        
+        with col3:
+            if selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)"] and \
+               st.button("🗑️ Delete Template", key="delete_template"):
+                if template_manager.delete_template(selected_template):
+                    st.success(f"Deleted template: {selected_template}")
+                    st.rerun()
+                else:
+                    st.error("Failed to delete template")
+        
+        # Save Dialog
+        if st.session_state.get('show_save_dialog', False):
+            with st.form("save_template_form"):
+                st.markdown("### 💾 Save Mapping Template")
+                
+                template_name = st.text_input(
+                    "Template Name",
+                    value=f"{self.get_state('company_name', 'Company')}_{datetime.now().strftime('%Y%m%d')}",
+                    help="Give your mapping template a memorable name"
+                )
+                
+                template_description = st.text_area(
+                    "Description (Optional)",
+                    help="Describe when to use this template"
+                )
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.form_submit_button("💾 Save", type="primary"):
+                        if template_name and 'temp_pn_mappings' in st.session_state:
+                            if template_manager.save_template(
+                                name=template_name,
+                                mappings=st.session_state.temp_pn_mappings,
+                                description=template_description,
+                                company=self.get_state('company_name', ''),
+                                metadata={
+                                    'source_count': len(source_metrics),
+                                    'data_structure': str(data.index[:5].tolist())
+                                }
+                            ):
+                                st.success(f"✅ Saved template: {template_name}")
+                                st.session_state.show_save_dialog = False
+                                st.rerun()
+                            else:
+                                st.error("Failed to save template")
+                
+                with col2:
+                    if st.form_submit_button("Cancel"):
+                        st.session_state.show_save_dialog = False
+                        st.rerun()
+        
+        # Initialize mappings based on template selection
+        if 'temp_pn_mappings' not in st.session_state or st.session_state.get('last_template') != selected_template:
+            st.session_state.last_template = selected_template
+            
+            if selected_template == "🆕 Create New Mapping":
+                # Start with empty mappings
+                st.session_state.temp_pn_mappings = {}
+                st.session_state.pn_unmapped = source_metrics
+                
+            elif selected_template == "🤖 Auto-Map (Default)":
+                # Use auto-mapping
+                template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
+                    source_metrics, 
+                    pn_mapper.template
+                )
+                st.session_state.temp_pn_mappings = template_mappings
+                st.session_state.pn_unmapped = unmapped
+                
+            else:
+                # Load saved template
+                loaded_mappings = template_manager.load_template(selected_template)
+                if loaded_mappings:
+                    # Filter mappings to only include current source metrics
+                    valid_mappings = {k: v for k, v in loaded_mappings.items() if k in source_metrics}
+                    st.session_state.temp_pn_mappings = valid_mappings
+                    st.session_state.pn_unmapped = [m for m in source_metrics if m not in valid_mappings]
+                    
+                    # Show template info
+                    template_info = templates[selected_template]
+                    st.info(f"""
+                    **Template:** {selected_template}  
+                    **Created:** {template_info.get('created_at', 'Unknown')[:10]}  
+                    **Metrics:** {template_info.get('metrics_count', 0)}  
+                    **Description:** {template_info.get('description', 'No description')}
+                    """)
+                else:
+                    st.error("Failed to load template")
+                    st.session_state.temp_pn_mappings = {}
+                    st.session_state.pn_unmapped = source_metrics
         
         current_mappings = st.session_state.temp_pn_mappings
         unmapped = st.session_state.pn_unmapped
@@ -9262,68 +9497,87 @@ class FinancialAnalyticsPlatform:
             st.info(f"**Suggestions:** {'; '.join(validation['suggestions'])}")
         
         # Quick actions
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
+        
         with col1:
-            if st.button("🤖 Re-run Auto Mapping", key="pn_rerun_auto"):
-                template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
-                    source_metrics, 
+            if st.button("🤖 Auto-Complete", key="pn_auto_complete", 
+                         help="Auto-map remaining unmapped items"):
+                # Auto-complete missing mappings
+                remaining_mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(
+                    unmapped, 
                     pn_mapper.template
                 )
-                st.session_state.temp_pn_mappings = template_mappings
-                st.session_state.pn_unmapped = unmapped
+                current_mappings.update(remaining_mappings)
+                st.session_state.temp_pn_mappings = current_mappings
+                st.success("Auto-completed missing mappings!")
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Reset Mappings", key="pn_reset_mappings"):
+            if st.button("🔄 Reset Current", key="pn_reset_current"):
                 st.session_state.temp_pn_mappings = {}
                 st.session_state.pn_unmapped = source_metrics
                 st.rerun()
         
         with col3:
-            if st.button("📋 Load VST Template", key="pn_vst_template", help="Load pre-configured template for VST Industries"):
-                # VST-specific mappings
-                vst_mappings = {
-                    'BalanceSheet::Total Assets': 'Total Assets',
-                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',  # Alternative for Total Assets
-                    'BalanceSheet::Total Current Assets': 'Current Assets',
-                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables',
-                    'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
-                    'BalanceSheet::Total Equity': 'Total Equity',
-                    'BalanceSheet::Equity': 'Total Equity',  # Alternative
-                    'BalanceSheet::Share Capital': 'Share Capital',
-                    'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt',
-                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt',
-                    
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
-                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
-                    'ProfitLoss::Finance Costs': 'Interest Expense',
-                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
-                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
-                    
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
+            if st.button("📥 Import", key="import_template"):
+                st.session_state.show_import_dialog = True
+        
+        with col4:
+            if st.button("📤 Export", key="export_template", 
+                         disabled=not current_mappings):
+                # Export current mappings
+                export_data = {
+                    'name': f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    'mappings': current_mappings,
+                    'created_at': datetime.now().isoformat(),
+                    'company': self.get_state('company_name', ''),
+                    'version': '1.0'
                 }
                 
-                # Apply VST mappings
-                for source in source_metrics:
-                    for vst_key, target in vst_mappings.items():
-                        if vst_key.lower() in source.lower() or source.endswith(vst_key.split('::')[-1]):
-                            current_mappings[source] = target
-                            break
-                
-                st.session_state.temp_pn_mappings = current_mappings
-                st.success("Loaded VST Industries template!")
-                st.rerun()
+                st.download_button(
+                    label="📥 Download Mapping Template",
+                    data=json.dumps(export_data, indent=2),
+                    file_name=f"pn_mapping_{datetime.now().strftime('%Y%m%d')}.json",
+                    mime="application/json"
+                )
+        
+        # Import Dialog
+        if st.session_state.get('show_import_dialog', False):
+            uploaded_file = st.file_uploader(
+                "Upload Mapping Template (JSON)",
+                type=['json'],
+                key="template_upload"
+            )
+            
+            if uploaded_file:
+                try:
+                    template_data = json.loads(uploaded_file.read())
+                    if 'mappings' in template_data:
+                        # Apply the imported mappings
+                        imported_mappings = template_data['mappings']
+                        valid_mappings = {k: v for k, v in imported_mappings.items() if k in source_metrics}
+                        st.session_state.temp_pn_mappings = valid_mappings
+                        st.success(f"Imported {len(valid_mappings)} mappings!")
+                        st.session_state.show_import_dialog = False
+                        st.rerun()
+                    else:
+                        st.error("Invalid template format")
+                except Exception as e:
+                    st.error(f"Error importing template: {e}")
+        
+        # Helper function to safely calculate selectbox index
+        def safe_selectbox_index(current_source, candidates, source_metrics, current_mappings):
+            """Safely calculate selectbox index with bounds checking"""
+            available_sources = [s for s in source_metrics if s not in current_mappings or s == current_source]
+            options = ['(Not mapped)'] + candidates + [s for s in available_sources if s not in candidates]
+            
+            if current_source and current_source in options:
+                return options, options.index(current_source)
+            else:
+                return options, 0
         
         # Mapping interface with categories
+        st.markdown("### 🔧 Metric Mappings")
         tabs = st.tabs(["🔴 Essential Mappings", "🟡 Important Mappings", "🟢 Optional Mappings", "❓ Unmapped Items"])
         
         with tabs[0]:
@@ -9348,19 +9602,8 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
-                # Remove already mapped items from candidates
-                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
-                
-                # Create selectbox
-                options = ['(Not mapped)'] + candidates + [s for s in source_metrics if s not in candidates and (s not in current_mappings or s == current_source)]
-                
-                if current_source:
-                    if current_source in candidates:
-                        default_index = candidates.index(current_source) + 1
-                    else:
-                        default_index = len(candidates) + 1 + [s for s in source_metrics if s not in candidates].index(current_source)
-                else:
-                    default_index = 0
+                # Get options and index safely
+                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
                     f"**{target}**" + (" ⚠️" if target in validation['missing_essential'] else ""),
@@ -9370,24 +9613,34 @@ class FinancialAnalyticsPlatform:
                     help=f"Common patterns: {', '.join(target_patterns[:3])}"
                 )
                 
-                # Update mappings
-                if current_source and current_source != selected:
-                    del current_mappings[current_source]
-                
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target and src != selected:
+                            del current_mappings[src]
                     current_mappings[selected] = target
+                else:
+                    # Remove mapping if user selects '(Not mapped)'
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target:
+                            del current_mappings[src]
+                
+                # Update session state immediately
+                st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[1]:
             st.info("These mappings **improve accuracy** but aren't strictly required")
             
             for target in pn_mapper.required_mappings['important']:
-                # Similar logic as essential mappings
+                # Find current mapping
                 current_source = None
                 for source, mapped_target in current_mappings.items():
                     if mapped_target == target:
                         current_source = source
                         break
                 
+                # Find best candidates
                 candidates = []
                 target_patterns = pn_mapper.template.get(target, [target])
                 
@@ -9398,19 +9651,8 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
-                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
-                options = ['(Not mapped)'] + candidates + [s for s in source_metrics if s not in candidates and (s not in current_mappings or s == current_source)]
-                
-                if current_source:
-                    if current_source in candidates:
-                        default_index = candidates.index(current_source) + 1
-                    else:
-                        try:
-                            default_index = len(candidates) + 1 + [s for s in source_metrics if s not in candidates].index(current_source)
-                        except ValueError:
-                            default_index = 0
-                else:
-                    default_index = 0
+                # Get options and index safely
+                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
                     f"**{target}**" + (" ⚠️" if target in validation['missing_important'] else ""),
@@ -9420,23 +9662,34 @@ class FinancialAnalyticsPlatform:
                     help=f"Common patterns: {', '.join(target_patterns[:3])}"
                 )
                 
-                if current_source and current_source != selected:
-                    del current_mappings[current_source]
-                
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target and src != selected:
+                            del current_mappings[src]
                     current_mappings[selected] = target
+                else:
+                    # Remove mapping if user selects '(Not mapped)'
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target:
+                            del current_mappings[src]
+                
+                # Update session state immediately
+                st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[2]:
             st.info("These mappings provide **additional insights**")
             
             for target in pn_mapper.required_mappings['optional']:
-                # Similar logic for optional mappings
+                # Find current mapping
                 current_source = None
                 for source, mapped_target in current_mappings.items():
                     if mapped_target == target:
                         current_source = source
                         break
                 
+                # Find best candidates
                 candidates = []
                 target_patterns = pn_mapper.template.get(target, [target])
                 
@@ -9447,13 +9700,11 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
-                candidates = [c for c in candidates if c not in current_mappings or c == current_source]
-                options = ['(Not mapped)'] + candidates[:10]  # Limit to top 10 candidates
+                # Limit candidates for optional mappings
+                candidates = candidates[:10]
                 
-                if current_source and current_source not in options:
-                    options.append(current_source)
-                
-                default_index = options.index(current_source) if current_source in options else 0
+                # Get options and index safely
+                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
                     f"{target}",
@@ -9462,11 +9713,21 @@ class FinancialAnalyticsPlatform:
                     key=f"pn_map_optional_{target}"
                 )
                 
-                if current_source and current_source != selected:
-                    del current_mappings[current_source]
-                
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target and src != selected:
+                            del current_mappings[src]
                     current_mappings[selected] = target
+                else:
+                    # Remove mapping if user selects '(Not mapped)'
+                    for src, tgt in list(current_mappings.items()):
+                        if tgt == target:
+                            del current_mappings[src]
+                
+                # Update session state immediately
+                st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[3]:
             st.info("Items that couldn't be automatically mapped")
@@ -9481,118 +9742,356 @@ class FinancialAnalyticsPlatform:
                 balance_sheet_items = [item for item in truly_unmapped if 'BalanceSheet::' in item]
                 pl_items = [item for item in truly_unmapped if 'ProfitLoss::' in item]
                 cf_items = [item for item in truly_unmapped if 'CashFlow::' in item]
+                other_items = [item for item in truly_unmapped if item not in balance_sheet_items + pl_items + cf_items]
                 
                 if balance_sheet_items:
                     with st.expander(f"Balance Sheet Items ({len(balance_sheet_items)})"):
                         for item in balance_sheet_items[:20]:
                             st.text(f"• {item.split('::')[-1]}")
+                        if len(balance_sheet_items) > 20:
+                            st.text(f"... and {len(balance_sheet_items) - 20} more")
                 
                 if pl_items:
                     with st.expander(f"P&L Items ({len(pl_items)})"):
                         for item in pl_items[:20]:
                             st.text(f"• {item.split('::')[-1]}")
+                        if len(pl_items) > 20:
+                            st.text(f"... and {len(pl_items) - 20} more")
                 
                 if cf_items:
                     with st.expander(f"Cash Flow Items ({len(cf_items)})"):
                         for item in cf_items[:20]:
                             st.text(f"• {item.split('::')[-1]}")
+                        if len(cf_items) > 20:
+                            st.text(f"... and {len(cf_items) - 20} more")
+                
+                if other_items:
+                    with st.expander(f"Other Items ({len(other_items)})"):
+                        for item in other_items[:20]:
+                            st.text(f"• {item}")
+                        if len(other_items) > 20:
+                            st.text(f"... and {len(other_items) - 20} more")
             else:
                 st.success("All items have been mapped!")
         
-        # Save current mappings to session state
-        st.session_state.temp_pn_mappings = current_mappings
+        # Quick Template Buttons
+        st.markdown("### ⚡ Quick Templates")
+        col1, col2, col3, col4 = st.columns(4)
         
-        # Apply button
+        with col1:
+            if st.button("📋 Load VST Template", key="pn_vst_template_quick", 
+                         help="Load pre-configured template for VST Industries"):
+                # VST-specific mappings
+                vst_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets',
+                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                    'BalanceSheet::Total Current Assets': 'Current Assets',
+                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
+                    'BalanceSheet::Total Equity': 'Total Equity',
+                    'BalanceSheet::Equity': 'Total Equity',
+                    'BalanceSheet::Share Capital': 'Share Capital',
+                    'BalanceSheet::Other Equity': 'Retained Earnings',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt',
+                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt',
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
+                }
+                
+                # Apply VST mappings
+                for source in source_metrics:
+                    for vst_key, target in vst_mappings.items():
+                        if vst_key.lower() in source.lower() or source.endswith(vst_key.split('::')[-1]):
+                            current_mappings[source] = target
+                            break
+                
+                st.session_state.temp_pn_mappings = current_mappings
+                st.success("Loaded VST Industries template!")
+                st.rerun()
+        
+        with col2:
+            if st.button("💼 Clear All", key="pn_clear_all"):
+                st.session_state.temp_pn_mappings = {}
+                st.session_state.pn_unmapped = source_metrics
+                st.success("Cleared all mappings!")
+                st.rerun()
+        
+        with col3:
+            if st.button("🔍 Validate", key="pn_validate"):
+                final_validation = pn_mapper.validate_mappings(current_mappings)
+                if final_validation['is_valid']:
+                    st.success("✅ Mappings are valid and ready!")
+                else:
+                    st.error("❌ Mappings need attention")
+        
+        with col4:
+            if st.button("❓ Help", key="pn_help"):
+                with st.expander("Mapping Help", expanded=True):
+                    st.markdown("""
+                    **How to use this mapping interface:**
+                    
+                    1. **Select a Template**: Choose from saved templates or start fresh
+                    2. **Map Essential Items**: These are required for analysis
+                    3. **Map Important Items**: Improve accuracy
+                    4. **Review Optional Items**: Add for extra insights
+                    5. **Save Your Mapping**: Save for future use
+                    6. **Apply**: Apply mappings to proceed with analysis
+                    
+                    **Tips:**
+                    - Use Auto-Complete to quickly map remaining items
+                    - Save templates for specific data sources
+                    - Export/Import templates to share with others
+                    """)
+        
+        # Apply button with save reminder
         st.markdown("---")
         col1, col2, col3 = st.columns([2, 1, 2])
+        
         with col2:
-            if st.button("✅ Apply Mappings", type="primary", key="pn_apply_mappings"):
+            if st.button("✅ Apply Mappings", type="primary", key="pn_apply_mappings", 
+                         use_container_width=True):
                 # Final validation
                 final_validation = pn_mapper.validate_mappings(current_mappings)
                 
                 if final_validation['is_valid']:
                     self.set_state('pn_mappings', current_mappings)
+                    
+                    # Ask if user wants to save as template
+                    if selected_template in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)"]:
+                        st.info("💡 Tip: Click '💾 Save Current' to save this mapping for future use!")
+                    
                     # Clean up temp state
                     if 'temp_pn_mappings' in st.session_state:
                         del st.session_state.temp_pn_mappings
                     if 'pn_unmapped' in st.session_state:
                         del st.session_state.pn_unmapped
+                    if 'last_template' in st.session_state:
+                        del st.session_state.last_template
+                    if 'show_save_dialog' in st.session_state:
+                        del st.session_state.show_save_dialog
+                    if 'show_import_dialog' in st.session_state:
+                        del st.session_state.show_import_dialog
+                    
                     st.success(f"✅ Applied {len(current_mappings)} mappings successfully!")
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("❌ Please complete all essential mappings before proceeding")
-                    st.write("Missing:", ', '.join(final_validation['missing_essential']))
+                    if final_validation['missing_essential']:
+                        st.write("**Missing essential items:**")
+                        for item in final_validation['missing_essential']:
+                            st.write(f"• {item}")
         
         # Return None to indicate mapping is not complete yet
         return None
                         
-        def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
-            """Generate enhanced insights from Penman-Nissim analysis"""
-            insights = []
+    def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
+        """Generate enhanced insights from Penman-Nissim analysis"""
+        insights = []
+        
+        if 'ratios' not in results or results['ratios'].empty:
+            return ["Unable to generate insights due to insufficient data."]
+        
+        ratios = results['ratios']
+        
+        # RNOA Analysis
+        if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
+            rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
+            latest_rnoa = rnoa_series.iloc[-1]
+            avg_rnoa = rnoa_series.mean()
             
-            if 'ratios' not in results or results['ratios'].empty:
-                return ["Unable to generate insights due to insufficient data."]
+            if latest_rnoa > 20:
+                insights.append(f"✅ Excellent operating performance with RNOA of {latest_rnoa:.1f}% (Elite level)")
+            elif latest_rnoa > 15:
+                insights.append(f"✅ Strong operating performance with RNOA of {latest_rnoa:.1f}%")
+            elif latest_rnoa > 10:
+                insights.append(f"💡 Moderate operating performance with RNOA of {latest_rnoa:.1f}%")
+            else:
+                insights.append(f"⚠️ Low operating performance with RNOA of {latest_rnoa:.1f}%")
             
-            ratios = results['ratios']
+            # RNOA trend
+            if len(rnoa_series) > 1:
+                trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
+                insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+        
+        # Spread Analysis
+        if 'Spread %' in ratios.index:
+            spread_series = ratios.loc['Spread %']
+            latest_spread = spread_series.iloc[-1]
             
-            # RNOA Analysis
-            if 'Return on Net Operating Assets (RNOA) %' in ratios.index:
-                rnoa_series = ratios.loc['Return on Net Operating Assets (RNOA) %']
-                latest_rnoa = rnoa_series.iloc[-1]
-                avg_rnoa = rnoa_series.mean()
-                
-                if latest_rnoa > 20:
-                    insights.append(f"✅ Excellent operating performance with RNOA of {latest_rnoa:.1f}% (Elite level)")
-                elif latest_rnoa > 15:
-                    insights.append(f"✅ Strong operating performance with RNOA of {latest_rnoa:.1f}%")
-                elif latest_rnoa > 10:
-                    insights.append(f"💡 Moderate operating performance with RNOA of {latest_rnoa:.1f}%")
-                else:
-                    insights.append(f"⚠️ Low operating performance with RNOA of {latest_rnoa:.1f}%")
-                
-                # RNOA trend
-                if len(rnoa_series) > 1:
-                    trend = "improving" if rnoa_series.iloc[-1] > rnoa_series.iloc[0] else "declining"
-                    insights.append(f"📊 RNOA trend is {trend} over the analysis period")
+            if latest_spread > 5:
+                insights.append(f"🚀 Strong positive spread ({latest_spread:.1f}%) - Financial leverage is creating significant value")
+            elif latest_spread > 0:
+                insights.append(f"✅ Positive spread ({latest_spread:.1f}%) - Financial leverage is value accretive")
+            else:
+                insights.append(f"❌ Negative spread ({latest_spread:.1f}%) - Financial leverage is destroying value")
+        
+        # Financial Leverage Analysis
+        if 'Financial Leverage (FLEV)' in ratios.index:
+            flev_series = ratios.loc['Financial Leverage (FLEV)']
+            latest_flev = flev_series.iloc[-1]
             
-            # Spread Analysis
-            if 'Spread %' in ratios.index:
-                spread_series = ratios.loc['Spread %']
-                latest_spread = spread_series.iloc[-1]
-                
-                if latest_spread > 5:
-                    insights.append(f"🚀 Strong positive spread ({latest_spread:.1f}%) - Financial leverage is creating significant value")
-                elif latest_spread > 0:
-                    insights.append(f"✅ Positive spread ({latest_spread:.1f}%) - Financial leverage is value accretive")
-                else:
-                    insights.append(f"❌ Negative spread ({latest_spread:.1f}%) - Financial leverage is destroying value")
+            if latest_flev > 2:
+                insights.append(f"⚠️ High financial leverage ({latest_flev:.2f}) indicates significant financial risk")
+            elif latest_flev < 0:
+                insights.append(f"💡 Negative leverage ({latest_flev:.2f}) indicates net financial assets position")
+        
+        # OPM and NOAT Analysis
+        if 'Operating Profit Margin (OPM) %' in ratios.index and 'Net Operating Asset Turnover (NOAT)' in ratios.index:
+            opm = ratios.loc['Operating Profit Margin (OPM) %'].iloc[-1]
+            noat = ratios.loc['Net Operating Asset Turnover (NOAT)'].iloc[-1]
             
-            # Financial Leverage Analysis
-            if 'Financial Leverage (FLEV)' in ratios.index:
-                flev_series = ratios.loc['Financial Leverage (FLEV)']
-                latest_flev = flev_series.iloc[-1]
-                
-                if latest_flev > 2:
-                    insights.append(f"⚠️ High financial leverage ({latest_flev:.2f}) indicates significant financial risk")
-                elif latest_flev < 0:
-                    insights.append(f"💡 Negative leverage ({latest_flev:.2f}) indicates net financial assets position")
-            
-            # OPM and NOAT Analysis
-            if 'Operating Profit Margin (OPM) %' in ratios.index and 'Net Operating Asset Turnover (NOAT)' in ratios.index:
-                opm = ratios.loc['Operating Profit Margin (OPM) %'].iloc[-1]
-                noat = ratios.loc['Net Operating Asset Turnover (NOAT)'].iloc[-1]
-                
-                if opm > 15 and noat > 2:
-                    insights.append(f"✅ Excellent combination of profitability (OPM: {opm:.1f}%) and efficiency (NOAT: {noat:.2f})")
-                elif opm < 5:
-                    insights.append(f"⚠️ Low operating margin ({opm:.1f}%) suggests pricing or cost challenges")
-                elif noat < 1:
-                    insights.append(f"⚠️ Low asset turnover ({noat:.2f}) indicates asset utilization issues")
-            
-            return insights
+            if opm > 15 and noat > 2:
+                insights.append(f"✅ Excellent combination of profitability (OPM: {opm:.1f}%) and efficiency (NOAT: {noat:.2f})")
+            elif opm < 5:
+                insights.append(f"⚠️ Low operating margin ({opm:.1f}%) suggests pricing or cost challenges")
+            elif noat < 1:
+                insights.append(f"⚠️ Low asset turnover ({noat:.2f}) indicates asset utilization issues")
+        
+        return insights
     
-    
+    #render side
+    def _render_quick_template_buttons(self, source_metrics, current_mappings):
+        """Render quick template buttons for common formats"""
+        st.markdown("### ⚡ Quick Templates")
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📊 Capitaline", key="quick_capitaline"):
+                # Capitaline-specific mappings
+                capitaline_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets',
+                    'BalanceSheet::Current Assets': 'Current Assets',
+                    'BalanceSheet::Cash and Bank Balances': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Trade Receivables': 'Trade Receivables',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
+                    'BalanceSheet::Total Equity': 'Total Equity',
+                    'BalanceSheet::Share Capital': 'Share Capital',
+                    'BalanceSheet::Reserves and Surplus': 'Retained Earnings',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Trade Payables': 'Accounts Payable',
+                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Total Revenue': 'Revenue',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                    'ProfitLoss::Operating Profit': 'Operating Income',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Net Profit': 'Net Income',
+                    'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Depreciation': 'Depreciation',
+                    'CashFlow::Operating Cash Flow': 'Operating Cash Flow',
+                    'CashFlow::Capital Expenditure': 'Capital Expenditure'
+                }
+                current_mappings.update(capitaline_mappings)
+                st.success("Applied Capitaline template!")
+        
+        with col2:
+            if st.button("💼 MoneyControl", key="quick_moneycontrol"):
+                # MoneyControl-specific mappings
+                moneycontrol_mappings = {
+                    'BalanceSheet::TOTAL ASSETS': 'Total Assets',
+                    'BalanceSheet::Current Assets': 'Current Assets',
+                    'BalanceSheet::Cash And Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Inventory': 'Inventory',
+                    'BalanceSheet::Trade Receivables': 'Trade Receivables',
+                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Total Shareholders Funds': 'Total Equity',
+                    'BalanceSheet::Equity Share Capital': 'Share Capital',
+                    'BalanceSheet::Reserves And Surplus': 'Retained Earnings',
+                    'BalanceSheet::Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Trade Payables': 'Accounts Payable',
+                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Revenue From Operations': 'Revenue',
+                    'ProfitLoss::Cost Of Materials Consumed': 'Cost of Goods Sold',
+                    'ProfitLoss::Operating Profit': 'Operating Income',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax Expenses': 'Tax Expense',
+                    'ProfitLoss::Profit After Tax': 'Net Income',
+                    'ProfitLoss::Interest': 'Interest Expense',
+                    'ProfitLoss::Depreciation And Amortisation': 'Depreciation',
+                    'CashFlow::Cash From Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase Of Fixed Assets': 'Capital Expenditure'
+                }
+                current_mappings.update(moneycontrol_mappings)
+                st.success("Applied MoneyControl template!")
+        
+        with col3:
+            if st.button("🏢 NSE/BSE", key="quick_nse_bse"):
+                # NSE/BSE-specific mappings
+                nse_bse_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets',
+                    'BalanceSheet::Current assets': 'Current Assets',
+                    'BalanceSheet::Cash and bank balances': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',
+                    'BalanceSheet::Property, plant and equipment': 'Property Plant Equipment',
+                    'BalanceSheet::Total equity': 'Total Equity',
+                    'BalanceSheet::Share capital': 'Share Capital',
+                    'BalanceSheet::Other equity': 'Retained Earnings',
+                    'BalanceSheet::Current liabilities': 'Current Liabilities',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Current borrowings': 'Short-term Debt',
+                    'BalanceSheet::Non-current borrowings': 'Long-term Debt',
+                    'ProfitLoss::Revenue from operations': 'Revenue',
+                    'ProfitLoss::Cost of materials consumed': 'Cost of Goods Sold',
+                    'ProfitLoss::Operating profit': 'Operating Income',
+                    'ProfitLoss::Profit before tax': 'Income Before Tax',
+                    'ProfitLoss::Tax expense': 'Tax Expense',
+                    'ProfitLoss::Profit for the period': 'Net Income',
+                    'ProfitLoss::Finance costs': 'Interest Expense',
+                    'ProfitLoss::Depreciation and amortisation': 'Depreciation',
+                    'CashFlow::Net cash from operating activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of fixed assets': 'Capital Expenditure'
+                }
+                current_mappings.update(nse_bse_mappings)
+                st.success("Applied NSE/BSE template!")
+        
+        with col4:
+            if st.button("🏦 Custom Bank", key="quick_bank"):
+                # Bank-specific mappings
+                bank_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets',
+                    'BalanceSheet::Current Assets': 'Current Assets',
+                    'BalanceSheet::Cash and Balances': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Loans and Advances': 'Trade Receivables',
+                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Total Shareholders Funds': 'Total Equity',
+                    'BalanceSheet::Share Capital': 'Share Capital',
+                    'BalanceSheet::Reserves': 'Retained Earnings',
+                    'BalanceSheet::Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Deposits': 'Accounts Payable',
+                    'BalanceSheet::Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Interest Income': 'Revenue',
+                    'ProfitLoss::Interest Expended': 'Cost of Goods Sold',
+                    'ProfitLoss::Operating Profit': 'Operating Income',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax': 'Tax Expense',
+                    'ProfitLoss::Net Profit': 'Net Income',
+                    'ProfitLoss::Interest Expense': 'Interest Expense',
+                    'ProfitLoss::Depreciation': 'Depreciation',
+                    'CashFlow::Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure'
+                }
+                current_mappings.update(bank_mappings)
+                st.success("Applied Bank template!")
+                
     @error_boundary()
     @safe_state_access
     def _render_industry_tab(self, data: pd.DataFrame):

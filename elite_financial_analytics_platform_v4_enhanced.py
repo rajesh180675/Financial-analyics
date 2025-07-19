@@ -4600,7 +4600,7 @@ class NLQueryProcessor:
             ]
         }
 
---- 24. Collaboration Manager ---
+#--- 24. Collaboration Manager ---
 class CollaborationManager:
     """Manage collaborative analysis sessions with cleanup"""
     def __init__(self):

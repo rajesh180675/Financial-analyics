@@ -2238,80 +2238,80 @@ class FinancialAnalysisEngine(Component):
                 self._logger.error(f"Error calculating efficiency ratios: {e}")
 
         return ratios
-    
-    def _get_metric_value(self, df: pd.DataFrame, metrics: Dict, metric_type: str) -> Optional[pd.Series]:
-        """Get metric value from dataframe with fallback"""
-        if metric_type in metrics and metrics[metric_type]:
-        best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
-        metric_name = best_match['name']
         
-        if metric_name in df.index:
-        result = df.loc[metric_name]
-        if isinstance(result, pd.DataFrame):
-            self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
-            result = result.iloc[0]
-        return result
+    def _get_metric_value(self, df: pd.DataFrame, metrics: Dict, metric_type: str) -> Optional[pd.Series]:
+            """Get metric value from dataframe with fallback"""
+            if metric_type in metrics and metrics[metric_type]:
+                best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
+                metric_name = best_match['name']
+                
+                if metric_name in df.index:
+                    result = df.loc[metric_name]
+                    if isinstance(result, pd.DataFrame):
+                        self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
+                        result = result.iloc[0]
+                    return result
         
         return None
-    
+
     def _analyze_trends(self, df: pd.DataFrame) -> Dict[str, Any]:
         """Analyze trends in financial data"""
         trends = {}
         numeric_df = df.select_dtypes(include=[np.number])
         
         if len(numeric_df.columns) < 2:
-        return {'error': 'Insufficient data for trend analysis'}
+            return {'error': 'Insufficient data for trend analysis'}
         
         for idx in numeric_df.index:
-        series = numeric_df.loc[idx]
-        
-        if isinstance(series, pd.DataFrame):
-        self._logger.warning(f"Multiple rows found for {idx}, taking first")
-        series = series.iloc[0]
-        
-        series = series.dropna()
-        
-        if len(series) >= 3:
-        years = np.arange(len(series))
-        values = series.values
-        
-        coefficients = np.polyfit(years, values, 1)
-        slope = float(coefficients[0])
-        intercept = float(coefficients[1])
-        
-        # CAGR calculation
-        try:
-            first_value = float(series.iloc[0])
-            last_value = float(series.iloc[-1])
+            series = numeric_df.loc[idx]
             
-            if first_value > 0 and last_value > 0:
-                years_diff = len(series) - 1
-                if years_diff > 0:
-                    cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
-                else:
-                    cagr = 0
-            else:
-                cagr = 0
+            if isinstance(series, pd.DataFrame):
+                self._logger.warning(f"Multiple rows found for {idx}, taking first")
+                series = series.iloc[0]
+            
+            series = series.dropna()
+            
+            if len(series) >= 3:
+                years = np.arange(len(series))
+                values = series.values
                 
-        except Exception as e:
-            self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
-            cagr = 0
-        
-        # Volatility
-        try:
-            volatility = float(series.pct_change().std() * 100)
-            if pd.isna(volatility):
-                volatility = 0
-        except Exception:
-            volatility = 0
-        
-        trends[str(idx)] = {
-            'slope': slope,
-            'direction': 'increasing' if slope > 0 else 'decreasing',
-            'cagr': cagr,
-            'volatility': volatility,
-            'r_squared': self._calculate_r_squared(years, values, slope, intercept)
-        }
+                coefficients = np.polyfit(years, values, 1)
+                slope = float(coefficients[0])
+                intercept = float(coefficients[1])
+                
+                # CAGR calculation
+                try:
+                    first_value = float(series.iloc[0])
+                    last_value = float(series.iloc[-1])
+                    
+                    if first_value > 0 and last_value > 0:
+                        years_diff = len(series) - 1
+                        if years_diff > 0:
+                            cagr = ((last_value / first_value) ** (1 / years_diff) - 1) * 100
+                        else:
+                            cagr = 0
+                    else:
+                        cagr = 0
+                        
+                except Exception as e:
+                    self._logger.warning(f"Could not calculate CAGR for {idx}: {e}")
+                    cagr = 0
+                
+                # Volatility
+                try:
+                    volatility = float(series.pct_change().std() * 100)
+                    if pd.isna(volatility):
+                        volatility = 0
+                except Exception:
+                    volatility = 0
+                
+                trends[str(idx)] = {
+                    'slope': slope,
+                    'direction': 'increasing' if slope > 0 else 'decreasing',
+                    'cagr': cagr,
+                    'volatility': volatility,
+                    'r_squared': self._calculate_r_squared(years, values, slope, intercept)
+                }
         
         return trends
     
@@ -2322,8 +2322,8 @@ class FinancialAnalysisEngine(Component):
         ss_tot = np.sum((y - np.mean(y)) ** 2)
         
         return 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-        
-        def _calculate_quality_score(self, df: pd.DataFrame) -> float:
+    
+    def _calculate_quality_score(self, df: pd.DataFrame) -> float:
         """Calculate data quality score"""
         scores = []
         
@@ -2332,45 +2332,45 @@ class FinancialAnalysisEngine(Component):
         
         numeric_df = df.select_dtypes(include=[np.number])
         if not numeric_df.empty:
-        consistency_score = 100
-        
-        for idx in numeric_df.index:
-        positive_metrics = ['assets', 'revenue', 'equity']
-        if any(keyword in str(idx).lower() for keyword in positive_metrics):
-            row_data = numeric_df.loc[idx]
+            consistency_score = 100
             
-            if isinstance(row_data, pd.DataFrame):
-                row_data = row_data.iloc[0]
+            for idx in numeric_df.index:
+                positive_metrics = ['assets', 'revenue', 'equity']
+                if any(keyword in str(idx).lower() for keyword in positive_metrics):
+                    row_data = numeric_df.loc[idx]
+                    
+                    if isinstance(row_data, pd.DataFrame):
+                        row_data = row_data.iloc[0]
+                    
+                    negative_count = int((row_data < 0).sum())
+                    
+                    if negative_count > 0:
+                        consistency_score -= (negative_count / len(numeric_df.columns)) * 20
             
-            negative_count = int((row_data < 0).sum())
+            scores.append(max(0, consistency_score))
             
-            if negative_count > 0:
-                consistency_score -= (negative_count / len(numeric_df.columns)) * 20
-        
-        scores.append(max(0, consistency_score))
-        
-        if len(numeric_df.columns) > 1:
-        temporal_score = 100
-        extreme_changes = 0
-        
-        for idx in numeric_df.index:
-        series = numeric_df.loc[idx]
-        
-        if isinstance(series, pd.DataFrame):
-            series = series.iloc[0]
-        
-        series = series.dropna()
-        
-        if len(series) > 1:
-            pct_changes = series.pct_change().dropna()
-            extreme_count = int((pct_changes.abs() > 2).sum())
-            extreme_changes += extreme_count
-        
-        total_changes = len(numeric_df) * (len(numeric_df.columns) - 1)
-        if total_changes > 0:
-        temporal_score -= (extreme_changes / total_changes) * 50
-        
-        scores.append(max(0, temporal_score))
+            if len(numeric_df.columns) > 1:
+                temporal_score = 100
+                extreme_changes = 0
+                
+                for idx in numeric_df.index:
+                    series = numeric_df.loc[idx]
+                    
+                    if isinstance(series, pd.DataFrame):
+                        series = series.iloc[0]
+                    
+                    series = series.dropna()
+                    
+                    if len(series) > 1:
+                        pct_changes = series.pct_change().dropna()
+                        extreme_count = int((pct_changes.abs() > 2).sum())
+                        extreme_changes += extreme_count
+                
+                total_changes = len(numeric_df) * (len(numeric_df.columns) - 1)
+                if total_changes > 0:
+                    temporal_score -= (extreme_changes / total_changes) * 50
+                
+                scores.append(max(0, temporal_score))
         
         return sum(scores) / len(scores) if scores else 0
     
@@ -2381,77 +2381,79 @@ class FinancialAnalysisEngine(Component):
         ratios = self._calculate_ratios(df)
         
         if 'Liquidity' in ratios and 'Current Ratio' in ratios['Liquidity'].index:
-        current_ratios = ratios['Liquidity'].loc['Current Ratio'].dropna()
-        if len(current_ratios) > 0:
-        latest_cr = current_ratios.iloc[-1]
-        if latest_cr < 1:
-            insights.append(f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues")
-        elif latest_cr > 3:
-            insights.append(f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets")
-        
-        if len(current_ratios) > 1:
-            trend = 'improving' if current_ratios.iloc[-1] > current_ratios.iloc[0] else 'declining'
-            insights.append(f"📊 Current ratio is {trend} over the period")
+            current_ratios = ratios['Liquidity'].loc['Current Ratio'].dropna()
+            if len(current_ratios) > 0:
+                latest_cr = current_ratios.iloc[-1]
+                if latest_cr < 1:
+                    insights.append(f"⚠️ Low current ratio ({latest_cr:.2f}) indicates potential liquidity issues")
+                elif latest_cr > 3:
+                    insights.append(f"💡 High current ratio ({latest_cr:.2f}) suggests excess idle assets")
+                
+                if len(current_ratios) > 1:
+                    trend = 'improving' if current_ratios.iloc[-1] > current_ratios.iloc[0] else 'declining'
+                    insights.append(f"📊 Current ratio is {trend} over the period")
         
         if 'Profitability' in ratios and 'Net Profit Margin %' in ratios['Profitability'].index:
-        npm = ratios['Profitability'].loc['Net Profit Margin %'].dropna()
-        if len(npm) > 1:
-        trend = 'improving' if npm.iloc[-1] > npm.iloc[0] else 'declining'
-        insights.append(f"📊 Net profit margin is {trend} ({npm.iloc[0]:.1f}% → {npm.iloc[-1]:.1f}%)")
-        
-        if npm.iloc[-1] < 5:
-            insights.append(f"⚠️ Low profit margin may indicate competitive pressure or cost issues")
+            npm = ratios['Profitability'].loc['Net Profit Margin %'].dropna()
+            if len(npm) > 1:
+                trend = 'improving' if npm.iloc[-1] > npm.iloc[0] else 'declining'
+                insights.append(f"📊 Net profit margin is {trend} ({npm.iloc[0]:.1f}% → {npm.iloc[-1]:.1f}%)")
+            
+            if npm.iloc[-1] < 5:
+                insights.append(f"⚠️ Low profit margin may indicate competitive pressure or cost issues")
         
         if 'Leverage' in ratios and 'Debt to Equity' in ratios['Leverage'].index:
-        de_ratio = ratios['Leverage'].loc['Debt to Equity'].dropna()
-        if len(de_ratio) > 0:
-        latest_de = de_ratio.iloc[-1]
-        if latest_de > 2:
-            insights.append(f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage")
-        elif latest_de < 0.3:
-            insights.append(f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth")
+            de_ratio = ratios['Leverage'].loc['Debt to Equity'].dropna()
+            if len(de_ratio) > 0:
+                latest_de = de_ratio.iloc[-1]
+                if latest_de > 2:
+                    insights.append(f"⚠️ High debt-to-equity ratio ({latest_de:.2f}) indicates high leverage")
+                elif latest_de < 0.3:
+                    insights.append(f"💡 Low leverage ({latest_de:.2f}) - consider if debt could accelerate growth")
         
         if 'Efficiency' in ratios and 'Asset Turnover' in ratios['Efficiency'].index:
-        asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna()
-        if len(asset_turnover) > 0:
-        latest_at = asset_turnover.iloc[-1]
-        if latest_at < 0.5:
-            insights.append(f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets")
+            asset_turnover = ratios['Efficiency'].loc['Asset Turnover'].dropna()
+            if len(asset_turnover) > 0:
+                latest_at = asset_turnover.iloc[-1]
+                if latest_at < 0.5:
+                    insights.append(f"⚠️ Low asset turnover ({latest_at:.2f}) suggests underutilized assets")
         
         trends = self._analyze_trends(df)
         
         revenue_trends = [v for k, v in trends.items() if 'revenue' in k.lower()]
         if revenue_trends and revenue_trends[0].get('cagr') is not None:
-        cagr = revenue_trends[0]['cagr']
-        if cagr > 20:
-        insights.append(f"🚀 Strong revenue growth (CAGR: {cagr:.1f}%)")
-        elif cagr < 0:
-        insights.append(f"📉 Declining revenue (CAGR: {cagr:.1f}%)")
-        elif 0 < cagr < 5:
-        insights.append(f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies")
+            cagr = revenue_trends[0]['cagr']
+            if cagr > 20:
+                insights.append(f"🚀 Strong revenue growth (CAGR: {cagr:.1f}%)")
+            elif cagr < 0:
+                insights.append(f"📉 Declining revenue (CAGR: {cagr:.1f}%)")
+            elif 0 < cagr < 5:
+                insights.append(f"🐌 Slow revenue growth (CAGR: {cagr:.1f}%) - explore growth strategies")
         
         profit_trends = [v for k, v in trends.items() if 'net income' in k.lower() or 'profit' in k.lower()]
         if revenue_trends and profit_trends:
-        rev_cagr = revenue_trends[0].get('cagr', 0)
-        prof_cagr = profit_trends[0].get('cagr', 0)
-        if rev_cagr > 0 and prof_cagr < rev_cagr:
-        insights.append(f"⚠️ Profit growing slower than revenue - check cost management")
+            rev_cagr = revenue_trends[0].get('cagr', 0)
+            prof_cagr = profit_trends[0].get('cagr', 0)
+            if rev_cagr > 0 and prof_cagr < rev_cagr:
+                insights.append(f"⚠️ Profit growing slower than revenue - check cost management")
         
         quality_score = self._calculate_quality_score(df)
         if quality_score < 70:
-        insights.append(f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable")
+            insights.append(f"⚠️ Data quality score is low ({quality_score:.0f}%), results may be less reliable")
         
         anomalies = self._detect_anomalies(df)
         if anomalies['value_anomalies']:
-        insights.append(f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy")
+            insights.append(f"🔍 Detected {len(anomalies['value_anomalies'])} unusual values - review for accuracy")
         
         return insights
-    
+
+
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Callable
 import time
 import queue
 import threading
+
 
 @dataclass
 class APIRequest:
@@ -2491,7 +2493,7 @@ class RequestQueue:
                     return True
             
             self.pending[coalesce_key] = request
-            
+        
         try:
             self.queue.put((request.priority, request.id, request), timeout=timeout)
             return True
@@ -2511,8 +2513,10 @@ class RequestQueue:
         except queue.Empty:
             return None
 
+
 class EnhancedAPIClient:
-   """Enhanced API client with advanced features for Kaggle integration"""
+    """Enhanced API client with advanced features for Kaggle integration"""
+    
     def __init__(self, base_url: str, config: Configuration):
         self.base_url = base_url.rstrip('/')
         self.config = config
@@ -2627,7 +2631,7 @@ class EnhancedAPIClient:
                 api_request.callback({'error': str(e)})
     
     def _make_raw_request(self, method: str, endpoint: str, data: Optional[Dict] = None, 
-                     params: Optional[Dict] = None) -> Dict:
+                         params: Optional[Dict] = None) -> Dict:
         """Make raw HTTP request with circuit breaker"""
         def _request():
             url = f"{self.base_url}/{endpoint.lstrip('/')}"
@@ -2816,7 +2820,7 @@ class EnhancedAPIClient:
                 'circuit_breaker': self.circuit_breaker.get_state(),
                 'queue_size': self.request_queue.queue.qsize()
             }
-        
+    
     def get_stats(self) -> Dict[str, Any]:
         """Get detailed client statistics"""
         with self._lock:
@@ -2844,12 +2848,14 @@ class EnhancedAPIClient:
         if self._session:
             self._session.close()
 
---- 18. Enhanced AI Mapping System with Robust Kaggle Integration ---
+
+# --- 18. Enhanced AI Mapping System with Robust Kaggle Integration ---
 class ProgressTracker:
-   """Track progress of long-running operations"""
+    """Track progress of long-running operations"""
+    
     def __init__(self):
-    self.operations = {}
-    self._lock = threading.Lock()
+        self.operations = {}
+        self._lock = threading.Lock()
 
     def start_operation(self, operation_id: str, total_items: int, description: str = ""):
         """Start tracking an operation"""
@@ -2882,8 +2888,10 @@ class ProgressTracker:
         with self._lock:
             return self.operations.get(operation_id)
 
+
 class AIMapper(Component):
     """Enhanced AI-powered mapping with robust Kaggle GPU support"""
+    
     def __init__(self, config: Configuration):
         super().__init__(config)
         self.model = None
@@ -3172,7 +3180,7 @@ class AIMapper(Component):
                 elif not previous_state and self._kaggle_available:
                     self._logger.info("Kaggle API recovered")
                     SimpleState.set('kaggle_api_status', 'online')
-                
+        
         return self._kaggle_available
     
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
@@ -3564,13 +3572,15 @@ class AIMapper(Component):
             'detected_intents': detected_intents,
             'context': context,
             'method': 'local'
-    }
+        }
 
---- 19. Fuzzy Mapping Fallback ---
+
+# --- 19. Fuzzy Mapping Fallback ---
 class FuzzyMapper(Component):
     """Fuzzy string matching for metric mapping"""
+    
     def _do_initialize(self):
-    """Initialize fuzzy mapper"""
+        """Initialize fuzzy mapper"""
         pass
     
     def map_metrics(self, source_metrics: List[str], 
@@ -3629,9 +3639,11 @@ class FuzzyMapper(Component):
             'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
 
---- 20. Enhanced Penman-Nissim Analyzer ---
+
+# --- 20. Enhanced Penman-Nissim Analyzer ---
 class EnhancedPenmanNissimAnalyzer:
     """Enhanced Penman-Nissim analyzer with advanced features and robustness"""
+    
     def __init__(self, df: pd.DataFrame, mappings: Dict[str, str]):
         self.df = df
         self.mappings = mappings
@@ -3986,7 +3998,7 @@ class EnhancedPenmanNissimAnalyzer:
             if 'Operating Profit Margin (OPM) %' in ratios.index:
                 opm_series = ratios['Operating Profit Margin (OPM) %']
                 if len(opm_series) > 1:
-                    cv = opm_series.std() / opm_series.mean() if opm_series.mean() != 0 else np.nan
+                    cv = opm_series.std() / opm_series.mean() if omp_series.mean() != 0 else np.nan
                     ratios['OPM Stability (CV)'] = pd.Series(cv, index=ratios.index)
         
         except Exception as e:
@@ -4104,9 +4116,11 @@ class EnhancedPenmanNissimAnalyzer:
         
         return drivers.T
 
---- 21. Manual Mapping Interface ---
+
+# --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
     """Manual mapping interface for metric mapping"""
+    
     def __init__(self, df: pd.DataFrame):
         self.df = df
         self.source_metrics = [str(m) for m in df.index.tolist()]
@@ -4227,9 +4241,11 @@ class ManualMappingInterface:
         
         return mappings
 
---- 22. Machine Learning Forecasting Module ---
+
+# --- 22. Machine Learning Forecasting Module ---
 class MLForecaster:
     """Machine learning based financial forecasting"""
+    
     def __init__(self, config: Configuration):
         self.config = config
         self.logger = LoggerFactory.get_logger('MLForecaster')

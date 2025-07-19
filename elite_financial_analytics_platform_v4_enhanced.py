@@ -4432,7 +4432,7 @@ class MLForecaster:
         
         return intervals
 
---- 23. Natural Language Query Processor ---
+#--- 23. Natural Language Query Processor ---
 class NLQueryProcessor:
     """Process natural language queries about financial data"""
     def __init__(self, config: Configuration):
@@ -4765,7 +4765,7 @@ class CollaborationManager:
             
             return None
 
---- 25. Tutorial System ---
+#--- 25. Tutorial System ---
 class TutorialSystem:
    """Interactive tutorial system for new users"""
     def __init__(self):

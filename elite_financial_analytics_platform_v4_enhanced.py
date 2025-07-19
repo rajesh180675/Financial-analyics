@@ -4765,9 +4765,10 @@ class CollaborationManager:
             
             return None
 
-#--- 25. Tutorial System ---
+# --- 25. Tutorial System ---
 class TutorialSystem:
-   """Interactive tutorial system for new users"""
+    """Interactive tutorial system for new users"""
+    
     def __init__(self):
         self.steps = [
             {
@@ -4805,7 +4806,7 @@ class TutorialSystem:
                 'location': 'reports',
                 'action': 'show_export'
             }
-
+        ]
         self.completed_steps = set()
 
     def render(self):
@@ -4859,6 +4860,7 @@ class TutorialSystem:
         elif action == 'highlight_tabs':
             st.markdown("⬆️ Explore different analysis tabs above")
         # Add more actions as needed
+    
     def _complete_tutorial(self):
         """Mark tutorial as completed"""
         SimpleState.set('show_tutorial', False)
@@ -5003,7 +5005,8 @@ class ExportManager:
                 lines.append("\n")
     
         return "\n".join(lines)
-    
+
+
 # --- 27. UI Components Factory ---
 class UIComponentFactory:
     """Factory for creating UI components with consistent styling"""
@@ -5094,6 +5097,7 @@ class UIComponentFactory:
                 )
         else:
             render_func()
+
 
 # --- 28. Sample Data Generator ---
 class SampleDataGenerator:
@@ -5249,6 +5253,7 @@ class SampleDataGenerator:
         df = pd.DataFrame(data, index=list(data.keys()), columns=years)
         return df
 
+
 # --- 29. Error Recovery Mechanisms ---
 class ErrorRecoveryManager:
     """Manage error recovery and fallback strategies"""
@@ -5298,6 +5303,7 @@ class ErrorRecoveryManager:
         gc.collect()
 
         return True
+
 
 def safe_state_access(func):
     """Decorator to ensure safe session state access with comprehensive error handling"""
@@ -5396,6 +5402,7 @@ def safe_state_access(func):
         return None
     return wrapper
 
+
 def critical_method(func):
     """Decorator for critical methods that must not fail"""
     @functools.wraps(func)
@@ -5422,6 +5429,7 @@ def critical_method(func):
             
             return None
     return wrapper
+
 
 # --- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:

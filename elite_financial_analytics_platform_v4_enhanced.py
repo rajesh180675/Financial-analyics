@@ -5594,6 +5594,268 @@ class EnhancedPenmanNissimMapper:
             validation['suggestions'].append("Total Liabilities can be calculated from Total Assets - Total Equity")
         
         return validation
+
+# 1. First, add this class before your FinancialAnalyticsPlatform class:
+
+class EnhancedPenmanNissimValidator:
+    """Enhanced validator specifically for Penman-Nissim calculations"""
+    
+    def __init__(self):
+        self.required_relationships = {
+            'RNOA': ['Operating Income', 'Net Operating Assets'],
+            'FLEV': ['Net Financial Obligations', 'Common Equity'],
+            'NBC': ['Net Financial Expense', 'Net Financial Obligations'],
+            'ROE': ['Net Income', 'Common Equity']
+        }
+        
+        self.accounting_relationships = {
+            'total_assets': {
+                'equals': ['total_liabilities_and_equity'],
+                'sum_of': ['operating_assets', 'financial_assets']
+            },
+            'total_liabilities_and_equity': {
+                'sum_of': ['total_liabilities', 'total_equity']
+            },
+            'net_operating_assets': {
+                'equals': ['operating_assets', '-operating_liabilities']
+            },
+            'net_financial_obligations': {
+                'equals': ['financial_liabilities', '-financial_assets']
+            },
+            'operating_income': {
+                'equals': ['revenue', '-operating_expenses']
+            },
+            'net_income': {
+                'equals': ['operating_income', '-financial_expenses', '-tax_expense']
+            }
+        }
+        
+        self.essential_metrics = {
+            'Balance Sheet': [
+                'Total Assets',
+                'Total Liabilities',
+                'Total Equity',
+                'Operating Assets',
+                'Operating Liabilities',
+                'Financial Assets',
+                'Financial Liabilities'
+            ],
+            'Income Statement': [
+                'Revenue',
+                'Operating Income',
+                'Interest Expense',
+                'Tax Expense',
+                'Net Income'
+            ],
+            'Cash Flow': [
+                'Operating Cash Flow',
+                'Investing Cash Flow',
+                'Financing Cash Flow'
+            ]
+        }
+    
+    def validate_mapping_for_pn(self, mappings: Dict[str, str], data: pd.DataFrame) -> Dict[str, Any]:
+        """Validate mappings specifically for Penman-Nissim calculations"""
+        validation = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'suggestions': [],
+            'pn_metrics_validity': {},
+            'missing_essential': [],
+            'quality_score': 0
+        }
+        
+        # Check essential metrics
+        self._validate_essential_metrics(mappings, validation)
+        
+        # Check Penman-Nissim specific components
+        pn_components = self._validate_pn_components(mappings, data)
+        validation['pn_metrics_validity'].update(pn_components)
+        
+        # Validate accounting relationships
+        if data is not None:
+            accounting_validation = self._validate_accounting_relationships(mappings, data)
+            for key, value in accounting_validation.items():
+                if key in validation:
+                    validation[key].extend(value)
+                else:
+                    validation[key] = value
+        
+        # Calculate quality score
+        validation['quality_score'] = self._calculate_quality_score(validation)
+        
+        # Set overall validity
+        validation['is_valid'] = (
+            len(validation['errors']) == 0 and 
+            len(validation['missing_essential']) == 0 and
+            validation['quality_score'] >= 70
+        )
+        
+        return validation
+    
+    def _validate_essential_metrics(self, mappings: Dict[str, str], validation: Dict[str, Any]):
+        """Check if all essential metrics are mapped"""
+        mapped_targets = set(mappings.values())
+        
+        for statement, metrics in self.essential_metrics.items():
+            for metric in metrics:
+                if metric not in mapped_targets:
+                    validation['missing_essential'].append(metric)
+                    validation['suggestions'].append(f"Map {metric} from {statement}")
+    
+    def _validate_pn_components(self, mappings: Dict[str, str], data: pd.DataFrame) -> Dict[str, bool]:
+        """Validate core Penman-Nissim components"""
+        components = {}
+        
+        # RNOA Components
+        rnoa_valid = self._check_rnoa_components(mappings, data)
+        components['RNOA'] = rnoa_valid
+        
+        # FLEV Components
+        flev_valid = self._check_flev_components(mappings, data)
+        components['FLEV'] = flev_valid
+        
+        # NBC Components
+        nbc_valid = self._check_nbc_components(mappings, data)
+        components['NBC'] = nbc_valid
+        
+        return components
+    
+    def _check_rnoa_components(self, mappings: Dict[str, str], data: pd.DataFrame) -> bool:
+        """Check if RNOA can be calculated correctly"""
+        required_items = {
+            'Operating Income': False,
+            'Operating Assets': False,
+            'Operating Liabilities': False
+        }
+        
+        for source, target in mappings.items():
+            if target in required_items:
+                required_items[target] = True
+                
+                # Validate values if data is provided
+                if data is not None and target == 'Operating Income':
+                    if (data.loc[source] < 0).all():
+                        return False  # Operating Income shouldn't be negative all years
+        
+        return all(required_items.values())
+    
+    def _check_flev_components(self, mappings: Dict[str, str], data: pd.DataFrame) -> bool:
+        """Check if Financial Leverage can be calculated correctly"""
+        required_items = {
+            'Financial Assets': False,
+            'Financial Liabilities': False,
+            'Common Equity': False
+        }
+        
+        for source, target in mappings.items():
+            if target in required_items:
+                required_items[target] = True
+                
+                # Validate values if data is provided
+                if data is not None and target == 'Common Equity':
+                    if (data.loc[source] <= 0).any():
+                        return False  # Equity shouldn't be negative or zero
+        
+        return all(required_items.values())
+    
+    def _check_nbc_components(self, mappings: Dict[str, str], data: pd.DataFrame) -> bool:
+        """Check if Net Borrowing Cost can be calculated correctly"""
+        required_items = {
+            'Interest Expense': False,
+            'Interest Income': False,
+            'Financial Assets': False,
+            'Financial Liabilities': False
+        }
+        
+        for source, target in mappings.items():
+            if target in required_items:
+                required_items[target] = True
+        
+        # NBC can work with just Interest Expense and Financial Liabilities
+        return required_items['Interest Expense'] and required_items['Financial Liabilities']
+    
+    def _validate_accounting_relationships(self, mappings: Dict[str, str], data: pd.DataFrame) -> Dict[str, List[str]]:
+        """Validate fundamental accounting relationships"""
+        validation = {
+            'errors': [],
+            'warnings': []
+        }
+        
+        # Check Balance Sheet equation
+        if all(item in mappings.values() for item in ['Total Assets', 'Total Liabilities', 'Total Equity']):
+            try:
+                assets = data.loc[self._get_mapped_source(mappings, 'Total Assets')]
+                liabilities = data.loc[self._get_mapped_source(mappings, 'Total Liabilities')]
+                equity = data.loc[self._get_mapped_source(mappings, 'Total Equity')]
+                
+                if not np.allclose(assets, liabilities + equity, rtol=0.01):
+                    validation['warnings'].append(
+                        "Balance sheet equation (A = L + E) shows discrepancy"
+                    )
+            except Exception as e:
+                validation['errors'].append(f"Error checking balance sheet equation: {str(e)}")
+        
+        return validation
+    
+    def _get_mapped_source(self, mappings: Dict[str, str], target: str) -> str:
+        """Get source item for a target mapping"""
+        for source, t in mappings.items():
+            if t == target:
+                return source
+        return None
+    
+    def _calculate_quality_score(self, validation: Dict[str, Any]) -> float:
+        """Calculate overall quality score for the mapping"""
+        score = 100
+        
+        # Deduct for missing essential metrics
+        score -= len(validation['missing_essential']) * 10
+        
+        # Deduct for errors
+        score -= len(validation['errors']) * 15
+        
+        # Deduct for warnings
+        score -= len(validation['warnings']) * 5
+        
+        # Check PN metrics validity
+        pn_metrics = validation['pn_metrics_validity']
+        for metric, is_valid in pn_metrics.items():
+            if not is_valid:
+                score -= 10
+        
+        return max(0, min(100, score))
+    
+    def suggest_improvements(self, validation_result: Dict[str, Any]) -> List[str]:
+        """Suggest improvements based on validation results"""
+        suggestions = []
+        
+        if validation_result['missing_essential']:
+            suggestions.append(
+                "🔍 Missing essential metrics: " + 
+                ", ".join(validation_result['missing_essential'])
+            )
+        
+        if not validation_result['pn_metrics_validity'].get('RNOA', False):
+            suggestions.append(
+                "📊 RNOA calculation needs attention - check Operating Income and "
+                "Net Operating Assets mappings"
+            )
+        
+        if not validation_result['pn_metrics_validity'].get('FLEV', False):
+            suggestions.append(
+                "💰 Financial Leverage calculation needs review - verify Financial "
+                "Assets and Liabilities mappings"
+            )
+        
+        if validation_result['warnings']:
+            suggestions.append(
+                "⚠️ Address warnings to improve analysis quality: " +
+                ", ".join(validation_result['warnings'])
+            )
+        
+        return suggestions
         
 # --- 30. Main Application Class ---
 class FinancialAnalyticsPlatform:
@@ -8388,6 +8650,9 @@ class FinancialAnalyticsPlatform:
         """Render the enhanced Penman-Nissim tab."""
         st.header("🎯 Penman-Nissim Analysis (Enhanced)")
         
+        # Initialize validator
+        pn_validator = EnhancedPenmanNissimValidator()
+        
         # Check if mappings exist
         mappings = self.get_state('pn_mappings')
         if not mappings:
@@ -8395,14 +8660,70 @@ class FinancialAnalyticsPlatform:
             mappings = self._render_enhanced_penman_nissim_mapping(data)
             if not mappings:
                 return  # User hasn't completed mapping yet
-        else:
-            # Validate existing mappings
-            pn_mapper = EnhancedPenmanNissimMapper()
-            validation = pn_mapper.validate_mappings(mappings)
-            
-            if not validation['is_valid']:
-                st.warning("Current mappings are incomplete for Penman-Nissim analysis.")
-                if st.button("🔧 Reconfigure Mappings", key="pn_reconfig"):
+        
+        # Validate mappings with enhanced validator
+        validation_result = pn_validator.validate_mapping_for_pn(mappings, data)
+        
+        # Display validation status
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            quality_color = "green" if validation_result['quality_score'] >= 80 else "orange" if validation_result['quality_score'] >= 60 else "red"
+            st.metric(
+                "Mapping Quality", 
+                f"{validation_result['quality_score']:.0f}%",
+                delta=None,
+                help="Overall quality score of the mappings"
+            )
+        
+        with col2:
+            missing_count = len(validation_result['missing_essential'])
+            st.metric(
+                "Missing Essential", 
+                missing_count,
+                delta=None,
+                delta_color="inverse",
+                help="Number of missing essential metrics"
+            )
+        
+        with col3:
+            warnings_count = len(validation_result.get('warnings', []))
+            st.metric(
+                "Warnings", 
+                warnings_count,
+                delta=None,
+                delta_color="inverse",
+                help="Number of potential issues detected"
+            )
+        
+        with col4:
+            status = "✅ Valid" if validation_result['is_valid'] else "⚠️ Needs Review"
+            st.metric(
+                "Status",
+                status,
+                delta=None,
+                help="Overall validation status"
+            )
+        
+        # Show validation details if there are issues
+        if not validation_result['is_valid']:
+            with st.expander("⚠️ Validation Details", expanded=True):
+                if validation_result['missing_essential']:
+                    st.error("Missing Essential Metrics:")
+                    for metric in validation_result['missing_essential']:
+                        st.write(f"- {metric}")
+                
+                if validation_result.get('warnings', []):
+                    st.warning("Potential Issues:")
+                    for warning in validation_result['warnings']:
+                        st.write(f"- {warning}")
+                
+                suggestions = pn_validator.suggest_improvements(validation_result)
+                if suggestions:
+                    st.info("💡 Suggested Improvements:")
+                    for suggestion in suggestions:
+                        st.write(f"- {suggestion}")
+                
+                if st.button("🔧 Reconfigure Mappings", key="pn_reconfig_validation"):
                     self.set_state('pn_mappings', None)
                     st.rerun()
                 return
@@ -8417,33 +8738,10 @@ class FinancialAnalyticsPlatform:
             st.error(f"Analysis failed: {results['error']}")
             return
         
-        # Display validation results
-        if 'validation_results' in results:
-            validation = results['validation_results']
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Data Quality Score", f"{validation.get('data_quality_score', 0):.0f}%")
-            
-            with col2:
-                st.metric("Issues", len(validation.get('issues', [])))
-            
-            with col3:
-                st.metric("Warnings", len(validation.get('warnings', [])))
-            
-            if validation.get('issues') or validation.get('warnings'):
-                with st.expander("⚠️ Data Quality Details"):
-                    if validation.get('issues'):
-                        st.subheader("Issues")
-                        for issue in validation['issues']:
-                            st.error(issue)
-                    
-                    if validation.get('warnings'):
-                        st.subheader("Warnings")
-                        for warning in validation['warnings']:
-                            st.warning(warning)
+        # Add a quality score to the results based on validation
+        results['quality_score'] = validation_result['quality_score']
         
-        # Create tabs for different views
+        # Create tabs for different views with quality indicators
         tabs = st.tabs([
             "📊 Key Ratios",
             "📈 Trend Analysis", 
@@ -8459,9 +8757,16 @@ class FinancialAnalyticsPlatform:
             if 'ratios' in results and not results['ratios'].empty:
                 st.subheader("Penman-Nissim Key Ratios")
                 
+                # Add quality indicators for specific components
+                quality_indicators = {
+                    'RNOA': validation_result['pn_metrics_validity'].get('RNOA', False),
+                    'FLEV': validation_result['pn_metrics_validity'].get('FLEV', False),
+                    'NBC': validation_result['pn_metrics_validity'].get('NBC', False)
+                }
+                
                 ratios_df = results['ratios']
                 
-                # Display latest year metrics
+                # Display latest year metrics with quality indicators
                 if len(ratios_df.columns) > 0:
                     latest_year = ratios_df.columns[-1]
                     
@@ -8470,32 +8775,60 @@ class FinancialAnalyticsPlatform:
                     with col1:
                         if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
                             rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
-                            st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
+                            quality_icon = "✅" if quality_indicators['RNOA'] else "⚠️"
+                            st.metric(
+                                f"RNOA {quality_icon}", 
+                                f"{rnoa:.1f}%",
+                                help="Return on Net Operating Assets"
+                            )
                     
                     with col2:
                         if 'Financial Leverage (FLEV)' in ratios_df.index:
                             flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
-                            st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
+                            quality_icon = "✅" if quality_indicators['FLEV'] else "⚠️"
+                            st.metric(
+                                f"FLEV {quality_icon}", 
+                                f"{flev:.2f}",
+                                help="Financial Leverage"
+                            )
                     
                     with col3:
                         if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
                             nbc = ratios_df.loc['Net Borrowing Cost (NBC) %', latest_year]
-                            st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
+                            quality_icon = "✅" if quality_indicators['NBC'] else "⚠️"
+                            st.metric(
+                                f"NBC {quality_icon}", 
+                                f"{nbc:.1f}%",
+                                help="Net Borrowing Cost"
+                            )
                     
                     with col4:
                         if 'Spread %' in ratios_df.index:
                             spread = ratios_df.loc['Spread %', latest_year]
                             delta_color = "normal" if spread > 0 else "inverse"
-                            st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
+                            st.metric(
+                                "Spread", 
+                                f"{spread:.1f}%", 
+                                delta_color=delta_color,
+                                help="RNOA - NBC"
+                            )
                 
-                # Full ratios table
+                # Display full ratios table with quality indicators
+                st.markdown("### Detailed Ratios Analysis")
+                
+                # Add quality indicators to the index
+                ratios_df.index = [
+                    f"{idx} {'✅' if idx.startswith(('Return on Net Operating Assets', 'Financial Leverage', 'Net Borrowing Cost')) and quality_indicators.get(idx.split()[0], False) else '⚠️' if idx.startswith(('Return on Net Operating Assets', 'Financial Leverage', 'Net Borrowing Cost')) else ''}"
+                    for idx in ratios_df.index
+                ]
+                
                 st.dataframe(
                     ratios_df.style.format("{:.2f}", na_rep="-")
                     .background_gradient(cmap='RdYlGn', axis=1),
                     use_container_width=True
                 )
                 
-                # Generate insights
+                # Generate insights with quality consideration
                 insights = self._generate_pn_insights_enhanced(results)
                 if insights:
                     st.subheader("💡 Key Insights")
@@ -8506,13 +8839,24 @@ class FinancialAnalyticsPlatform:
                             st.warning(insight)
                         else:
                             st.info(insight)
+                    
+                    # Add quality disclaimer if needed
+                    if validation_result['quality_score'] < 80:
+                        st.warning(
+                            "⚠️ Note: Some insights may be affected by data quality issues. "
+                            "Consider addressing the suggestions above for more reliable analysis."
+                        )
             else:
                 st.warning("No ratio data available")
-        
+
+        # Tab 1 - Trend Analysis
         with tabs[1]:
-            # Trend Analysis Tab
             if 'ratios' in results and not results['ratios'].empty:
                 st.subheader("Trend Analysis")
+                
+                # Add quality indicator for trend analysis
+                if validation_result['quality_score'] < 80:
+                    st.info("⚠️ Note: Trend analysis reliability may be affected by data quality")
                 
                 ratios_df = results['ratios']
                 
@@ -8574,17 +8918,21 @@ class FinancialAnalyticsPlatform:
                                 
                                 st.plotly_chart(fig, use_container_width=True)
         
+        # Tab 2 - Comparison
         with tabs[2]:
-            # Comparison Tab
             if 'ratios' in results and not results['ratios'].empty:
                 st.subheader("Value Driver Comparison")
+                
+                # Add quality indicators for specific components
+                if not validation_result['pn_metrics_validity'].get('RNOA', False):
+                    st.warning("⚠️ RNOA calculation quality may be affected")
                 
                 ratios_df = results['ratios']
                 
                 # RNOA decomposition comparison
                 if all(metric in ratios_df.index for metric in ['Return on Net Operating Assets (RNOA) %', 
-                                                              'Operating Profit Margin (OPM) %',
-                                                              'Net Operating Asset Turnover (NOAT)']):
+                                                                'Operating Profit Margin (OPM) %',
+                                                                'Net Operating Asset Turnover (NOAT)']):
                     
                     years = ratios_df.columns[-min(3, len(ratios_df.columns)):]
                     
@@ -8643,9 +8991,14 @@ class FinancialAnalyticsPlatform:
                         
                         st.plotly_chart(fig2, use_container_width=True)
         
+        # Tab 3 - Reformulated Statements
         with tabs[3]:
-            # Reformulated Statements Tab
             st.subheader("Reformulated Financial Statements")
+            
+            # Add quality indicator for reformulation
+            if 'reformulation_quality' in validation_result:
+                quality_score = validation_result['reformulation_quality']
+                st.metric("Reformulation Quality", f"{quality_score}%")
             
             col1, col2 = st.columns(2)
             
@@ -8667,10 +9020,14 @@ class FinancialAnalyticsPlatform:
                         use_container_width=True
                     )
         
+        # Tab 4 - Cash Flow Analysis
         with tabs[4]:
-            # Cash Flow Analysis Tab
             if 'free_cash_flow' in results:
                 st.subheader("Free Cash Flow Analysis")
+                
+                # Add quality indicator for cash flow analysis
+                if not all(item in mappings.values() for item in ['Operating Cash Flow', 'Capital Expenditure']):
+                    st.warning("⚠️ Some cash flow components may be missing")
                 
                 fcf_df = results['free_cash_flow']
                 
@@ -8739,14 +9096,24 @@ class FinancialAnalyticsPlatform:
                     
                     st.plotly_chart(fig, use_container_width=True)
         
+        # Tab 5 - Value Drivers
         with tabs[5]:
-            # Value Drivers Tab
             if 'value_drivers' in results:
                 st.subheader("Value Drivers Analysis")
                 
+                # Add quality indicators for value drivers
+                drivers_quality = validation_result.get('value_drivers_quality', {})
+                if drivers_quality:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Growth Metrics Quality", 
+                                 f"{drivers_quality.get('growth', 0)}%")
+                    with col2:
+                        st.metric("Efficiency Metrics Quality", 
+                                 f"{drivers_quality.get('efficiency', 0)}%")
+                
                 drivers_df = results['value_drivers']
                 
-                # Revenue growth analysis
                 # Revenue growth analysis
                 if 'Revenue Growth %' in drivers_df.index:
                     fig = go.Figure()
@@ -8785,11 +9152,15 @@ class FinancialAnalyticsPlatform:
                     use_container_width=True
                 )
         
+        # Tab 6 - Time Series
         with tabs[6]:
-            # Time Series Analysis Tab
             st.subheader("Time Series Analysis")
             
             if 'ratios' in results and not results['ratios'].empty:
+                # Add quality indicator for time series
+                if len(data.columns) < 5:
+                    st.warning("⚠️ Limited time series data available (less than 5 years)")
+                
                 # Allow selection of multiple metrics for comparison
                 available_metrics = results['ratios'].index.tolist()
                 
@@ -8839,6 +9210,7 @@ class FinancialAnalyticsPlatform:
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
+                
 
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
         """Enhanced mapping interface specifically for Penman-Nissim"""

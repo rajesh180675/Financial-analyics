@@ -2240,17 +2240,17 @@ class FinancialAnalysisEngine(Component):
         return ratios
         
     def _get_metric_value(self, df: pd.DataFrame, metrics: Dict, metric_type: str) -> Optional[pd.Series]:
-            """Get metric value from dataframe with fallback"""
-            if metric_type in metrics and metrics[metric_type]:
-                best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
-                metric_name = best_match['name']
-                
-                if metric_name in df.index:
-                    result = df.loc[metric_name]
-                    if isinstance(result, pd.DataFrame):
-                        self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
-                        result = result.iloc[0]
-                    return result
+        """Get metric value from dataframe with fallback"""
+        if metric_type in metrics and metrics[metric_type]:
+            best_match = max(metrics[metric_type], key=lambda x: x['confidence'])
+            metric_name = best_match['name']
+            
+            if metric_name in df.index:
+                result = df.loc[metric_name]
+                if isinstance(result, pd.DataFrame):
+                    self._logger.warning(f"Multiple rows found for {metric_name}, taking first")
+                    result = result.iloc[0]
+                return result
         
         return None
 

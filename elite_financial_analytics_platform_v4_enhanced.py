@@ -3752,7 +3752,7 @@ class EnhancedPenmanNissimAnalyzer:
         """Calculate all Penman-Nissim metrics - using fallback due to core issues"""
         return self._fallback_calculate_all()
     
-   def _fallback_calculate_all(self):
+    def _fallback_calculate_all(self):
         """Fallback implementation of Penman-Nissim calculations"""
         try:
             # BUG FIX: The original code renamed the dataframe here, which broke the
@@ -3762,25 +3762,25 @@ class EnhancedPenmanNissimAnalyzer:
             # and self.mappings (the mapping dictionary) to find the correct series.
             
             results = {
-                'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(self.df),
-                'reformulated_income_statement': self._reformulate_income_statement_enhanced(self.df),
-                'ratios': self._calculate_ratios_enhanced(self.df),
-                'free_cash_flow': self._calculate_free_cash_flow_enhanced(self.df),
-                'value_drivers': self._calculate_value_drivers_enhanced(self.df),
-                'validation_results': self.validation_results,
-                'calculation_metadata': self.calculation_metadata
+            'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(self.df),
+            'reformulated_income_statement': self._reformulate_income_statement_enhanced(self.df),
+            'ratios': self._calculate_ratios_enhanced(self.df),
+            'free_cash_flow': self._calculate_free_cash_flow_enhanced(self.df),
+            'value_drivers': self._calculate_value_drivers_enhanced(self.df),
+            'validation_results': self.validation_results,
+            'calculation_metadata': self.calculation_metadata
             }
             
             return results
-            
+        
         except Exception as e:
             self.logger.error(f"Error in fallback calculations: {e}", exc_info=True)
             return {
-                'error': str(e),
-                'validation_results': self.validation_results,
-                'calculation_metadata': self.calculation_metadata
+            'error': str(e),
+            'validation_results': self.validation_results,
+            'calculation_metadata': self.calculation_metadata
             }
-    
+        
     def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced balance sheet reformulation with robust calculations"""
         reformulated = pd.DataFrame(index=self.df.columns)

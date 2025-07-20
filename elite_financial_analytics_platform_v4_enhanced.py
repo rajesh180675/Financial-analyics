@@ -10493,7 +10493,7 @@ class FinancialAnalyticsPlatform:
             "Select Industry",
             list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
             index=0,
-            key="industry_select_widget"  # This is the corrected line
+            #key="industry_select_widget" 
             )
     
         with col2:

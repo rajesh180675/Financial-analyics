@@ -9732,19 +9732,71 @@ class FinancialAnalyticsPlatform:
         # Template Selection UI
         st.markdown("### 📋 Mapping Templates")
         
-        col1, col2, col3 = st.columns([2, 1, 1])
+        # --- BUG FIX STARTS HERE: Corrected state management for template selection ---
         
+        templates = template_manager.get_all_templates()
+        
+        # Add quick templates to the main list for a simpler UI
+        vst_template_name = "VST Industries (Quick Template)"
+        template_options = ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name] + list(templates.keys())
+
+        # Use session state to preserve the dropdown selection across reruns
+        if 'pn_active_template' not in st.session_state:
+            st.session_state.pn_active_template = "🆕 Create New Mapping"
+
+        try:
+            default_index = template_options.index(st.session_state.pn_active_template)
+        except ValueError:
+            default_index = 0 # Default to "New Mapping" if not found
+
+        col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            # Get available templates
-            templates = template_manager.get_all_templates()
-            template_options = ["🆕 Create New Mapping"] + ["🤖 Auto-Map (Default)"] + list(templates.keys())
-            
             selected_template = st.selectbox(
                 "Select Mapping Template",
                 template_options,
-                key="pn_template_select",
+                index=default_index,
+                key="pn_template_selector", # Use a static key
                 help="Choose a saved template or create a new mapping"
             )
+
+        # Check if the user has changed the selection
+        if selected_template != st.session_state.pn_active_template:
+            st.session_state.pn_active_template = selected_template
+            
+            # This is the new logic: Explicitly load the template when the dropdown changes
+            if selected_template == "🆕 Create New Mapping":
+                st.session_state.temp_pn_mappings = {}
+            elif selected_template == "🤖 Auto-Map (Default)":
+                mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(source_metrics, pn_mapper.template)
+                st.session_state.temp_pn_mappings = mappings
+            elif selected_template == vst_template_name:
+                 vst_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets', 'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                    'BalanceSheet::Total Current Assets': 'Current Assets', 'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables', 'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment', 'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Total Equity': 'Total Equity', 'BalanceSheet::Equity': 'Total Equity',
+                    'BalanceSheet::Share Capital': 'Share Capital', 'BalanceSheet::Other Equity': 'Retained Earnings',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities', 'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt', 'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt', 'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue', 'ProfitLoss::Revenue From Operations': 'Revenue',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax', 'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Current Tax': 'Tax Expense', 'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Profit After Tax': 'Net Income', 'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Finance Cost': 'Interest Expense', 'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                    'ProfitLoss::Other Expenses': 'Operating Expenses', 'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold', 'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow', 'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure', 'CashFlow::Capital Expenditure': 'Capital Expenditure'
+                 }
+                 applied_mappings = {source: target for source, target in vst_mappings.items() if source in source_metrics}
+                 st.session_state.temp_pn_mappings = applied_mappings
+            else:
+                loaded_mappings = template_manager.load_template(selected_template)
+                st.session_state.temp_pn_mappings = {k: v for k, v in loaded_mappings.items() if k in source_metrics}
+
+            st.rerun() # Rerun to ensure UI updates with the newly loaded template
         
         with col2:
             if st.button("💾 Save Current", key="save_mapping_template", 

@@ -4392,11 +4392,8 @@ class EnhancedPenmanNissimAnalyzer:
             
         return drivers.T
     
-   def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """
-        Safely get a series with fallback options and robust handling of duplicate indices.
-        THIS IS THE FINAL BUG FIX. It ensures the function ALWAYS returns a Series, not a DataFrame.
-        """
+    def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
+       
         source_metric = self._find_source_metric(target_metric)
         
         if source_metric and source_metric in df.index:

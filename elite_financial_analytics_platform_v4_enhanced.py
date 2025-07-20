@@ -4492,11 +4492,10 @@ class EnhancedPenmanNissimAnalyzer:
             
         return drivers.T
     
-   def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
+    def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
         """Safely get a series with comprehensive fallback options"""
         # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
-        
         if source_metric and source_metric in df.index:
             series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
             self.logger.info(f"Found '{target_metric}' mapped to '{source_metric}'")

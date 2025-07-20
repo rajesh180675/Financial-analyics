@@ -3725,7 +3725,7 @@ class EnhancedPenmanNissimAnalyzer:
          for source, target in self.mappings.items():
              if target == target_metric:
                 return source
-        return None
+         return None
 
     
     def _get_metric_series(self, target_metric: str) -> Optional[pd.Series]:

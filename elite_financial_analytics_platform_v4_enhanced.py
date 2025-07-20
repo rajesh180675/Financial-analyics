@@ -3720,12 +3720,12 @@ class EnhancedPenmanNissimAnalyzer:
         
         self.validation_results = validation
     
-     def _find_source_metric(self, target_metric: str) -> Optional[str]:
-         """Find source metric that maps to target"""
-         for source, target in self.mappings.items():
-             if target == target_metric:
+    def _find_source_metric(self, target_metric: str) -> Optional[str]:
+        """Find source metric that maps to target"""
+        for source, target in self.mappings.items():
+            if target == target_metric:
                 return source
-         return None
+        return None
 
     
     def _get_metric_series(self, target_metric: str) -> Optional[pd.Series]:

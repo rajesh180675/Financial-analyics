@@ -3946,7 +3946,7 @@ class EnhancedPenmanNissimAnalyzer:
             return self._reformulate_balance_sheet_simple(df)
         
         self.calculation_metadata['balance_sheet'] = metadata
-        return reformulated
+        return reformulated.T
     
     def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced income statement reformulation"""
@@ -4038,7 +4038,7 @@ class EnhancedPenmanNissimAnalyzer:
             return self._reformulate_income_statement_simple(df)
         
         self.calculation_metadata['income_statement'] = metadata
-        return reformulated
+        return reformulated.T
     
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced ratio calculation with multiple methods and validation"""

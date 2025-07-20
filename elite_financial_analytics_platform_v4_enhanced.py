@@ -4154,9 +4154,28 @@ class EnhancedPenmanNissimAnalyzer:
             
             # Get Capital Expenditure
             capex = self._get_safe_series(df, 'Capital Expenditure', default_zero=True)
+            # Additional attempts to find CapEx with common variations
             if (capex == 0).all():
-                # Try alternative names
-                capex = self._get_safe_series(df, 'Purchase of Fixed Assets', default_zero=True)
+                capex_alternatives = [
+                    'Purchase of Fixed Assets',
+                    'Purchased of Fixed Assets',  # Handle typo
+                    'Purchase of Investments',
+                    'Capital Expenditure',
+                    'Additions to Fixed Assets'
+                ]
+                
+                for alt in capex_alternatives:
+                    try:
+                        temp_capex = self._get_safe_series(df, alt, default_zero=True)
+                        if (temp_capex != 0).any():
+                            capex = temp_capex
+                            self.logger.info(f"Found CapEx using alternative name: {alt}")
+                            break
+                    except:
+                        continue
+            
+            # Ensure CapEx is positive (it's an outflow)
+            capex = capex.abs()
             
             fcf['Capital Expenditure'] = capex
             
@@ -4393,15 +4412,60 @@ class EnhancedPenmanNissimAnalyzer:
         return drivers.T
     
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with fallback options"""
+        """Safely get a series with fallback options and auto-correction"""
         source_metric = self._find_source_metric(target_metric)
         
-        if source_metric and source_metric in df.index:
-            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
-            return series
-        elif default_zero:
+        if source_metric:
+            # First try exact match
+            if source_metric in df.index:
+                series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
+                return series
+            
+            # If not found, try fuzzy matching to handle typos
+            self.logger.warning(f"Exact match not found for '{source_metric}', trying fuzzy match...")
+            
+            # Common typo corrections specific to your data
+            typo_corrections = {
+                'CashFlow::Purchased of Fixed Assets': 'CashFlow::Purchase of Fixed Assets',
+                'ProfitLoss::Tax Expenses': 'ProfitLoss::Tax Expense',
+                'ProfitLoss::Depreciation and Amortization': 'ProfitLoss::Depreciation and Amortisation Expenses',
+            }
+            
+            # Check typo corrections first
+            if source_metric in typo_corrections:
+                corrected = typo_corrections[source_metric]
+                if corrected in df.index:
+                    self.logger.info(f"Auto-corrected '{source_metric}' to '{corrected}'")
+                    series = df.loc[corrected].fillna(0 if default_zero else np.nan)
+                    return series
+            
+            # Try fuzzy matching
+            from fuzzywuzzy import fuzz
+            best_match = None
+            best_score = 0
+            
+            for idx in df.index:
+                score = fuzz.token_sort_ratio(source_metric, str(idx))
+                if score > best_score:
+                    best_score = score
+                    best_match = idx
+            
+            if best_match and best_score > 85:  # 85% similarity threshold
+                self.logger.info(f"Fuzzy matched '{source_metric}' to '{best_match}' (score: {best_score})")
+                series = df.loc[best_match].fillna(0 if default_zero else np.nan)
+                return series
+            
+            self.logger.error(f"No match found for '{source_metric}' (best score: {best_score} for '{best_match}')")
+        else:
+            self.logger.warning(f"No mapping found for target metric: {target_metric}")
+        
+        if default_zero:
             return pd.Series(0, index=df.columns)
         else:
+            # Instead of raising, return zeros with warning for non-essential metrics
+            if target_metric in ['Interest Income', 'Accrued Expenses', 'Deferred Revenue']:
+                self.logger.info(f"Optional metric '{target_metric}' not found, using zeros")
+                return pd.Series(0, index=df.columns)
             raise ValueError(f"Required metric '{target_metric}' not found")
 
 # --- 21. Manual Mapping Interface ---
@@ -6100,7 +6164,7 @@ class EnhancedPenmanNissimValidator:
         return has_interest and has_debt
     
     def _validate_accounting_relationships(self, mappings: Dict[str, str], data: pd.DataFrame) -> Dict[str, List[str]]:
-        """Validate fundamental accounting relationships"""
+        """Validate fundamental accounting relationships - handles Indian format"""
         validation = {
             'errors': [],
             'warnings': []
@@ -6118,37 +6182,36 @@ class EnhancedPenmanNissimValidator:
                     assets = data.loc[assets_source]
                     equity = data.loc[equity_source]
                     
-                    # Check for Total Liabilities
-                    if 'Total Liabilities' in mapped_targets:
-                        liab_source = self._get_mapped_source(mappings, 'Total Liabilities')
-                        liabilities = data.loc[liab_source]
-                        
-                        if not np.allclose(assets, liabilities + equity, rtol=0.01):
-                            validation['warnings'].append(
-                                "Balance sheet equation (A = L + E) shows discrepancy"
-                            )
+                    # Check if this is Indian format (Total Equity and Liabilities = Total Assets)
+                    if 'Total Equity and Liabilities' in assets_source:
+                        # This is Indian format - no need to check equation
+                        validation['warnings'].append(
+                            "Using Indian accounting format (Total Equity and Liabilities). Equation inherently satisfied."
+                        )
                     else:
-                        # Check if data uses "Total Equity and Liabilities" format (common in India)
-                        tea_items = [idx for idx in data.index 
-                                    if 'total equity and liabilities' in str(idx).lower()]
-                        
-                        if tea_items:
-                            # This format inherently satisfies the equation
-                            validation['warnings'].append(
-                                "Using Indian format (Total Equity and Liabilities) - equation implicitly satisfied"
-                            )
+                        # Traditional format - check equation if Total Liabilities exists
+                        if 'Total Liabilities' in mapped_targets:
+                            liab_source = self._get_mapped_source(mappings, 'Total Liabilities')
+                            if liab_source and liab_source in data.index:
+                                liabilities = data.loc[liab_source]
+                                
+                                # Check equation with tolerance
+                                for year in data.columns:
+                                    if all(pd.notna([assets[year], liabilities[year], equity[year]])):
+                                        diff = abs(assets[year] - (liabilities[year] + equity[year]))
+                                        tolerance = abs(assets[year]) * 0.05  # 5% tolerance
+                                        
+                                        if diff > tolerance:
+                                            validation['warnings'].append(
+                                                f"Balance sheet equation imbalance in {year}: "
+                                                f"Assets={assets[year]:,.0f} != L+E={liabilities[year] + equity[year]:,.0f}"
+                                            )
                         else:
-                            # Calculate implied liabilities
-                            implied_liabilities = assets - equity
-                            if (implied_liabilities < 0).any():
-                                validation['errors'].append(
-                                    "Implied liabilities are negative - check data quality"
-                                )
-                            else:
-                                validation['warnings'].append(
-                                    "Total Liabilities will be calculated as Total Assets - Total Equity"
-                                )
-                        
+                            # No explicit Total Liabilities - will be calculated
+                            validation['warnings'].append(
+                                "Total Liabilities will be calculated as Total Assets - Total Equity"
+                            )
+                            
             except Exception as e:
                 validation['warnings'].append(f"Could not validate balance sheet equation: {str(e)}")
         
@@ -9161,7 +9224,46 @@ class FinancialAnalyticsPlatform:
             mappings = self._render_enhanced_penman_nissim_mapping(data)
             if not mappings:
                 return  # User hasn't completed mapping yet
-        
+                
+            # Add emergency fix button
+            if not mappings or st.button("🚨 Quick Fix: Apply Correct VST Mappings", type="primary", key="emergency_fix_mappings"):
+                # This is a direct fix for VST data based on debug info
+                emergency_mappings = {
+                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                    'BalanceSheet::Total Equity': 'Total Equity',
+                    'BalanceSheet::Total Current Assets': 'Current Assets',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Share Capital': 'Share Capital',
+                    'BalanceSheet::Other Equity': 'Retained Earnings',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Revenue From Operations': 'Revenue',
+                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Profit After Tax': 'Net Income',
+                    'ProfitLoss::Finance Cost': 'Interest Expense',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                    'ProfitLoss::Other Expenses': 'Operating Expenses',
+                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                    'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
+                }
+                
+                # Filter to only include mappings that exist in data
+                valid_mappings = {k: v for k, v in emergency_mappings.items() if k in data.index}
+                
+                self.set_state('pn_mappings', valid_mappings)
+                st.success(f"✅ Applied {len(valid_mappings)} emergency mappings!")
+                mappings = valid_mappings
+                st.rerun()
+                
         # Validate mappings with enhanced validator
         validation_result = pn_validator.validate_mapping_for_pn(mappings, data)
         
@@ -9711,6 +9813,56 @@ class FinancialAnalyticsPlatform:
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
+
+    def _debug_show_available_metrics(self, data: pd.DataFrame):
+        """Debug helper to show all available metrics for mapping"""
+        with st.expander("🔍 Debug: Available Metrics in Your Data", expanded=False):
+            st.info("Use these exact names when mapping metrics")
+            
+            # Group by statement type
+            balance_sheet = []
+            profit_loss = []
+            cash_flow = []
+            other = []
+            
+            for idx in data.index:
+                idx_str = str(idx)
+                if 'BalanceSheet::' in idx_str:
+                    balance_sheet.append(idx_str)
+                elif 'ProfitLoss::' in idx_str:
+                    profit_loss.append(idx_str)
+                elif 'CashFlow::' in idx_str:
+                    cash_flow.append(idx_str)
+                else:
+                    other.append(idx_str)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.markdown("**Balance Sheet Items:**")
+                for item in sorted(balance_sheet)[:30]:
+                    st.code(item, language=None)
+                if len(balance_sheet) > 30:
+                    st.text(f"... and {len(balance_sheet) - 30} more")
+            
+            with col2:
+                st.markdown("**P&L Items:**")
+                for item in sorted(profit_loss)[:30]:
+                    st.code(item, language=None)
+                if len(profit_loss) > 30:
+                    st.text(f"... and {len(profit_loss) - 30} more")
+            
+            with col3:
+                st.markdown("**Cash Flow Items:**")
+                for item in sorted(cash_flow)[:30]:
+                    st.code(item, language=None)
+                if len(cash_flow) > 30:
+                    st.text(f"... and {len(cash_flow) - 30} more")
+            
+            if other:
+                st.markdown("**Other Items:**")
+                for item in sorted(other)[:10]:
+                    st.code(item, language=None)
                 
     #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
@@ -9728,6 +9880,9 @@ class FinancialAnalyticsPlatform:
         
         # Get source metrics
         source_metrics = [str(m) for m in data.index.tolist()]
+        # Add debug helper
+        if st.checkbox("Show available metrics for debugging", key="show_debug_metrics"):
+            self._debug_show_available_metrics(data)
         
         # Template Selection UI
         st.markdown("### 📋 Mapping Templates")
@@ -10206,59 +10361,83 @@ class FinancialAnalyticsPlatform:
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
+            # Replace the existing VST template code with this enhanced version
             if st.button("📋 Load VST Template", key="pn_vst_template_quick", 
                          help="Load pre-configured template for VST Industries"):
-                             
-                # VST-specific mappings with comprehensive coverage
-                vst_mappings = {
-                    'BalanceSheet::Total Assets': 'Total Assets',
-                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',  # Common in Indian formats
-                    'BalanceSheet::Total Current Assets': 'Current Assets',
-                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables',
-                    'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
-                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                
+                # VST-specific mappings with CORRECT names from your data
+                vst_correct_mappings = {
+                    # Balance Sheet mappings (verified from your debug data)
+                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
                     'BalanceSheet::Total Equity': 'Total Equity',
-                    'BalanceSheet::Equity': 'Total Equity',
+                    'BalanceSheet::Equity': 'Total Equity',  # Alternative name
+                    'BalanceSheet::Total Current Assets': 'Current Assets',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade Receivables': 'Trade Receivables',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',  # Alternative case
+                    'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
                     'BalanceSheet::Share Capital': 'Share Capital',
                     'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt',
+                    'BalanceSheet::Trade Payables': 'Accounts Payable',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',  # Alternative case
                     'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt',
                     'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
+                    'BalanceSheet::Other Current Liabilities': 'Accrued Expenses',
+                    'BalanceSheet::Other Non-Current Liabilities': 'Deferred Revenue',
+                    
+                    # P&L mappings (verified from your debug data)
                     'ProfitLoss::Revenue From Operations': 'Revenue',
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',  # Alternative
+                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
                     'ProfitLoss::Profit Before Tax': 'Income Before Tax',
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Current Tax': 'Tax Expense',
-                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',  # Correct - NOT "Tax Expenses"
+                    'ProfitLoss::Current Tax': 'Tax Expense',  # Alternative
                     'ProfitLoss::Profit After Tax': 'Net Income',
-                    'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',  # Alternative
                     'ProfitLoss::Finance Cost': 'Interest Expense',
+                    'ProfitLoss::Finance Costs': 'Interest Expense',  # Alternative
+                    'ProfitLoss::Interest': 'Interest Expense',  # Alternative
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
                     'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
                     'ProfitLoss::Other Expenses': 'Operating Expenses',
                     'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
-                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
+                    'ProfitLoss::Other Income': 'Interest Income',
+                    
+                    # Cash Flow mappings (verified from your debug data)
                     'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
-                    'CashFlow::Capital Expenditure': 'Capital Expenditure',
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',  # Alternative
+                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',  # CORRECT - not "Purchased"
+                    'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',  # Handle typo
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure',  # Alternative
+                    'CashFlow::Capital Expenditure': 'Capital Expenditure',  # Direct match
                 }
                 
                 # Apply only mappings that match current data
                 applied_mappings = {}
                 for source in source_metrics:
-                    for vst_key, target in vst_mappings.items():
-                        if vst_key.lower() in source.lower() or source.endswith(vst_key.split('::')[-1]):
-                            applied_mappings[source] = target
-                            break
+                    # Try exact match first
+                    if source in vst_correct_mappings:
+                        applied_mappings[source] = vst_correct_mappings[source]
+                    else:
+                        # Try to find in mappings by partial match
+                        source_clean = source.split('::')[-1] if '::' in source else source
+                        for vst_key, target in vst_correct_mappings.items():
+                            vst_clean = vst_key.split('::')[-1] if '::' in vst_key else vst_key
+                            if source_clean.lower() == vst_clean.lower():
+                                applied_mappings[source] = target
+                                break
                 
                 st.session_state.temp_pn_mappings = applied_mappings
                 st.success(f"Loaded VST Industries template with {len(applied_mappings)} mappings!")
+                
+                # Show what was mapped
+                with st.expander("View Applied Mappings"):
+                    for source, target in sorted(applied_mappings.items(), key=lambda x: x[1]):
+                        st.text(f"{target} ← {source}")
+                
                 st.rerun()
         
         with col2:

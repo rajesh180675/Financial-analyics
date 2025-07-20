@@ -9219,53 +9219,71 @@ class FinancialAnalyticsPlatform:
         
         # Check if mappings exist
         mappings = self.get_state('pn_mappings')
+        
+        # Add emergency fix button BEFORE the mapping interface
+        if not mappings and st.button("🚨 Quick Fix: Apply Correct VST Mappings", type="primary", key="emergency_fix_mappings"):
+            # This is a direct fix for VST data based on debug info
+            emergency_mappings = {
+                'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                'BalanceSheet::Total Equity': 'Total Equity',
+                'BalanceSheet::Equity': 'Total Equity',  # Alternative
+                'BalanceSheet::Total Current Assets': 'Current Assets',
+                'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                'BalanceSheet::Trade receivables': 'Trade Receivables',
+                'BalanceSheet::Trade Receivables': 'Trade Receivables',  # Alternative case
+                'BalanceSheet::Inventories': 'Inventory',
+                'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                'BalanceSheet::Share Capital': 'Share Capital',
+                'BalanceSheet::Other Equity': 'Retained Earnings',
+                'BalanceSheet::Trade payables': 'Accounts Payable',
+                'BalanceSheet::Trade Payables': 'Accounts Payable',  # Alternative case
+                'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                'ProfitLoss::Revenue From Operations': 'Revenue',
+                'ProfitLoss::Revenue From Operations(Net)': 'Revenue',  # Alternative
+                'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
+                'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                'ProfitLoss::Tax Expense': 'Tax Expense',
+                'ProfitLoss::Current Tax': 'Tax Expense',  # Alternative
+                'ProfitLoss::Profit After Tax': 'Net Income',
+                'ProfitLoss::Profit/Loss For The Period': 'Net Income',  # Alternative
+                'ProfitLoss::Finance Cost': 'Interest Expense',
+                'ProfitLoss::Finance Costs': 'Interest Expense',  # Alternative
+                'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                'ProfitLoss::Other Expenses': 'Operating Expenses',
+                'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                'ProfitLoss::Other Income': 'Interest Income',
+                'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
+                'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',  # Alternative
+                'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
+                'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',  # Handle typo
+                'CashFlow::Purchase of Investments': 'Capital Expenditure',  # Alternative
+            }
+            
+            # Filter to only include mappings that exist in data
+            valid_mappings = {k: v for k, v in emergency_mappings.items() if k in data.index}
+            
+            if valid_mappings:
+                self.set_state('pn_mappings', valid_mappings)
+                st.success(f"✅ Applied {len(valid_mappings)} emergency mappings!")
+                mappings = valid_mappings
+                st.rerun()
+            else:
+                st.error("❌ No matching metrics found in your data. Please use manual mapping.")
+        
+        # If still no mappings, show the mapping interface
         if not mappings:
             # Use the enhanced mapping interface
             mappings = self._render_enhanced_penman_nissim_mapping(data)
             if not mappings:
                 return  # User hasn't completed mapping yet
-                
-            # Add emergency fix button
-            if not mappings or st.button("🚨 Quick Fix: Apply Correct VST Mappings", type="primary", key="emergency_fix_mappings"):
-                # This is a direct fix for VST data based on debug info
-                emergency_mappings = {
-                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
-                    'BalanceSheet::Total Equity': 'Total Equity',
-                    'BalanceSheet::Total Current Assets': 'Current Assets',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
-                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables',
-                    'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
-                    'BalanceSheet::Share Capital': 'Share Capital',
-                    'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                    'ProfitLoss::Revenue From Operations': 'Revenue',
-                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
-                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Profit After Tax': 'Net Income',
-                    'ProfitLoss::Finance Cost': 'Interest Expense',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
-                    'ProfitLoss::Other Expenses': 'Operating Expenses',
-                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
-                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
-                }
-                
-                # Filter to only include mappings that exist in data
-                valid_mappings = {k: v for k, v in emergency_mappings.items() if k in data.index}
-                
-                self.set_state('pn_mappings', valid_mappings)
-                st.success(f"✅ Applied {len(valid_mappings)} emergency mappings!")
-                mappings = valid_mappings
-                st.rerun()
-                
+        
         # Validate mappings with enhanced validator
         validation_result = pn_validator.validate_mapping_for_pn(mappings, data)
+        
+       
         
         # Display validation status
         col1, col2, col3, col4 = st.columns(4)

@@ -4392,17 +4392,31 @@ class EnhancedPenmanNissimAnalyzer:
             
         return drivers.T
     
-    def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with fallback options"""
+   def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
+        """
+        Safely get a series with fallback options and robust handling of duplicate indices.
+        THIS IS THE FINAL BUG FIX. It ensures the function ALWAYS returns a Series, not a DataFrame.
+        """
         source_metric = self._find_source_metric(target_metric)
         
         if source_metric and source_metric in df.index:
-            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
-            return series
+            series_or_df = df.loc[source_metric]
+            
+            # CRITICAL FIX: If multiple rows have the same name, df.loc returns a DataFrame.
+            # We must explicitly select the first row to ensure we are working with a Series.
+            if isinstance(series_or_df, pd.DataFrame):
+                self.logger.warning(f"Multiple source rows found for target '{target_metric}' (using source '{source_metric}'). Taking the first row.")
+                series = series_or_df.iloc[0]
+            else:
+                series = series_or_df
+
+            return series.fillna(0 if default_zero else np.nan)
+            
         elif default_zero:
             return pd.Series(0, index=df.columns)
         else:
-            raise ValueError(f"Required metric '{target_metric}' not found")
+            # This will now correctly trigger only if no match is found at all.
+            raise ValueError(f"Required metric '{target_metric}' not found after exhaustive search.")
 
 
 # --- 21. Manual Mapping Interface ---

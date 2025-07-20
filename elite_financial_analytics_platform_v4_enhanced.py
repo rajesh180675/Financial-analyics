@@ -4054,13 +4054,9 @@ class EnhancedPenmanNissimAnalyzer:
             ref_bs = self._reformulate_balance_sheet_enhanced(df)
             ref_is = self._reformulate_income_statement_enhanced(df)
             
-            # Transpose reformulated statements for ratio calculations (metrics to index)
-            ref_bs = ref_bs.T
-            ref_is = ref_is.T
-            
             # Debug: Check if we have the required data
-            self.logger.info(f"Transposed BS shape: {ref_bs.shape}")
-            self.logger.info(f"Transposed IS shape: {ref_is.shape}")
+            self.logger.info(f"Reformulated BS shape: {ref_bs.shape}")
+            self.logger.info(f"Reformulated IS shape: {ref_is.shape}")
             self.logger.info(f"BS indices: {list(ref_bs.index)[:10]}")
             self.logger.info(f"IS indices: {list(ref_is.index)[:10]}")
             
@@ -4074,8 +4070,8 @@ class EnhancedPenmanNissimAnalyzer:
                 # Use average NOA for more accurate calculation
                 avg_noa = noa.rolling(window=2, min_periods=1).mean()
                 
-                # Ensure no division by zero and handle negatives
-                rnoa = (oiat / avg_noa.replace(0, np.nan)).clip(lower=0) * 100  # Clip negative RNOA to 0
+                # Ensure no division by zero
+                rnoa = (oiat / avg_noa.replace(0, np.nan)) * 100
                 ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
                 
                 # Calculate components
@@ -4083,7 +4079,7 @@ class EnhancedPenmanNissimAnalyzer:
                     revenue = ref_is.loc['Revenue']
                     
                     # Operating Profit Margin
-                    opm = (oiat / revenue.replace(0, np.nan)).clip(lower=0) * 100  # Clip negatives
+                    opm = (oiat / revenue.replace(0, np.nan)) * 100
                     ratios['Operating Profit Margin (OPM) %'] = opm
                     
                     # Net Operating Asset Turnover
@@ -4107,7 +4103,7 @@ class EnhancedPenmanNissimAnalyzer:
                 
                 avg_ce = ce.rolling(window=2, min_periods=1).mean()
                 
-                # FLEV = -NFA / CE (note: NFA is often negative for net debt)
+                # FLEV = -NFO/CE (negative NFA = positive NFO)
                 flev = -nfa / avg_ce.replace(0, np.nan)
                 ratios['Financial Leverage (FLEV)'] = flev
                 
@@ -4126,37 +4122,39 @@ class EnhancedPenmanNissimAnalyzer:
                 nfe_after_tax = ref_is.loc['Net Financial Expense After Tax']
                 nfa = ref_bs.loc['Net Financial Assets']
                 
+                # Use average NFA
                 avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
                 
-                # NBC = NFE / -NFA (adjusted for net debt position)
+                # NBC = NFE / (-NFA) for when NFA is negative (i.e., net debt position)
+                # When NFA is positive (net cash), NBC is negative (earning return on cash)
                 nbc = (nfe_after_tax / (-avg_nfa).replace(0, np.nan)) * 100
-                ratios['Net Borrowing Cost (NBC) %'] = nbc.fillna(0)  # Fill nan with 0
+                ratios['Net Borrowing Cost (NBC) %'] = nbc
                 
-                # Alternative gross borrowing rate
+                # Alternative calculation using gross rates
                 if 'Interest Expense' in ref_is.index and 'Total Debt' in ref_bs.index:
                     interest_expense = ref_is.loc['Interest Expense']
                     total_debt = ref_bs.loc['Total Debt']
                     avg_debt = total_debt.rolling(window=2, min_periods=1).mean()
+                    
                     gross_borrowing_rate = (interest_expense / avg_debt.replace(0, np.nan)) * 100
                     ratios['Gross Borrowing Rate %'] = gross_borrowing_rate
             else:
                 self.logger.warning("Missing required items for NBC calculation")
-                ratios['Net Borrowing Cost (NBC) %'] = pd.Series(0, index=self.df.columns)  # Default to 0
             
             # Spread (RNOA - NBC)
-            if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
-                spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - ratios.loc['Net Borrowing Cost (NBC) %']
+            if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %', 
+                                                    'Net Borrowing Cost (NBC) %']):
+                spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - \
+                        ratios.loc['Net Borrowing Cost (NBC) %']
                 ratios['Spread %'] = spread
                 ratios['Leverage Spread %'] = spread  # Alternative name
-            else:
-                self.logger.warning("Missing required items for Spread calculation")
-                ratios['Spread %'] = pd.Series(0, index=self.df.columns)  # Default to 0
             
             # ROE and its decomposition
-            if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
-                net_income = ref_is.loc['Net Income (Reported)']
+            if 'Net Income' in ref_is.index and 'Common Equity' in ref_bs.index:
+                net_income = ref_is.loc['Net Income']
                 ce = ref_bs.loc['Common Equity']
                 avg_ce = ce.rolling(window=2, min_periods=1).mean()
+                
                 roe = (net_income / avg_ce.replace(0, np.nan)) * 100
                 ratios['Return on Equity (ROE) %'] = roe
                 
@@ -4166,17 +4164,18 @@ class EnhancedPenmanNissimAnalyzer:
                     rnoa = ratios.loc['Return on Net Operating Assets (RNOA) %']
                     flev = ratios.loc['Financial Leverage (FLEV)']
                     spread = ratios.loc['Spread %']
+                    
                     calculated_roe = rnoa + (flev * spread)
                     ratios['ROE (Calculated) %'] = calculated_roe
+                    
                     metadata['roe_decomposition_diff'] = (roe - calculated_roe).abs().max()
-            else:
-                self.logger.warning("Missing required items for ROE calculation")
             
             # Additional performance metrics
-            if 'Total Assets' in ref_bs.index and 'Net Income (Reported)' in ref_is.index:
+            if 'Total Assets' in ref_bs.index and 'Net Income' in ref_is.index:
                 total_assets = ref_bs.loc['Total Assets']
-                net_income = ref_is.loc['Net Income (Reported)']
+                net_income = ref_is.loc['Net Income']
                 avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
+                
                 roa = (net_income / avg_assets.replace(0, np.nan)) * 100
                 ratios['Return on Assets (ROA) %'] = roa
             
@@ -4191,13 +4190,38 @@ class EnhancedPenmanNissimAnalyzer:
                 noa_growth = noa.pct_change() * 100
                 ratios['NOA Growth %'] = noa_growth
             
+            # Efficiency ratios
+            if 'Revenue' in ref_is.index and 'Total Assets' in ref_bs.index:
+                revenue = ref_is.loc['Revenue']
+                total_assets = ref_bs.loc['Total Assets']
+                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
+                
+                asset_turnover = revenue / avg_assets.replace(0, np.nan)
+                ratios['Asset Turnover'] = asset_turnover
+            
+            # Profitability ratios
+            if 'Revenue' in ref_is.index and 'Net Income' in ref_is.index:
+                revenue = ref_is.loc['Revenue']
+                net_income = ref_is.loc['Net Income']
+                
+                net_margin = (net_income / revenue.replace(0, np.nan)) * 100
+                ratios['Net Profit Margin %'] = net_margin
+            
+            # Quality checks
+            metadata['ratio_count'] = len(ratios.index)
+            metadata['complete_years'] = sum(ratios.notna().all())
+            metadata['missing_ratio_pct'] = (ratios.isna().sum().sum() / (len(ratios.index) * len(ratios.columns))) * 100
+            
+            if metadata['missing_ratio_pct'] > 50:
+                self.logger.warning(f"High percentage of missing ratios: {metadata['missing_ratio_pct']:.1f}%")
+            
         except Exception as e:
             self.logger.error(f"Error in ratio calculation: {e}", exc_info=True)
             # Return simple version as fallback
             return self._calculate_ratios_simple(df)
         
         self.calculation_metadata['ratios'] = metadata
-        return ratios.T
+        return ratios.T  # Transpose for better display
     
     def _calculate_free_cash_flow_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced free cash flow calculation"""

@@ -3720,11 +3720,39 @@ class EnhancedPenmanNissimAnalyzer:
         
         self.validation_results = validation
     
+    #def _find_source_metric(self, target_metric: str) -> Optional[str]:
+     #   """Find source metric that maps to target"""
+       # for source, target in self.mappings.items():
+      #      if target == target_metric:
+       #         return source
+       # return None
     def _find_source_metric(self, target_metric: str) -> Optional[str]:
-        """Find source metric that maps to target"""
+        """
+        Find source metric that maps to target, with enhanced flexible matching.
+        This fix handles prefixes like 'BalanceSheet::' that are added during merging.
+        """
+        # First, try for a direct match (most efficient)
         for source, target in self.mappings.items():
             if target == target_metric:
-                return source
+                # Check if this exact source exists in the dataframe
+                if source in self.df.index:
+                    return source
+        
+        # If no direct match is found, try a more flexible search.
+        # This handles cases where the mapping was created from a file with a different prefix.
+        for source, target in self.mappings.items():
+            if target == target_metric:
+                # Check if a row in the dataframe ENDS with the mapped source name
+                # This is common if prefixes were added (e.g., 'BalanceSheet::Total Assets')
+                for idx in self.df.index:
+                    if str(idx).endswith(source):
+                        return idx
+        
+        # If still no match, check if the target metric itself exists as a substring
+        for idx in self.df.index:
+            if target_metric.lower() in str(idx).lower():
+                return idx
+                
         return None
     
     def _get_metric_series(self, target_metric: str) -> Optional[pd.Series]:

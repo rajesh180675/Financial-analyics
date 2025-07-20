@@ -4046,9 +4046,19 @@ class EnhancedPenmanNissimAnalyzer:
         metadata = {}
         
         try:
+            # Debug: Log what metrics we have
+            self.logger.info("Starting ratio calculation...")
+            self.logger.info(f"Available mappings: {list(self.mappings.keys())[:20]}")
+            
             # Get reformulated statements
             ref_bs = self._reformulate_balance_sheet_enhanced(df)
             ref_is = self._reformulate_income_statement_enhanced(df)
+            
+            # Debug: Check if we have the required data
+            self.logger.info(f"Reformulated BS shape: {ref_bs.shape}")
+            self.logger.info(f"Reformulated IS shape: {ref_is.shape}")
+            self.logger.info(f"BS indices: {list(ref_bs.index)[:10]}")
+            self.logger.info(f"IS indices: {list(ref_is.index)[:10]}")
             
             # RNOA (Return on Net Operating Assets)
             if all(item in ref_is.index for item in ['Operating Income After Tax']) and \
@@ -4079,6 +4089,12 @@ class EnhancedPenmanNissimAnalyzer:
                     # Verify RNOA = OPM × NOAT
                     calculated_rnoa = (opm * noat) / 100
                     metadata['rnoa_decomposition_check'] = (rnoa - calculated_rnoa).abs().max()
+                else:
+                    self.logger.warning("Revenue not found in reformulated income statement")
+            else:
+                self.logger.warning("Missing required items for RNOA calculation")
+                self.logger.info(f"Have Operating Income After Tax: {'Operating Income After Tax' in ref_is.index}")
+                self.logger.info(f"Have Net Operating Assets: {'Net Operating Assets' in ref_bs.index}")
             
             # FLEV (Financial Leverage)
             if all(item in ref_bs.index for item in ['Net Financial Assets', 'Common Equity']):
@@ -4096,6 +4112,8 @@ class EnhancedPenmanNissimAnalyzer:
                     total_debt = ref_bs.loc['Total Debt']
                     debt_to_equity = total_debt / avg_ce.replace(0, np.nan)
                     ratios['Debt to Equity'] = debt_to_equity
+            else:
+                self.logger.warning("Missing required items for FLEV calculation")
             
             # NBC (Net Borrowing Cost)
             if all(item in ref_is.index for item in ['Net Financial Expense After Tax']) and \
@@ -4120,18 +4138,20 @@ class EnhancedPenmanNissimAnalyzer:
                     
                     gross_borrowing_rate = (interest_expense / avg_debt.replace(0, np.nan)) * 100
                     ratios['Gross Borrowing Rate %'] = gross_borrowing_rate
+            else:
+                self.logger.warning("Missing required items for NBC calculation")
             
             # Spread (RNOA - NBC)
             if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %', 
-                                                      'Net Borrowing Cost (NBC) %']):
+                                                    'Net Borrowing Cost (NBC) %']):
                 spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - \
                         ratios.loc['Net Borrowing Cost (NBC) %']
                 ratios['Spread %'] = spread
                 ratios['Leverage Spread %'] = spread  # Alternative name
             
             # ROE and its decomposition
-            if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
-                net_income = ref_is.loc['Net Income (Reported)']
+            if 'Net Income' in ref_is.index and 'Common Equity' in ref_bs.index:
+                net_income = ref_is.loc['Net Income']
                 ce = ref_bs.loc['Common Equity']
                 avg_ce = ce.rolling(window=2, min_periods=1).mean()
                 
@@ -4140,7 +4160,7 @@ class EnhancedPenmanNissimAnalyzer:
                 
                 # ROE = RNOA + (FLEV × Spread)
                 if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %',
-                                                         'Financial Leverage (FLEV)', 'Spread %']):
+                                                        'Financial Leverage (FLEV)', 'Spread %']):
                     rnoa = ratios.loc['Return on Net Operating Assets (RNOA) %']
                     flev = ratios.loc['Financial Leverage (FLEV)']
                     spread = ratios.loc['Spread %']
@@ -4151,9 +4171,9 @@ class EnhancedPenmanNissimAnalyzer:
                     metadata['roe_decomposition_diff'] = (roe - calculated_roe).abs().max()
             
             # Additional performance metrics
-            if 'Total Assets' in ref_bs.index and 'Net Income (Reported)' in ref_is.index:
+            if 'Total Assets' in ref_bs.index and 'Net Income' in ref_is.index:
                 total_assets = ref_bs.loc['Total Assets']
-                net_income = ref_is.loc['Net Income (Reported)']
+                net_income = ref_is.loc['Net Income']
                 avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
                 
                 roa = (net_income / avg_assets.replace(0, np.nan)) * 100
@@ -4170,13 +4190,38 @@ class EnhancedPenmanNissimAnalyzer:
                 noa_growth = noa.pct_change() * 100
                 ratios['NOA Growth %'] = noa_growth
             
+            # Efficiency ratios
+            if 'Revenue' in ref_is.index and 'Total Assets' in ref_bs.index:
+                revenue = ref_is.loc['Revenue']
+                total_assets = ref_bs.loc['Total Assets']
+                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
+                
+                asset_turnover = revenue / avg_assets.replace(0, np.nan)
+                ratios['Asset Turnover'] = asset_turnover
+            
+            # Profitability ratios
+            if 'Revenue' in ref_is.index and 'Net Income' in ref_is.index:
+                revenue = ref_is.loc['Revenue']
+                net_income = ref_is.loc['Net Income']
+                
+                net_margin = (net_income / revenue.replace(0, np.nan)) * 100
+                ratios['Net Profit Margin %'] = net_margin
+            
+            # Quality checks
+            metadata['ratio_count'] = len(ratios.index)
+            metadata['complete_years'] = sum(ratios.notna().all())
+            metadata['missing_ratio_pct'] = (ratios.isna().sum().sum() / (len(ratios.index) * len(ratios.columns))) * 100
+            
+            if metadata['missing_ratio_pct'] > 50:
+                self.logger.warning(f"High percentage of missing ratios: {metadata['missing_ratio_pct']:.1f}%")
+            
         except Exception as e:
-            self.logger.error(f"Enhanced ratio calculation failed: {e}", exc_info=True)
-            # Fall back to simple calculation
+            self.logger.error(f"Error in ratio calculation: {e}", exc_info=True)
+            # Return simple version as fallback
             return self._calculate_ratios_simple(df)
         
         self.calculation_metadata['ratios'] = metadata
-        return ratios.T
+        return ratios.T  # Transpose for better display
     
     def _calculate_free_cash_flow_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced free cash flow calculation"""
@@ -4447,40 +4492,97 @@ class EnhancedPenmanNissimAnalyzer:
             
         return drivers.T
     
-    def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with fallback options and auto-correction"""
+   def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
+        """Safely get a series with comprehensive fallback options"""
+        # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
         
-        # First, try the mapped source
         if source_metric and source_metric in df.index:
             series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
+            self.logger.info(f"Found '{target_metric}' mapped to '{source_metric}'")
             return series
         
-        # If not found, try auto-discovery based on target metric
-        self.logger.warning(f"Mapped source '{source_metric}' for target '{target_metric}' not found, trying auto-discovery...")
+        # Log what we're looking for
+        self.logger.warning(f"Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
         
-        # Define search patterns for each target metric
+        # Define comprehensive search patterns for VST data
         search_patterns = {
             'Depreciation': [
                 'ProfitLoss::Depreciation and Amortisation Expenses',
-                'ProfitLoss::Depreciation and Amortization Expenses', 
+                'ProfitLoss::Depreciation and Amortization Expenses',
                 'ProfitLoss::Depreciation',
                 'ProfitLoss::Depreciation & Amortization',
-                'ProfitLoss::Depreciation and Amortisation'
+                'ProfitLoss::Depreciation and Amortisation',
+                'ProfitLoss::Depreciation & Amortisation'
             ],
             'Capital Expenditure': [
                 'CashFlow::Purchase of Fixed Assets',
-                'CashFlow::Purchased of Fixed Assets',  # Handle typo
+                'CashFlow::Purchased of Fixed Assets',
                 'CashFlow::Purchase of Investments',
                 'CashFlow::Capital Expenditure',
+                'CashFlow::CAPEX',
                 'CashFlow::Additions to Fixed Assets',
                 'CashFlow::Purchase of Property Plant and Equipment'
+            ],
+            'Revenue': [
+                'ProfitLoss::Revenue From Operations',
+                'ProfitLoss::Revenue From Operations(Net)',
+                'ProfitLoss::Total Revenue',
+                'ProfitLoss::Net Sales',
+                'ProfitLoss::Sales'
+            ],
+            'Operating Income': [
+                'ProfitLoss::Profit Before Exceptional Items and Tax',
+                'ProfitLoss::Operating Profit',
+                'ProfitLoss::EBIT',
+                'ProfitLoss::Profit Before Interest and Tax'
+            ],
+            'Net Income': [
+                'ProfitLoss::Profit After Tax',
+                'ProfitLoss::Profit/Loss For The Period',
+                'ProfitLoss::Net Profit',
+                'ProfitLoss::PAT'
+            ],
+            'Tax Expense': [
+                'ProfitLoss::Tax Expense',
+                'ProfitLoss::Tax Expenses',
+                'ProfitLoss::Current Tax',
+                'ProfitLoss::Total Tax Expense',
+                'ProfitLoss::Income Tax'
+            ],
+            'Interest Expense': [
+                'ProfitLoss::Finance Cost',
+                'ProfitLoss::Finance Costs',
+                'ProfitLoss::Interest',
+                'ProfitLoss::Interest Expense',
+                'ProfitLoss::Interest and Finance Charges'
+            ],
+            'Income Before Tax': [
+                'ProfitLoss::Profit Before Tax',
+                'ProfitLoss::PBT',
+                'ProfitLoss::Income Before Tax'
+            ],
+            'Cost of Goods Sold': [
+                'ProfitLoss::Cost of Materials Consumed',
+                'ProfitLoss::Cost of Goods Sold',
+                'ProfitLoss::COGS',
+                'ProfitLoss::Cost of Sales'
+            ],
+            'Operating Expenses': [
+                'ProfitLoss::Other Expenses',
+                'ProfitLoss::Employee Benefit Expenses',
+                'ProfitLoss::Operating Expenses',
+                'ProfitLoss::OPEX'
+            ],
+            'Interest Income': [
+                'ProfitLoss::Other Income',
+                'ProfitLoss::Interest Income',
+                'ProfitLoss::Investment Income'
             ],
             'Investments': [
                 'BalanceSheet::Investments',
                 'BalanceSheet::Current Investments',
-                'BalanceSheet::Other Current Assets',
-                'BalanceSheet::Financial Assets'
+                'BalanceSheet::Other Current Assets'
             ],
             'Short-term Investments': [
                 'BalanceSheet::Current Investments',
@@ -4489,23 +4591,7 @@ class EnhancedPenmanNissimAnalyzer:
             ],
             'Total Liabilities': [
                 'BalanceSheet::Total Liabilities',
-                'BalanceSheet::TOTAL LIABILITIES',
-                'BalanceSheet::Total Non-Current Liabilities'  # Fallback
-            ],
-            'Interest Income': [
-                'ProfitLoss::Other Income',
-                'ProfitLoss::Interest Income',
-                'ProfitLoss::Investment Income'
-            ],
-            'Accrued Expenses': [
-                'BalanceSheet::Other Current Liabilities',
-                'BalanceSheet::Provisions',
-                'BalanceSheet::Accrued Expenses'
-            ],
-            'Deferred Revenue': [
-                'BalanceSheet::Deferred Revenue',
-                'BalanceSheet::Advance from Customers',
-                'BalanceSheet::Other Non-Current Liabilities'
+                'BalanceSheet::TOTAL LIABILITIES'
             ]
         }
         
@@ -4517,33 +4603,29 @@ class EnhancedPenmanNissimAnalyzer:
                     series = df.loc[pattern].fillna(0 if default_zero else np.nan)
                     return series
         
-        # If still not found, do a fuzzy search
+        # If still not found, do a case-insensitive search
         target_lower = target_metric.lower()
-        best_match = None
-        best_score = 0
-        
         for idx in df.index:
             idx_lower = str(idx).lower()
-            # Simple keyword matching
-            if target_lower in idx_lower:
-                score = 100
-            elif any(word in idx_lower for word in target_lower.split()):
-                score = 50
-            else:
-                continue
-                
-            if score > best_score:
-                best_score = score
-                best_match = idx
+            
+            # Remove common prefixes for comparison
+            idx_clean = idx_lower.replace('profitloss::', '').replace('balancesheet::', '').replace('cashflow::', '')
+            
+            # Check for exact match after cleaning
+            if target_lower == idx_clean:
+                self.logger.info(f"Found exact match after cleaning: '{idx}' for '{target_metric}'")
+                series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                return series
+            
+            # Check for partial match
+            if target_lower in idx_clean or idx_clean in target_lower:
+                self.logger.info(f"Found partial match: '{idx}' for '{target_metric}'")
+                series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                return series
         
-        if best_match and best_score >= 50:
-            self.logger.info(f"Fuzzy matched '{best_match}' for '{target_metric}' (score: {best_score})")
-            series = df.loc[best_match].fillna(0 if default_zero else np.nan)
-            return series
-        
-        # For optional metrics, return zeros
+        # List of optional metrics that can default to zero
         optional_metrics = [
-            'Depreciation', 'Investments', 'Short-term Investments', 
+            'Depreciation', 'Investments', 'Short-term Investments',
             'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
             'Total Liabilities'  # Can be calculated from Assets - Equity
         ]
@@ -4552,9 +4634,15 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info(f"Optional metric '{target_metric}' not found, using zeros")
             return pd.Series(0, index=df.columns)
         
-        # For required metrics, raise error
-        self.logger.error(f"Required metric '{target_metric}' not found and no fallback available")
+        # For required metrics, log available options and raise error
+        self.logger.error(f"Required metric '{target_metric}' not found")
+        self.logger.info(f"Available indices that might match:")
+        for idx in df.index:
+            if any(word in str(idx).lower() for word in target_lower.split()):
+                self.logger.info(f"  - {idx}")
+        
         raise ValueError(f"Required metric '{target_metric}' not found")
+       
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
     """Manual mapping interface for metric mapping"""
@@ -9307,143 +9395,149 @@ class FinancialAnalyticsPlatform:
         # Check if mappings exist
         mappings = self.get_state('pn_mappings')
         
-        # Add comprehensive emergency fix button at the TOP
-        if st.button("🚨 Quick Fix: Apply Complete VST Mappings", type="primary", key="emergency_fix_mappings_v2"):
-            # Comprehensive mappings based on your actual data
-            emergency_mappings = {
-                # Balance Sheet - Complete list
+        # Add COMPLETE emergency fix button BEFORE checking mappings
+        if st.button("🚨 Fix All Issues: Apply Complete VST Mappings", type="primary", key="complete_fix_vst_mappings"):
+            # Log all available data rows for debugging
+            self.logger.info("Available data rows:")
+            for idx in data.index[:50]:  # Log first 50 rows
+                self.logger.info(f"  {idx}")
+            
+            # COMPLETE mappings for VST - including ALL P&L items
+            complete_vst_mappings = {
+                # Balance Sheet - Complete
                 'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
                 'BalanceSheet::Total Assets': 'Total Assets',
-                'BalanceSheet::TOTAL ASSETS': 'Total Assets',
                 'BalanceSheet::Total Equity': 'Total Equity',
                 'BalanceSheet::Equity': 'Total Equity',
-                'BalanceSheet::TOTAL EQUITY': 'Total Equity',
-                'BalanceSheet::Shareholders Funds': 'Total Equity',
                 'BalanceSheet::Total Current Assets': 'Current Assets',
-                'BalanceSheet::Current Assets': 'Current Assets',
                 'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
-                'BalanceSheet::Current Liabilities': 'Current Liabilities',
                 'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                'BalanceSheet::Cash And Cash Equivalents': 'Cash and Cash Equivalents',
                 'BalanceSheet::Trade receivables': 'Trade Receivables',
                 'BalanceSheet::Trade Receivables': 'Trade Receivables',
-                'BalanceSheet::Sundry Debtors': 'Trade Receivables',
                 'BalanceSheet::Inventories': 'Inventory',
-                'BalanceSheet::Inventory': 'Inventory',
-                'BalanceSheet::Stock': 'Inventory',
                 'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
                 'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
-                'BalanceSheet::Net Block': 'Property Plant Equipment',
                 'BalanceSheet::Share Capital': 'Share Capital',
-                'BalanceSheet::Equity Share Capital': 'Share Capital',
                 'BalanceSheet::Other Equity': 'Retained Earnings',
-                'BalanceSheet::Reserves and Surplus': 'Retained Earnings',
                 'BalanceSheet::Trade payables': 'Accounts Payable',
                 'BalanceSheet::Trade Payables': 'Accounts Payable',
-                'BalanceSheet::Sundry Creditors': 'Accounts Payable',
                 'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                'BalanceSheet::Current Borrowings': 'Short-term Debt',
                 'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                'BalanceSheet::Non-Current Borrowings': 'Long-term Debt',
                 'BalanceSheet::Other Current Liabilities': 'Accrued Expenses',
-                'BalanceSheet::Provisions': 'Accrued Expenses',
                 'BalanceSheet::Other Non-Current Liabilities': 'Deferred Revenue',
-                'BalanceSheet::Investments': 'Investments',
-                'BalanceSheet::Current Investments': 'Short-term Investments',
                 
-                # P&L - Complete list with ALL variations
+                # P&L - CRITICAL - ALL VARIATIONS
                 'ProfitLoss::Revenue From Operations': 'Revenue',
                 'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
-                'ProfitLoss::Revenue from Operations': 'Revenue',
                 'ProfitLoss::Total Revenue': 'Revenue',
                 'ProfitLoss::Net Sales': 'Revenue',
-                'ProfitLoss::Sales': 'Revenue',
+                
+                'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                'ProfitLoss::Cost of Goods Sold': 'Cost of Goods Sold',
+                'ProfitLoss::COGS': 'Cost of Goods Sold',
+                
                 'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
                 'ProfitLoss::Operating Profit': 'Operating Income',
                 'ProfitLoss::EBIT': 'Operating Income',
                 'ProfitLoss::Profit Before Interest and Tax': 'Operating Income',
+                
                 'ProfitLoss::Profit Before Tax': 'Income Before Tax',
                 'ProfitLoss::PBT': 'Income Before Tax',
+                
                 'ProfitLoss::Tax Expense': 'Tax Expense',
-                'ProfitLoss::Tax Expenses': 'Tax Expense',  # Handle plural
+                'ProfitLoss::Tax Expenses': 'Tax Expense',
                 'ProfitLoss::Current Tax': 'Tax Expense',
                 'ProfitLoss::Total Tax Expense': 'Tax Expense',
-                'ProfitLoss::Income Tax': 'Tax Expense',
+                
                 'ProfitLoss::Profit After Tax': 'Net Income',
                 'ProfitLoss::Profit/Loss For The Period': 'Net Income',
                 'ProfitLoss::Net Profit': 'Net Income',
                 'ProfitLoss::PAT': 'Net Income',
-                'ProfitLoss::Net Income': 'Net Income',
+                
                 'ProfitLoss::Finance Cost': 'Interest Expense',
                 'ProfitLoss::Finance Costs': 'Interest Expense',
                 'ProfitLoss::Interest': 'Interest Expense',
                 'ProfitLoss::Interest Expense': 'Interest Expense',
-                'ProfitLoss::Interest and Finance Charges': 'Interest Expense',
-                'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
-                'ProfitLoss::Cost of Goods Sold': 'Cost of Goods Sold',
-                'ProfitLoss::COGS': 'Cost of Goods Sold',
-                'ProfitLoss::Cost of Sales': 'Cost of Goods Sold',
+                
                 'ProfitLoss::Other Expenses': 'Operating Expenses',
                 'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
                 'ProfitLoss::Operating Expenses': 'Operating Expenses',
-                'ProfitLoss::OPEX': 'Operating Expenses',
+                
                 'ProfitLoss::Other Income': 'Interest Income',
                 'ProfitLoss::Interest Income': 'Interest Income',
-                'ProfitLoss::Investment Income': 'Interest Income',
                 
-                # CRITICAL - ALL Depreciation variations
+                # CRITICAL - Depreciation with ALL variations
                 'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
                 'ProfitLoss::Depreciation and Amortization Expenses': 'Depreciation',
                 'ProfitLoss::Depreciation': 'Depreciation',
                 'ProfitLoss::Depreciation and Amortisation': 'Depreciation',
                 'ProfitLoss::Depreciation & Amortization': 'Depreciation',
-                'ProfitLoss::Depreciation & Amortisation': 'Depreciation',
-                'ProfitLoss::Depreciation and Amortization': 'Depreciation',
                 
-                # Cash Flow - Complete list with ALL variations
+                # Cash Flow - Complete
                 'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
                 'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
                 'CashFlow::Operating Cash Flow': 'Operating Cash Flow',
                 'CashFlow::Cash from Operating Activities': 'Operating Cash Flow',
-                'CashFlow::Cash Flow from Operating Activities': 'Operating Cash Flow',
-                'CashFlow::CFO': 'Operating Cash Flow',
                 
-                # CRITICAL - ALL CapEx variations
                 'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
-                'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',  # Typo version
+                'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',
                 'CashFlow::Purchase of Investments': 'Capital Expenditure',
                 'CashFlow::Capital Expenditure': 'Capital Expenditure',
-                'CashFlow::CAPEX': 'Capital Expenditure',
                 'CashFlow::Additions to Fixed Assets': 'Capital Expenditure',
-                'CashFlow::Purchase of Property Plant and Equipment': 'Capital Expenditure',
-                'CashFlow::Purchase of Property, Plant and Equipment': 'Capital Expenditure',
             }
             
-            # Filter to only include mappings that exist in data
+            # Apply ALL mappings that exist in data
             valid_mappings = {}
-            for source, target in emergency_mappings.items():
+            missing_critical = []
+            
+            # Track what we're mapping
+            mapped_targets = set()
+            
+            for source, target in complete_vst_mappings.items():
                 if source in data.index:
                     valid_mappings[source] = target
+                    mapped_targets.add(target)
+                    self.logger.info(f"Mapped: {target} <- {source}")
             
-            # Log what we found
-            self.logger.info(f"Emergency mapping: Found {len(valid_mappings)} valid mappings out of {len(emergency_mappings)} candidates")
+            # Check for critical missing mappings
+            critical_metrics = [
+                'Revenue', 'Operating Income', 'Net Income', 'Tax Expense', 
+                'Interest Expense', 'Income Before Tax', 'Total Assets', 
+                'Total Equity', 'Operating Cash Flow'
+            ]
             
-            if valid_mappings:
-                self.set_state('pn_mappings', valid_mappings)
-                st.success(f"✅ Applied {len(valid_mappings)} complete mappings!")
+            for metric in critical_metrics:
+                if metric not in mapped_targets:
+                    missing_critical.append(metric)
+                    self.logger.warning(f"Critical metric not mapped: {metric}")
+            
+            # Log summary
+            self.logger.info(f"Total mappings applied: {len(valid_mappings)}")
+            self.logger.info(f"Mapped targets: {sorted(mapped_targets)}")
+            
+            if missing_critical:
+                st.warning(f"⚠️ Missing critical metrics: {', '.join(missing_critical)}")
+            
+            # Apply the mappings
+            self.set_state('pn_mappings', valid_mappings)
+            st.success(f"✅ Applied {len(valid_mappings)} complete mappings!")
+            
+            # Show what was mapped
+            with st.expander("📋 Applied Mappings", expanded=True):
+                # Group by target for better visibility
+                mappings_by_target = {}
+                for source, target in valid_mappings.items():
+                    if target not in mappings_by_target:
+                        mappings_by_target[target] = []
+                    mappings_by_target[target].append(source)
                 
-                # Show what was mapped
-                with st.expander("View Applied Mappings"):
-                    mapping_df = pd.DataFrame(
-                        [(k, v) for k, v in sorted(valid_mappings.items(), key=lambda x: x[1])],
-                        columns=['Source Metric', 'Target Metric']
-                    )
-                    st.dataframe(mapping_df, use_container_width=True)
-                
-                mappings = valid_mappings
-                st.rerun()
-            else:
-                st.error("❌ No matching metrics found. Please check your data format.")
+                for target, sources in sorted(mappings_by_target.items()):
+                    st.write(f"**{target}**:")
+                    for source in sources:
+                        st.write(f"  ← {source}")
+            
+            mappings = valid_mappings
+            st.rerun()
         
         # If still no mappings, show the mapping interface
         if not mappings:
@@ -9519,15 +9613,36 @@ class FinancialAnalyticsPlatform:
                     st.rerun()
                 return
         
-        # Perform analysis
+        # Perform analysis with better error handling
         with st.spinner("Running enhanced Penman-Nissim analysis..."):
             try:
                 analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
                 results = analyzer.calculate_all()
+                
+                # Log what we got
+                self.logger.info(f"Analysis results keys: {list(results.keys())}")
+                
+                if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame):
+                    self.logger.info(f"Ratios shape: {results['ratios'].shape}")
+                    self.logger.info(f"Ratios index: {list(results['ratios'].index)[:10]}")
+                else:
+                    self.logger.warning("No ratios in results or not a DataFrame")
+                
                 self.set_state('pn_results', results)
+                
             except Exception as e:
                 st.error(f"Analysis error: {str(e)}")
                 self.logger.error(f"Penman-Nissim analysis failed: {e}", exc_info=True)
+                
+                # Show debug info
+                with st.expander("🔍 Debug Information"):
+                    st.write("**Current Mappings:**")
+                    st.json(mappings)
+                    st.write("**Error Details:**")
+                    st.code(str(e))
+                    st.write("**Traceback:**")
+                    st.code(traceback.format_exc())
+                
                 return
         
         if 'error' in results:
@@ -9545,7 +9660,8 @@ class FinancialAnalyticsPlatform:
             "📑 Reformulated Statements",
             "💰 Cash Flow Analysis",
             "🎯 Value Drivers",
-            "📉 Time Series"
+            "📉 Time Series",
+            "🔍 Debug"  # Add this
         ])
         
         with tabs[0]:
@@ -9564,22 +9680,30 @@ class FinancialAnalyticsPlatform:
                         if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
                             rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
                             st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
+                        else:
+                            st.metric("RNOA", "N/A", help="Not calculated")
                     
                     with col2:
                         if 'Financial Leverage (FLEV)' in ratios_df.index:
                             flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
                             st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
+                        else:
+                            st.metric("FLEV", "N/A", help="Not calculated")
                     
                     with col3:
                         if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
                             nbc = ratios_df.loc['Net Borrowing Cost (NBC) %', latest_year]
                             st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
+                        else:
+                            st.metric("NBC", "N/A", help="Not calculated")
                     
                     with col4:
                         if 'Spread %' in ratios_df.index:
                             spread = ratios_df.loc['Spread %', latest_year]
                             delta_color = "normal" if spread > 0 else "inverse"
                             st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
+                        else:
+                            st.metric("Spread", "N/A", help="Not calculated")
                 
                 # Display full ratios table
                 st.markdown("### Detailed Ratios Analysis")
@@ -9602,6 +9726,20 @@ class FinancialAnalyticsPlatform:
                             st.info(insight)
             else:
                 st.warning("No ratio data available. Please check your mappings.")
+                
+                # Show debug info
+                with st.expander("🔍 Debug: Why no ratios?"):
+                    st.write("**Possible reasons:**")
+                    st.write("1. Missing essential P&L mappings (Revenue, Operating Income, etc.)")
+                    st.write("2. Data quality issues (all zeros or NaN values)")
+                    st.write("3. Calculation errors")
+                    
+                    if 'ratios' in results:
+                        st.write(f"**Ratios object type:** {type(results['ratios'])}")
+                        if hasattr(results['ratios'], 'shape'):
+                            st.write(f"**Ratios shape:** {results['ratios'].shape}")
+                    else:
+                        st.write("**No 'ratios' key in results**")
         
         # Implement other tabs...
         with tabs[1]:
@@ -9621,6 +9759,52 @@ class FinancialAnalyticsPlatform:
         
         with tabs[6]:
             self._render_pn_time_series(results)
+
+        # Add debug tab implementation
+        with tabs[7]:
+            st.subheader("🔍 Debug Information")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Current Mappings Count:**", len(mappings))
+                
+                # Show mapped targets
+                mapped_targets = set(mappings.values())
+                st.write("**Mapped Target Metrics:**")
+                for target in sorted(mapped_targets):
+                    st.write(f"✓ {target}")
+            
+            with col2:
+                # Show missing critical mappings
+                critical_metrics = [
+                    'Revenue', 'Cost of Goods Sold', 'Operating Income',
+                    'Net Income', 'Tax Expense', 'Interest Expense',
+                    'Depreciation', 'Income Before Tax'
+                ]
+                
+                missing = [m for m in critical_metrics if m not in mapped_targets]
+                if missing:
+                    st.write("**Missing Critical Metrics:**")
+                    for metric in missing:
+                        st.write(f"❌ {metric}")
+            
+            # Show sample data rows
+            with st.expander("Sample Data Rows"):
+                st.write("**First 20 rows in your data:**")
+                for i, idx in enumerate(data.index[:20]):
+                    st.code(f"{i+1}. {idx}")
+            
+            # Show results structure
+            with st.expander("Analysis Results Structure"):
+                if 'ratios' in results:
+                    st.write("**Ratios:**", type(results['ratios']))
+                    if hasattr(results['ratios'], 'shape'):
+                        st.write("Shape:", results['ratios'].shape)
+                        if not results['ratios'].empty:
+                            st.write("Index:", list(results['ratios'].index))
+                            st.write("Columns:", list(results['ratios'].columns))
+                            
 
     def _render_pn_trend_analysis(self, results):
         """Render trend analysis tab"""

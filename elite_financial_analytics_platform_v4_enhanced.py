@@ -3752,18 +3752,21 @@ class EnhancedPenmanNissimAnalyzer:
         """Calculate all Penman-Nissim metrics - using fallback due to core issues"""
         return self._fallback_calculate_all()
     
-    def _fallback_calculate_all(self):
+   def _fallback_calculate_all(self):
         """Fallback implementation of Penman-Nissim calculations"""
         try:
-            # Apply mappings to create standardized dataframe
-            mapped_df = self.df.rename(index=self.mappings)
+            # BUG FIX: The original code renamed the dataframe here, which broke the
+            # internal helper functions. The fix is to NOT rename the dataframe
+            # and instead pass the original self.df to the analysis functions.
+            # The analyzer's helper methods are designed to use self.df (the original data)
+            # and self.mappings (the mapping dictionary) to find the correct series.
             
             results = {
-                'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(mapped_df),
-                'reformulated_income_statement': self._reformulate_income_statement_enhanced(mapped_df),
-                'ratios': self._calculate_ratios_enhanced(mapped_df),
-                'free_cash_flow': self._calculate_free_cash_flow_enhanced(mapped_df),
-                'value_drivers': self._calculate_value_drivers_enhanced(mapped_df),
+                'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(self.df),
+                'reformulated_income_statement': self._reformulate_income_statement_enhanced(self.df),
+                'ratios': self._calculate_ratios_enhanced(self.df),
+                'free_cash_flow': self._calculate_free_cash_flow_enhanced(self.df),
+                'value_drivers': self._calculate_value_drivers_enhanced(self.df),
                 'validation_results': self.validation_results,
                 'calculation_metadata': self.calculation_metadata
             }

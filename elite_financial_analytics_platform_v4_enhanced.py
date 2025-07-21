@@ -4741,82 +4741,133 @@ class EnhancedPenmanNissimAnalyzer:
         return fcf.T
     
     def _calculate_value_drivers_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced value drivers calculation for DCF analysis"""
-        drivers = pd.DataFrame(index=self.df.columns)
+        """Enhanced value drivers calculation for DCF analysis with detailed logging"""
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-DRIVERS-START] Starting Value Drivers Calculation")
+        self.logger.info("="*80)
+    
+        # CRITICAL FIX: Restructure data first to get clean year columns
+        df_clean = self._restructure_for_penman_nissim(df)
+        
+        drivers = pd.DataFrame(index=df_clean.columns) # Years as index
         metadata = {}
         
         try:
-            # Revenue drivers
-            if 'Revenue' in df.index:
-                revenue = df.loc[self._find_source_metric('Revenue')]
+            # --- Revenue Drivers ---
+            self.logger.info("\n[PN-DRIVERS-REVENUE] Calculating Revenue Drivers...")
+            if self._find_source_metric('Revenue') in df_clean.index:
+                revenue = df_clean.loc[self._find_source_metric('Revenue')]
                 drivers['Revenue'] = revenue
-                drivers['Revenue Growth %'] = revenue.pct_change() * 100
-                
+                self._log_metric_fetch('Revenue', self._find_source_metric('Revenue'), revenue, "Value Driver")
+    
+                revenue_growth = revenue.pct_change() * 100
+                drivers['Revenue Growth %'] = revenue_growth
+                self._log_calculation("Revenue Growth", "pct_change() * 100", {"Revenue": revenue}, revenue_growth)
+    
                 # Calculate CAGR
-                if len(revenue) > 1:
-                    years = len(revenue) - 1
-                    cagr = ((revenue.iloc[-1] / revenue.iloc[0]) ** (1/years) - 1) * 100
+                if len(revenue.dropna()) > 1:
+                    valid_revenue = revenue.dropna()
+                    years = len(valid_revenue) - 1
+                    cagr = ((valid_revenue.iloc[-1] / valid_revenue.iloc[0]) ** (1/years) - 1) * 100 if years > 0 else 0
+                    # Assign CAGR to all columns for display purposes
                     drivers['Revenue CAGR %'] = cagr
-            
-            # Profitability drivers
-            ref_is = self._reformulate_income_statement_enhanced(df)
+                    self.logger.info(f"[PN-DRIVERS-REVENUE] Calculated Revenue CAGR: {cagr:.2f}%")
+    
+            # --- Profitability Drivers ---
+            self.logger.info("\n[PN-DRIVERS-PROFIT] Calculating Profitability Drivers...")
+            ref_is = self._reformulate_income_statement_enhanced(df) # Pass original df, it will be cleaned inside
             if 'Operating Income After Tax' in ref_is.index and 'Revenue' in ref_is.index:
                 oiat = ref_is.loc['Operating Income After Tax']
-                revenue = ref_is.loc['Revenue']
+                revenue_prof = ref_is.loc['Revenue']
                 
-                nopat_margin = (oiat / revenue.replace(0, np.nan)) * 100
+                # Align data
+                common_years_prof = sorted(set(oiat.index) & set(revenue_prof.index))
+                oiat_aligned = oiat[common_years_prof]
+                revenue_aligned = revenue_prof[common_years_prof]
+    
+                nopat_margin = (oiat_aligned / revenue_aligned.replace(0, np.nan)) * 100
                 drivers['NOPAT Margin %'] = nopat_margin
+                self._log_calculation("NOPAT Margin", "(NOPAT / Revenue) * 100", {"NOPAT": oiat_aligned, "Revenue": revenue_aligned}, nopat_margin)
+                
                 drivers['NOPAT Margin Change %'] = nopat_margin.diff()
-            
-            # Investment drivers
-            ref_bs = self._reformulate_balance_sheet_enhanced(df)
+    
+            # --- Investment Drivers ---
+            self.logger.info("\n[PN-DRIVERS-INVEST] Calculating Investment Drivers...")
+            ref_bs = self._reformulate_balance_sheet_enhanced(df) # Pass original df
             if 'Net Operating Assets' in ref_bs.index:
                 noa = ref_bs.loc['Net Operating Assets']
                 drivers['Net Operating Assets'] = noa
-                drivers['NOA Growth %'] = noa.pct_change() * 100
-                
+                self._log_metric_fetch('Net Operating Assets', 'Calculated', noa, "Value Driver")
+    
+                noa_growth = noa.pct_change() * 100
+                drivers['NOA Growth %'] = noa_growth
+                self._log_calculation("NOA Growth", "pct_change() * 100", {"NOA": noa}, noa_growth)
+    
                 # Investment rate (∆NOA / NOPAT)
                 if 'Operating Income After Tax' in ref_is.index:
-                    oiat = ref_is.loc['Operating Income After Tax']
-                    noa_change = noa.diff()
-                    investment_rate = (noa_change / oiat.replace(0, np.nan)) * 100
+                    oiat_inv = ref_is.loc['Operating Income After Tax']
+                    common_years_inv = sorted(set(noa.index) & set(oiat_inv.index))
+                    noa_aligned = noa[common_years_inv]
+                    oiat_aligned = oiat_inv[common_years_inv]
+                    
+                    noa_change = noa_aligned.diff()
+                    investment_rate = (noa_change / oiat_aligned.replace(0, np.nan)) * 100
                     drivers['Investment Rate %'] = investment_rate
-            
-            # Working Capital drivers
-            if 'Current Assets' in df.index and 'Current Liabilities' in df.index:
-                current_assets = df.loc[self._find_source_metric('Current Assets')]
-                current_liabilities = df.loc[self._find_source_metric('Current Liabilities')]
+                    self._log_calculation("Investment Rate", "(∆NOA / NOPAT) * 100", {"∆NOA": noa_change, "NOPAT": oiat_aligned}, investment_rate)
+    
+            # --- Working Capital Drivers ---
+            self.logger.info("\n[PN-DRIVERS-WC] Calculating Working Capital Drivers...")
+            if self._find_source_metric('Current Assets') in df_clean.index and self._find_source_metric('Current Liabilities') in df_clean.index:
+                current_assets = df_clean.loc[self._find_source_metric('Current Assets')]
+                current_liabilities = df_clean.loc[self._find_source_metric('Current Liabilities')]
                 
                 working_capital = current_assets - current_liabilities
                 drivers['Working Capital'] = working_capital
-                
-                if 'Revenue' in df.index:
-                    revenue = df.loc[self._find_source_metric('Revenue')]
-                    wc_to_revenue = (working_capital / revenue.replace(0, np.nan)) * 100
+                self._log_calculation("Working Capital", "Current Assets - Current Liabilities", {"Current Assets": current_assets, "Current Liabilities": current_liabilities}, working_capital)
+    
+                if 'Revenue' in drivers.index:
+                    revenue_wc = drivers.loc['Revenue']
+                    wc_to_revenue = (working_capital / revenue_wc.replace(0, np.nan)) * 100
                     drivers['Working Capital % of Revenue'] = wc_to_revenue
-            
-            # Asset efficiency drivers
-            if 'Total Assets' in df.index and 'Revenue' in df.index:
-                total_assets = df.loc[self._find_source_metric('Total Assets')]
-                revenue = df.loc[self._find_source_metric('Revenue')]
+                    self._log_calculation("Working Capital % of Revenue", "(WC / Revenue) * 100", {"WC": working_capital, "Revenue": revenue_wc}, wc_to_revenue)
+    
+            # --- Asset Efficiency Drivers ---
+            self.logger.info("\n[PN-DRIVERS-EFFICIENCY] Calculating Asset Efficiency Drivers...")
+            if self._find_source_metric('Total Assets') in df_clean.index and 'Revenue' in drivers.index:
+                total_assets = df_clean.loc[self._find_source_metric('Total Assets')]
+                revenue_eff = drivers.loc['Revenue']
+    
+                common_years_eff = sorted(set(total_assets.index) & set(revenue_eff.index))
+                ta_aligned = total_assets[common_years_eff]
+                rev_aligned = revenue_eff[common_years_eff]
                 
-                asset_turnover = revenue / total_assets.replace(0, np.nan)
+                asset_turnover = rev_aligned / ta_aligned.replace(0, np.nan)
                 drivers['Asset Turnover'] = asset_turnover
-            
-            # Cash conversion drivers
-            fcf_df = self._calculate_free_cash_flow_enhanced(df)
+                self._log_calculation("Asset Turnover", "Revenue / Total Assets", {"Revenue": rev_aligned, "Total Assets": ta_aligned}, asset_turnover)
+    
+            # --- Cash Conversion Drivers ---
+            self.logger.info("\n[PN-DRIVERS-CASH] Calculating Cash Conversion Drivers...")
+            fcf_df = self._calculate_free_cash_flow_enhanced(df) # Pass original df
             if 'Free Cash Flow to Firm' in fcf_df.index and 'Operating Income After Tax' in ref_is.index:
                 fcf = fcf_df.loc['Free Cash Flow to Firm']
-                oiat = ref_is.loc['Operating Income After Tax']
+                oiat_cash = ref_is.loc['Operating Income After Tax']
                 
-                cash_conversion = (fcf / oiat.replace(0, np.nan)) * 100
+                common_years_cash = sorted(set(fcf.index) & set(oiat_cash.index))
+                fcf_aligned = fcf[common_years_cash]
+                oiat_aligned = oiat_cash[common_years_cash]
+                
+                cash_conversion = (fcf_aligned / oiat_aligned.replace(0, np.nan)) * 100
                 drivers['Cash Conversion %'] = cash_conversion
-            
+                self._log_calculation("Cash Conversion %", "(FCF / NOPAT) * 100", {"FCF": fcf_aligned, "NOPAT": oiat_aligned}, cash_conversion)
+                
         except Exception as e:
-            self.logger.error(f"Value drivers calculation failed: {e}")
+            self.logger.error(f"[PN-DRIVERS-ERROR] Value drivers calculation failed: {e}", exc_info=True)
             return self._calculate_value_drivers_simple(df)
         
         self.calculation_metadata['value_drivers'] = metadata
+        self.logger.info(f"\n[PN-DRIVERS-END] Value Drivers Calculation Complete. Found {len(drivers.index)} drivers.")
+        self.logger.info("="*80 + "\n")
+        
         return drivers.T
     
     # Fallback simple methods for robustness

@@ -3708,66 +3708,88 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.debug(f"{'*'*60}\n")
 
     def _restructure_for_penman_nissim(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Restructure data to have clean year columns without mixing statements"""
-        self.logger.info("[PN-RESTRUCTURE] Starting data restructuring for Penman-Nissim analysis")
-        
-        # Extract unique years from all columns
-        years = set()
-        year_pattern = re.compile(r'(\d{6})')  # Matches 201603, 201703, etc.
-        
+        """
+        Restructure data to have clean year columns, correctly handling
+        different date ranges for different financial statements.
+        """
+        self.logger.info("\n" + "#"*80)
+        self.logger.info("[PN-RESTRUCTURE-V2] Starting ADVANCED data restructuring for Penman-Nissim")
+        self.logger.info("#"*80)
+    
+        # 1. Group original columns by statement type
+        columns_by_statement = {
+            'Profit & Loss': [col for col in df.columns if 'Profit & Loss' in str(col)],
+            'Balance Sheet': [col for col in df.columns if 'Balance Sheet' in str(col)],
+            'Cash Flow': [col for col in df.columns if 'Cash Flow' in str(col)],
+            'Other': [col for col in df.columns if not any(s in str(col) for s in ['Profit & Loss', 'Balance Sheet', 'Cash Flow'])]
+        }
+        self.logger.info(f"[PN-RESTRUCTURE-V2] Grouped columns by statement type:")
+        for stmt, cols in columns_by_statement.items():
+            self.logger.info(f"  - {stmt}: {len(cols)} columns")
+    
+        # 2. Extract all unique years from all columns to create the final index
+        all_years = set()
+        year_pattern = re.compile(r'(\d{6})') # Matches 201603, etc.
         for col in df.columns:
             year_match = year_pattern.search(str(col))
             if year_match:
-                years.add(year_match.group(1))
+                all_years.add(year_match.group(1))
         
-        years = sorted(years)
-        self.logger.info(f"[PN-RESTRUCTURE] Found years: {years}")
-        
-        # Create new dataframe with years as columns
-        restructured = pd.DataFrame(columns=years)
-        
-        # Process each metric (row)
-        for idx in df.index:
-            row_data = {}
+        final_columns = sorted(list(all_years))
+        self.logger.info(f"[PN-RESTRUCTURE-V2] Discovered all unique years across statements: {final_columns}")
+    
+        # 3. Create the new clean DataFrame
+        restructured = pd.DataFrame(columns=final_columns)
+    
+        # 4. Process each metric (row) from the original DataFrame
+        for idx, row in df.iterrows():
             idx_str = str(idx)
             
-            # Determine statement type from index
+            # Determine the statement type of the metric from its index prefix
+            statement_type = None
             if 'ProfitLoss::' in idx_str:
                 statement_type = 'Profit & Loss'
             elif 'BalanceSheet::' in idx_str:
                 statement_type = 'Balance Sheet'
             elif 'CashFlow::' in idx_str:
                 statement_type = 'Cash Flow'
+            
+            # Select the relevant columns to search for this metric's data
+            if statement_type:
+                source_columns = columns_by_statement[statement_type]
+                self.logger.debug(f"Processing metric '{idx_str}' using {statement_type} columns.")
             else:
-                statement_type = None
+                # If the metric is not prefixed, search in all columns as a fallback
+                source_columns = df.columns
+                self.logger.debug(f"Processing metric '{idx_str}' using all columns (no prefix).")
+    
+            new_row = pd.Series(index=final_columns, dtype=np.float64)
             
-            # Extract values for each year
-            for year in years:
-                # Find all columns for this year
-                year_cols = [col for col in df.columns if year in str(col)]
+            # 5. For each year, find the corresponding value from the correct statement columns
+            for year in final_columns:
+                # Find the column that contains this year string within the source_columns
+                value_found = False
+                for col in source_columns:
+                    if year in str(col):
+                        new_row[year] = row[col]
+                        value_found = True
+                        break # Found the value for this year, move to the next year
                 
-                if year_cols:
-                    # If we know the statement type, prefer matching columns
-                    if statement_type:
-                        matching_cols = [col for col in year_cols if statement_type in str(col)]
-                        if matching_cols:
-                            # Use the first matching column
-                            value = df.loc[idx, matching_cols[0]]
-                        else:
-                            # Use any column for this year
-                            value = df.loc[idx, year_cols[0]]
-                    else:
-                        # Use the first available column for this year
-                        value = df.loc[idx, year_cols[0]]
-                    
-                    row_data[year] = value
+                if not value_found:
+                    new_row[year] = np.nan # Explicitly set to NaN if no data for this year in this statement
             
-            # Add row to restructured dataframe
-            if row_data:
-                restructured.loc[idx] = pd.Series(row_data)
-        
-        self.logger.info(f"[PN-RESTRUCTURE] Restructured shape: {restructured.shape}")
-        self.logger.debug(f"[PN-RESTRUCTURE] Sample data:\n{restructured.head()}")
+            restructured.loc[idx] = new_row
+    
+        # 6. Log a summary of what was found for a critical metric like Operating Cash Flow
+        ocf_source_metric = self._find_source_metric('Operating Cash Flow')
+        if ocf_source_metric and ocf_source_metric in restructured.index:
+            self.logger.info(f"[PN-RESTRUCTURE-V2] VERIFICATION: Final 'Operating Cash Flow' values:")
+            self.logger.info(restructured.loc[ocf_source_metric].to_dict())
+        else:
+            self.logger.warning("[PN-RESTRUCTURE-V2] VERIFICATION: 'Operating Cash Flow' not found in final restructured data.")
+    
+        self.logger.info(f"[PN-RESTRUCTURE-V2] Restructuring complete. Final shape: {restructured.shape}")
+        self.logger.info("#"*80 + "\n")
         
         return restructured
     

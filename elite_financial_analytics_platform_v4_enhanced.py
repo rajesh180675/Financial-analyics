@@ -3707,91 +3707,253 @@ class EnhancedPenmanNissimAnalyzer:
         
         self.logger.debug(f"{'*'*60}\n")
 
+    # PASTE THIS CODE: Replace the existing _restructure_for_penman_nissim method in the EnhancedPenmanNissimAnalyzer class
+    
     def _restructure_for_penman_nissim(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Restructure data to have clean year columns, correctly handling
-        different date ranges for different financial statements.
+        Enhanced restructuring with better year extraction, data validation, and standardization
         """
         self.logger.info("\n" + "#"*80)
-        self.logger.info("[PN-RESTRUCTURE-V2] Starting ADVANCED data restructuring for Penman-Nissim")
+        self.logger.info("[PN-RESTRUCTURE-V3] Starting ENHANCED data restructuring for Penman-Nissim")
         self.logger.info("#"*80)
     
         # 1. Group original columns by statement type
         columns_by_statement = {
-            'Profit & Loss': [col for col in df.columns if 'Profit & Loss' in str(col)],
-            'Balance Sheet': [col for col in df.columns if 'Balance Sheet' in str(col)],
-            'Cash Flow': [col for col in df.columns if 'Cash Flow' in str(col)],
-            'Other': [col for col in df.columns if not any(s in str(col) for s in ['Profit & Loss', 'Balance Sheet', 'Cash Flow'])]
+            'Profit & Loss': [],
+            'Balance Sheet': [],
+            'Cash Flow': [],
+            'Other': []
         }
-        self.logger.info(f"[PN-RESTRUCTURE-V2] Grouped columns by statement type:")
+        
+        for col in df.columns:
+            col_str = str(col).lower()
+            if any(x in col_str for x in ['profit', 'loss', 'p&l', 'income statement']):
+                columns_by_statement['Profit & Loss'].append(col)
+            elif any(x in col_str for x in ['balance', 'sheet', 'assets', 'liabilities']):
+                columns_by_statement['Balance Sheet'].append(col)
+            elif any(x in col_str for x in ['cash', 'flow']):
+                columns_by_statement['Cash Flow'].append(col)
+            else:
+                columns_by_statement['Other'].append(col)
+        
+        self.logger.info(f"[PN-RESTRUCTURE-V3] Grouped columns by statement type:")
         for stmt, cols in columns_by_statement.items():
             self.logger.info(f"  - {stmt}: {len(cols)} columns")
-    
-        # 2. Extract all unique years from all columns to create the final index
+        
+        # 2. Enhanced year extraction with multiple patterns
         all_years = set()
-        year_pattern = re.compile(r'(\d{6})') # Matches 201603, etc.
+        year_patterns = [
+            (re.compile(r'(\d{6})'), lambda m: m.group(1)),  # 202003
+            (re.compile(r'(\d{4})(?!\d)'), lambda m: m.group(1) + '03'),  # 2020 -> 202003
+            (re.compile(r'FY\s*(\d{4})'), lambda m: m.group(1) + '03'),  # FY 2020
+            (re.compile(r'(\d{4})-(\d{2})'), lambda m: m.group(1) + '03'),  # 2020-21
+            (re.compile(r'Mar[- ](\d{2})'), lambda m: '20' + m.group(1) + '03'),  # Mar-20
+            (re.compile(r'March[- ](\d{4})'), lambda m: m.group(1) + '03'),  # March 2020
+        ]
+        
+        year_to_columns = {}  # Map normalized year to original columns
+        
         for col in df.columns:
-            year_match = year_pattern.search(str(col))
-            if year_match:
-                all_years.add(year_match.group(1))
+            col_str = str(col)
+            for pattern, extractor in year_patterns:
+                match = pattern.search(col_str)
+                if match:
+                    try:
+                        normalized_year = extractor(match)
+                        # Validate year is reasonable (2000-2099)
+                        year_int = int(normalized_year[:4])
+                        if 2000 <= year_int <= 2099:
+                            all_years.add(normalized_year)
+                            if normalized_year not in year_to_columns:
+                                year_to_columns[normalized_year] = []
+                            year_to_columns[normalized_year].append(col)
+                            break
+                    except:
+                        continue
         
         final_columns = sorted(list(all_years))
-        self.logger.info(f"[PN-RESTRUCTURE-V2] Discovered all unique years across statements: {final_columns}")
-    
-        # 3. Create the new clean DataFrame
-        restructured = pd.DataFrame(columns=final_columns)
-    
-        # 4. Process each metric (row) from the original DataFrame
+        self.logger.info(f"[PN-RESTRUCTURE-V3] Discovered years (normalized): {final_columns}")
+        
+        # 3. Create the new clean DataFrame with validation
+        restructured = pd.DataFrame(columns=final_columns, dtype=np.float64)
+        data_quality_issues = []
+        
+        # 4. Process each metric with enhanced logic
         for idx, row in df.iterrows():
             idx_str = str(idx)
             
-            # Determine the statement type of the metric from its index prefix
-            statement_type = None
-            if 'ProfitLoss::' in idx_str:
-                statement_type = 'Profit & Loss'
-            elif 'BalanceSheet::' in idx_str:
-                statement_type = 'Balance Sheet'
-            elif 'CashFlow::' in idx_str:
-                statement_type = 'Cash Flow'
+            # Skip empty rows
+            if row.isna().all():
+                continue
             
-            # Select the relevant columns to search for this metric's data
-            if statement_type:
-                source_columns = columns_by_statement[statement_type]
-                self.logger.debug(f"Processing metric '{idx_str}' using {statement_type} columns.")
-            else:
-                # If the metric is not prefixed, search in all columns as a fallback
-                source_columns = df.columns
-                self.logger.debug(f"Processing metric '{idx_str}' using all columns (no prefix).")
-    
+            # Determine statement type from index
+            statement_type = self._determine_statement_type(idx_str)
+            
+            # Create new row with enhanced value extraction
             new_row = pd.Series(index=final_columns, dtype=np.float64)
             
-            # 5. For each year, find the corresponding value from the correct statement columns
             for year in final_columns:
-                # Find the column that contains this year string within the source_columns
-                value_found = False
-                for col in source_columns:
-                    if year in str(col):
-                        new_row[year] = row[col]
-                        value_found = True
-                        break # Found the value for this year, move to the next year
+                # Get all columns that could contain this year's data
+                potential_columns = year_to_columns.get(year, [])
                 
-                if not value_found:
-                    new_row[year] = np.nan # Explicitly set to NaN if no data for this year in this statement
+                # Filter by statement type if determined
+                if statement_type and statement_type in columns_by_statement:
+                    relevant_columns = [col for col in potential_columns 
+                                       if col in columns_by_statement[statement_type]]
+                else:
+                    relevant_columns = potential_columns
+                
+                # Extract value with priority handling
+                value = self._extract_best_value(row, relevant_columns, idx_str, year)
+                
+                if value is not None:
+                    # Validate the value
+                    validated_value = self._validate_and_clean_value(value, idx_str, year)
+                    new_row[year] = validated_value
+                else:
+                    new_row[year] = np.nan
             
-            restructured.loc[idx] = new_row
-    
-        # 6. Log a summary of what was found for a critical metric like Operating Cash Flow
-        ocf_source_metric = self._find_source_metric('Operating Cash Flow')
-        if ocf_source_metric and ocf_source_metric in restructured.index:
-            self.logger.info(f"[PN-RESTRUCTURE-V2] VERIFICATION: Final 'Operating Cash Flow' values:")
-            self.logger.info(restructured.loc[ocf_source_metric].to_dict())
-        else:
-            self.logger.warning("[PN-RESTRUCTURE-V2] VERIFICATION: 'Operating Cash Flow' not found in final restructured data.")
-    
-        self.logger.info(f"[PN-RESTRUCTURE-V2] Restructuring complete. Final shape: {restructured.shape}")
+            # Check if row has any non-null values
+            if new_row.notna().any():
+                restructured.loc[idx] = new_row
+            else:
+                data_quality_issues.append(f"No valid data found for: {idx_str}")
+        
+        # 5. Post-processing: Data quality checks and fixes
+        restructured = self._post_process_restructured_data(restructured)
+        
+        # 6. Log data quality summary
+        self._log_data_quality_summary(restructured, data_quality_issues)
+        
+        self.logger.info(f"[PN-RESTRUCTURE-V3] Restructuring complete. Final shape: {restructured.shape}")
         self.logger.info("#"*80 + "\n")
         
         return restructured
+    
+    def _determine_statement_type(self, idx_str: str) -> Optional[str]:
+        """Determine statement type from index string"""
+        idx_lower = idx_str.lower()
+        
+        if any(x in idx_lower for x in ['profitloss::', 'p&l::', 'income::', 'revenue', 'expense', 'profit']):
+            return 'Profit & Loss'
+        elif any(x in idx_lower for x in ['balancesheet::', 'bs::', 'assets', 'liabilities', 'equity']):
+            return 'Balance Sheet'
+        elif any(x in idx_lower for x in ['cashflow::', 'cf::', 'cash from', 'cash used']):
+            return 'Cash Flow'
+        
+        return None
+    
+    def _extract_best_value(self, row: pd.Series, columns: List[str], metric_name: str, year: str) -> Optional[float]:
+        """Extract the best value from multiple possible columns"""
+        values = []
+        
+        for col in columns:
+            try:
+                val = row[col]
+                if pd.notna(val):
+                    # Try to convert to float
+                    if isinstance(val, str):
+                        # Remove common formatting
+                        val_clean = val.replace(',', '').replace('(', '-').replace(')', '')
+                        val_float = float(val_clean)
+                    else:
+                        val_float = float(val)
+                    
+                    values.append(val_float)
+            except:
+                continue
+        
+        if not values:
+            return None
+        
+        # If multiple values, use logic to pick the best one
+        if len(values) == 1:
+            return values[0]
+        else:
+            # Check if all values are similar (within 1% tolerance)
+            if all(abs(v - values[0]) / abs(values[0]) < 0.01 for v in values[1:] if values[0] != 0):
+                return values[0]
+            else:
+                # Log discrepancy and return the first non-zero value
+                non_zero = [v for v in values if v != 0]
+                if non_zero:
+                    self.logger.warning(f"Multiple different values found for {metric_name} in {year}: {values}")
+                    return non_zero[0]
+                return values[0]
+    
+    def _validate_and_clean_value(self, value: float, metric_name: str, year: str) -> float:
+        """Validate and clean financial values"""
+        # Check for unrealistic values
+        if abs(value) > 1e15:  # Trillion threshold
+            self.logger.warning(f"Extremely large value for {metric_name} in {year}: {value}")
+            return np.nan
+        
+        # Handle sign conventions for specific metrics
+        metric_lower = metric_name.lower()
+        
+        # Cash outflows should be negative
+        if any(x in metric_lower for x in ['purchase', 'purchased', 'expenditure', 'capex']):
+            return -abs(value)
+        
+        # Revenue, assets, equity should be positive
+        elif any(x in metric_lower for x in ['revenue', 'sales', 'assets', 'equity']):
+            if value < 0:
+                self.logger.warning(f"Negative value for {metric_name} in {year}: {value}")
+                return abs(value)
+        
+        return value
+    
+    def _post_process_restructured_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Post-process restructured data for quality improvements"""
+        # 1. Forward fill for missing values (only for balance sheet items)
+        balance_sheet_indices = [idx for idx in df.index if 'BalanceSheet::' in str(idx)]
+        for idx in balance_sheet_indices:
+            df.loc[idx] = df.loc[idx].fillna(method='ffill', limit=1)
+        
+        # 2. Detect and fix outliers
+        for idx in df.index:
+            series = df.loc[idx].dropna()
+            if len(series) >= 3:
+                # Use IQR method
+                Q1 = series.quantile(0.25)
+                Q3 = series.quantile(0.75)
+                IQR = Q3 - Q1
+                
+                if IQR > 0:
+                    lower_bound = Q1 - 3 * IQR
+                    upper_bound = Q3 + 3 * IQR
+                    
+                    # Replace outliers with interpolated values
+                    outlier_mask = (series < lower_bound) | (series > upper_bound)
+                    if outlier_mask.any():
+                        self.logger.warning(f"Outliers detected in {idx}: {series[outlier_mask].to_dict()}")
+                        # Use linear interpolation
+                        df.loc[idx] = series.where(~outlier_mask).interpolate(method='linear')
+        
+        return df
+    
+    def _log_data_quality_summary(self, df: pd.DataFrame, issues: List[str]):
+        """Log comprehensive data quality summary"""
+        self.logger.info("\n[PN-RESTRUCTURE-V3] Data Quality Summary:")
+        
+        # Coverage statistics
+        total_cells = df.size
+        non_null_cells = df.notna().sum().sum()
+        coverage = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
+        
+        self.logger.info(f"  - Data Coverage: {coverage:.1f}% ({non_null_cells}/{total_cells} cells)")
+        self.logger.info(f"  - Metrics: {len(df)} rows")
+        self.logger.info(f"  - Years: {len(df.columns)} columns")
+        
+        # Per-year coverage
+        year_coverage = (df.notna().sum() / len(df) * 100).round(1)
+        self.logger.info(f"  - Coverage by year: {year_coverage.to_dict()}")
+        
+        # Issues summary
+        if issues:
+            self.logger.warning(f"  - Data quality issues: {len(issues)}")
+            for issue in issues[:5]:  # Show first 5
+                self.logger.warning(f"    • {issue}")
     
     def _validate_input_data(self):
         """Comprehensive validation of input data"""
@@ -5050,166 +5212,119 @@ class EnhancedPenmanNissimAnalyzer:
             
         return drivers.T
     
+    # PASTE THIS CODE: Add this enhanced version of _get_safe_series to replace the existing one
+
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with comprehensive logging and fallback options"""
+        """Enhanced safe series retrieval with better fallback logic"""
         self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
         
         # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
         if source_metric and source_metric in df.index:
-            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
-            self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
-            self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
-            return series
+            series = df.loc[source_metric]
+            
+            # Validate the series
+            if series.notna().any():  # Has at least one non-null value
+                self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
+                return series.fillna(0 if default_zero else np.nan)
+            else:
+                self.logger.warning(f"[PN-FETCH-EMPTY] Found '{target_metric}' but all values are null")
         
-        # Log what we're looking for
-        self.logger.warning(f"[PN-FETCH-MISS] Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
-        
-        # Define comprehensive search patterns for VST data
+        # Enhanced search patterns with typo tolerance
         search_patterns = {
-            'Depreciation': [
-                'ProfitLoss::Depreciation and Amortisation Expenses',
-                'ProfitLoss::Depreciation and Amortization Expenses',
-                'ProfitLoss::Depreciation',
-                'ProfitLoss::Depreciation & Amortization',
-                'ProfitLoss::Depreciation and Amortisation',
-                'ProfitLoss::Depreciation & Amortisation'
+            'Operating Cash Flow': [
+                'CashFlow::Net Cash from Operating Activities',
+                'CashFlow::Net CashFlow From Operating Activities',
+                'CashFlow::Operating Cash Flow',
+                'CashFlow::Cash from Operating Activities',
+                'CashFlow::Cash Flow from Operating Activities',
+                'CashFlow::Net Cash Generated from Operating Activities'
             ],
             'Capital Expenditure': [
                 'CashFlow::Purchase of Fixed Assets',
-                'CashFlow::Purchased of Fixed Assets',
-                'CashFlow::Purchase of Investments',
+                'CashFlow::Purchased of Fixed Assets',  # Common typo
+                'CashFlow::Purchase of Property Plant and Equipment',
+                'CashFlow::Additions to Fixed Assets',
                 'CashFlow::Capital Expenditure',
                 'CashFlow::CAPEX',
-                'CashFlow::Additions to Fixed Assets',
-                'CashFlow::Purchase of Property Plant and Equipment'
+                'CashFlow::Investment in Fixed Assets'
             ],
-            'Revenue': [
-                'ProfitLoss::Revenue From Operations',
-                'ProfitLoss::Revenue From Operations(Net)',
-                'ProfitLoss::Total Revenue',
-                'ProfitLoss::Net Sales',
-                'ProfitLoss::Sales'
+            'Depreciation': [
+                'ProfitLoss::Depreciation and Amortisation Expenses',
+                'ProfitLoss::Depreciation and Amortization Expenses',
+                'ProfitLoss::Depreciation & Amortisation',
+                'ProfitLoss::Depreciation',
+                'ProfitLoss::Depreciation and Amortisation',
+                'ProfitLoss::Depreciation & Amortization'
             ],
-            'Operating Income': [
-                'ProfitLoss::Profit Before Exceptional Items and Tax',
-                'ProfitLoss::Operating Profit',
-                'ProfitLoss::EBIT',
-                'ProfitLoss::Profit Before Interest and Tax'
-            ],
-            'Net Income': [
-                'ProfitLoss::Profit After Tax',
-                'ProfitLoss::Profit/Loss For The Period',
-                'ProfitLoss::Net Profit',
-                'ProfitLoss::PAT'
-            ],
-            'Tax Expense': [
-                'ProfitLoss::Tax Expense',
-                'ProfitLoss::Tax Expenses',
-                'ProfitLoss::Current Tax',
-                'ProfitLoss::Total Tax Expense',
-                'ProfitLoss::Income Tax'
-            ],
-            'Interest Expense': [
-                'ProfitLoss::Finance Cost',
-                'ProfitLoss::Finance Costs',
-                'ProfitLoss::Interest',
-                'ProfitLoss::Interest Expense',
-                'ProfitLoss::Interest and Finance Charges'
-            ],
-            'Income Before Tax': [
-                'ProfitLoss::Profit Before Tax',
-                'ProfitLoss::PBT',
-                'ProfitLoss::Income Before Tax'
-            ],
-            'Cost of Goods Sold': [
-                'ProfitLoss::Cost of Materials Consumed',
-                'ProfitLoss::Cost of Goods Sold',
-                'ProfitLoss::COGS',
-                'ProfitLoss::Cost of Sales'
-            ],
-            'Operating Expenses': [
-                'ProfitLoss::Other Expenses',
-                'ProfitLoss::Employee Benefit Expenses',
-                'ProfitLoss::Operating Expenses',
-                'ProfitLoss::OPEX'
-            ],
-            'Interest Income': [
-                'ProfitLoss::Other Income',
-                'ProfitLoss::Interest Income',
-                'ProfitLoss::Investment Income'
-            ],
-            'Investments': [
-                'BalanceSheet::Investments',
-                'BalanceSheet::Current Investments',
-                'BalanceSheet::Other Current Assets'
-            ],
-            'Short-term Investments': [
-                'BalanceSheet::Current Investments',
-                'BalanceSheet::Short Term Investments',
-                'BalanceSheet::Investments-Current'
-            ],
-            'Total Liabilities': [
-                'BalanceSheet::Total Liabilities',
-                'BalanceSheet::TOTAL LIABILITIES'
-            ]
+            # Add more patterns as needed
         }
         
-        # Try to find using search patterns
+        # Try exact matches from patterns
         if target_metric in search_patterns:
-            self.logger.info(f"[PN-FETCH-SEARCH] Searching patterns for '{target_metric}'")
             for pattern in search_patterns[target_metric]:
                 if pattern in df.index:
-                    self.logger.info(f"[PN-FETCH-FOUND] Auto-discovered '{pattern}' for '{target_metric}'")
-                    series = df.loc[pattern].fillna(0 if default_zero else np.nan)
-                    self._log_metric_fetch(target_metric, pattern, series, "Pattern search")
-                    return series
+                    series = df.loc[pattern]
+                    if series.notna().any():
+                        self.logger.info(f"[PN-FETCH-PATTERN] Found '{target_metric}' using pattern: {pattern}")
+                        return series.fillna(0 if default_zero else np.nan)
         
-        # If still not found, do a case-insensitive search
+        # Fuzzy matching as last resort
         target_lower = target_metric.lower()
-        self.logger.info(f"[PN-FETCH-FALLBACK] Trying case-insensitive search for '{target_metric}'")
+        best_match = None
+        best_score = 0
         
         for idx in df.index:
-            idx_lower = str(idx).lower()
+            idx_clean = str(idx).split('::')[-1].lower() if '::' in str(idx) else str(idx).lower()
             
-            # Remove common prefixes for comparison
-            idx_clean = idx_lower.replace('profitloss::', '').replace('balancesheet::', '').replace('cashflow::', '')
+            # Calculate similarity score
+            score = self._calculate_similarity(target_lower, idx_clean)
             
-            # Check for exact match after cleaning
-            if target_lower == idx_clean:
-                self.logger.info(f"[PN-FETCH-FOUND] Found exact match after cleaning: '{idx}' for '{target_metric}'")
-                series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive exact match")
-                return series
-            
-            # Check for partial match
-            if target_lower in idx_clean or idx_clean in target_lower:
-                self.logger.info(f"[PN-FETCH-FOUND] Found partial match: '{idx}' for '{target_metric}'")
-                series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive partial match")
-                return series
+            if score > best_score and score > 0.8:  # 80% threshold
+                best_score = score
+                best_match = idx
         
-        # List of optional metrics that can default to zero
+        if best_match:
+            series = df.loc[best_match]
+            if series.notna().any():
+                self.logger.info(f"[PN-FETCH-FUZZY] Found '{target_metric}' via fuzzy match: {best_match} (score: {best_score:.2f})")
+                return series.fillna(0 if default_zero else np.nan)
+        
+        # Return zeros or NaN based on whether it's optional
+        if default_zero or self._is_optional_metric(target_metric):
+            self.logger.info(f"[PN-FETCH-DEFAULT] Optional metric '{target_metric}' not found, using zeros")
+            return pd.Series(0, index=df.columns)
+        else:
+            self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
+            raise ValueError(f"Required metric '{target_metric}' not found")
+    
+    def _calculate_similarity(self, str1: str, str2: str) -> float:
+        """Calculate similarity between two strings"""
+        # Simple character-based similarity
+        if not str1 or not str2:
+            return 0.0
+        
+        # Tokenize
+        tokens1 = set(str1.split())
+        tokens2 = set(str2.split())
+        
+        if not tokens1 or not tokens2:
+            return 0.0
+        
+        # Jaccard similarity
+        intersection = tokens1.intersection(tokens2)
+        union = tokens1.union(tokens2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def _is_optional_metric(self, metric: str) -> bool:
+        """Check if a metric is optional"""
         optional_metrics = [
             'Depreciation', 'Investments', 'Short-term Investments',
             'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
-            'Total Liabilities'  # Can be calculated from Assets - Equity
+            'Intangible Assets', 'Other Income', 'Other Expenses'
         ]
-        
-        if default_zero or target_metric in optional_metrics:
-            self.logger.info(f"[PN-FETCH-DEFAULT] Optional metric '{target_metric}' not found, using zeros")
-            series = pd.Series(0, index=df.columns)
-            self._log_metric_fetch(target_metric, "DEFAULT_ZEROS", series, "Default to zero")
-            return series
-        
-        # For required metrics, log available options and raise error
-        self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
-        self.logger.info(f"[PN-FETCH-HELP] Available indices that might match:")
-        for idx in df.index:
-            if any(word in str(idx).lower() for word in target_lower.split()):
-                self.logger.info(f"  - {idx}")
-        
-        raise ValueError(f"Required metric '{target_metric}' not found")
+        return metric in optional_metrics
        
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:

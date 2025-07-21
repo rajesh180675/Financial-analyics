@@ -3641,10 +3641,12 @@ class FuzzyMapper(Component):
             'EBIT', 'EBITDA', 'Interest Expense', 'Tax Expense'
         ]
 
-
-# --- 20. Enhanced Penman-Nissim Analyzer ---
+#----20.class EnhancedPenmanNissimAnalyzer
 class EnhancedPenmanNissimAnalyzer:
-    """Enhanced Penman-Nissim analyzer with advanced features and robustness"""
+    """
+    Enhanced Penman-Nissim analyzer with improved data flow, accuracy, and robustness
+    Version 5.0 - Complete rewrite with all fixes and enhancements
+    """
     
     def __init__(self, df: pd.DataFrame, mappings: Dict[str, str]):
         self.df = df
@@ -3652,311 +3654,492 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger = LoggerFactory.get_logger('PenmanNissim')
         self.validation_results = {}
         self.calculation_metadata = {}
+        self.calculation_cache = {}  # Cache for expensive calculations
         
-        # Don't use core analyzer due to NotImplemented error
-        self.core_analyzer = None
+        # CRITICAL: Restructure data ONCE and store it
+        self._df_clean = None
+        self._ensure_clean_data()
+        
+        # Store reformulated statements for reuse
+        self._cached_bs = None
+        self._cached_is = None
+        
+        self.core_analyzer = None  # Don't use core analyzer due to NotImplemented error
         self._validate_input_data()
 
-    def _log_metric_fetch(self, target_metric: str, source_metric: str, series: pd.Series, context: str = ""):
-        """Log detailed information about metric fetching"""
-        self.logger.debug(f"\n{'='*60}")
-        self.logger.debug(f"[PN-TRACE] Fetching: {target_metric}")
-        self.logger.debug(f"[PN-TRACE] Source: {source_metric}")
-        self.logger.debug(f"[PN-TRACE] Context: {context}")
-        
-        if series is not None:
-            # Log first few values and basic stats
-            values_dict = series.to_dict()
-            self.logger.debug(f"[PN-TRACE] Values: {values_dict}")
+    def _ensure_clean_data(self):
+        """Ensure we have clean restructured data (only restructure once)"""
+        if self._df_clean is None:
+            self.logger.info("[PN-INIT] Restructuring data once for all calculations")
+            self._df_clean = self._restructure_for_penman_nissim_v5(self.df)
+            self.logger.info(f"[PN-INIT] Clean data shape: {self._df_clean.shape}")
             
-            # Log statistics
-            non_null_values = series.dropna()
-            if len(non_null_values) > 0:
-                self.logger.debug(f"[PN-TRACE] Stats: Count={len(non_null_values)}, "
-                                f"Mean={non_null_values.mean():.2f}, "
-                                f"Min={non_null_values.min():.2f}, "
-                                f"Max={non_null_values.max():.2f}")
-            else:
-                self.logger.debug(f"[PN-TRACE] All values are null/empty")
-        else:
-            self.logger.debug(f"[PN-TRACE] Series is None - metric not found")
-        
-        self.logger.debug(f"{'='*60}\n")
-    
-    def _log_calculation(self, calc_name: str, formula: str, inputs: Dict[str, pd.Series], 
-                        result: pd.Series, metadata: Dict[str, Any] = None):
-        """Log detailed calculation steps"""
-        self.logger.debug(f"\n{'*'*60}")
-        self.logger.debug(f"[PN-CALC] Calculation: {calc_name}")
-        self.logger.debug(f"[PN-CALC] Formula: {formula}")
-        
-        # Log inputs
-        self.logger.debug(f"[PN-CALC] Inputs:")
-        for name, series in inputs.items():
-            if series is not None:
-                self.logger.debug(f"  - {name}: {series.to_dict()}")
-            else:
-                self.logger.debug(f"  - {name}: None")
-        
-        # Log result
-        self.logger.debug(f"[PN-CALC] Result: {result.to_dict() if result is not None else 'None'}")
-        
-        # Log any additional metadata
-        if metadata:
-            self.logger.debug(f"[PN-CALC] Metadata: {metadata}")
-        
-        self.logger.debug(f"{'*'*60}\n")
+            # Log sample of clean data for verification
+            if len(self._df_clean.columns) > 0:
+                sample_col = self._df_clean.columns[0]
+                non_zero_count = (self._df_clean[sample_col] != 0).sum()
+                self.logger.info(f"[PN-INIT] Sample column {sample_col} has {non_zero_count} non-zero values")
 
-    # PASTE THIS CODE: Replace the existing _restructure_for_penman_nissim method in the EnhancedPenmanNissimAnalyzer class
-    
-    def _restructure_for_penman_nissim(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _restructure_for_penman_nissim_v5(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Enhanced restructuring with better year extraction, data validation, and standardization
+        Version 5: Ultimate restructuring with comprehensive year extraction and validation
         """
         self.logger.info("\n" + "#"*80)
-        self.logger.info("[PN-RESTRUCTURE-V3] Starting ENHANCED data restructuring for Penman-Nissim")
+        self.logger.info("[PN-RESTRUCTURE-V5] Starting ULTIMATE data restructuring")
         self.logger.info("#"*80)
-    
-        # 1. Group original columns by statement type
-        columns_by_statement = {
-            'Profit & Loss': [],
-            'Balance Sheet': [],
-            'Cash Flow': [],
-            'Other': []
-        }
-        
-        for col in df.columns:
-            col_str = str(col).lower()
-            if any(x in col_str for x in ['profit', 'loss', 'p&l', 'income statement']):
-                columns_by_statement['Profit & Loss'].append(col)
-            elif any(x in col_str for x in ['balance', 'sheet', 'assets', 'liabilities']):
-                columns_by_statement['Balance Sheet'].append(col)
-            elif any(x in col_str for x in ['cash', 'flow']):
-                columns_by_statement['Cash Flow'].append(col)
-            else:
-                columns_by_statement['Other'].append(col)
-        
-        self.logger.info(f"[PN-RESTRUCTURE-V3] Grouped columns by statement type:")
-        for stmt, cols in columns_by_statement.items():
-            self.logger.info(f"  - {stmt}: {len(cols)} columns")
-        
-        # 2. Enhanced year extraction with multiple patterns
-        all_years = set()
+
+        # 1. Comprehensive year pattern matching
         year_patterns = [
-            (re.compile(r'(\d{6})'), lambda m: m.group(1)),  # 202003
-            (re.compile(r'(\d{4})(?!\d)'), lambda m: m.group(1) + '03'),  # 2020 -> 202003
-            (re.compile(r'FY\s*(\d{4})'), lambda m: m.group(1) + '03'),  # FY 2020
-            (re.compile(r'(\d{4})-(\d{2})'), lambda m: m.group(1) + '03'),  # 2020-21
-            (re.compile(r'Mar[- ](\d{2})'), lambda m: '20' + m.group(1) + '03'),  # Mar-20
-            (re.compile(r'March[- ](\d{4})'), lambda m: m.group(1) + '03'),  # March 2020
+            # Pattern, Name, Extractor function, Priority
+            (re.compile(r'(\d{6})'), 'YYYYMM', lambda m: m.group(1), 1),
+            (re.compile(r'(\d{4})(?!\d)'), 'YYYY', lambda m: m.group(1) + '03', 2),
+            (re.compile(r'FY\s*(\d{4})'), 'FY YYYY', lambda m: m.group(1) + '03', 2),
+            (re.compile(r'(\d{4})-(\d{2})'), 'YYYY-YY', lambda m: m.group(1) + '03', 3),
+            (re.compile(r'Mar[- ](\d{2})'), 'Mar-YY', lambda m: '20' + m.group(1) + '03', 4),
+            (re.compile(r'March[- ](\d{4})'), 'March YYYY', lambda m: m.group(1) + '03', 3),
+            (re.compile(r'(\d{2})-(\d{2})-(\d{4})'), 'DD-MM-YYYY', lambda m: m.group(3) + '03', 5),
         ]
         
-        year_to_columns = {}  # Map normalized year to original columns
+        # Extract all years with priority handling
+        all_years = set()
+        year_to_columns = defaultdict(list)
+        column_metadata = {}
         
         for col in df.columns:
             col_str = str(col)
-            for pattern, extractor in year_patterns:
+            best_match = None
+            best_priority = 999
+            
+            for pattern, pattern_name, extractor, priority in year_patterns:
                 match = pattern.search(col_str)
-                if match:
+                if match and priority < best_priority:
                     try:
                         normalized_year = extractor(match)
-                        # Validate year is reasonable (2000-2099)
                         year_int = int(normalized_year[:4])
                         if 2000 <= year_int <= 2099:
-                            all_years.add(normalized_year)
-                            if normalized_year not in year_to_columns:
-                                year_to_columns[normalized_year] = []
-                            year_to_columns[normalized_year].append(col)
-                            break
+                            best_match = (normalized_year, pattern_name)
+                            best_priority = priority
                     except:
                         continue
+            
+            if best_match:
+                normalized_year, pattern_name = best_match
+                all_years.add(normalized_year)
+                year_to_columns[normalized_year].append(col)
+                column_metadata[col] = {
+                    'year': normalized_year,
+                    'pattern': pattern_name,
+                    'priority': best_priority
+                }
         
         final_columns = sorted(list(all_years))
-        self.logger.info(f"[PN-RESTRUCTURE-V3] Discovered years (normalized): {final_columns}")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Extracted {len(final_columns)} unique years: {final_columns}")
         
-        # 3. Create the new clean DataFrame with validation
-        restructured = pd.DataFrame(columns=final_columns, dtype=np.float64)
-        data_quality_issues = []
+        # Log pattern distribution
+        pattern_counts = defaultdict(int)
+        for meta in column_metadata.values():
+            pattern_counts[meta['pattern']] += 1
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Pattern distribution: {dict(pattern_counts)}")
         
-        # 4. Process each metric with enhanced logic
-        for idx, row in df.iterrows():
+        # 2. Create restructured DataFrame with validation
+        restructured = pd.DataFrame(index=df.index, columns=final_columns, dtype=np.float64)
+        data_quality_stats = {
+            'total_cells': 0,
+            'filled_cells': 0,
+            'validation_failures': 0,
+            'sign_corrections': 0,
+            'outliers_fixed': 0
+        }
+        
+        # 3. Smart data extraction with comprehensive validation
+        for idx in df.index:
             idx_str = str(idx)
             
-            # Skip empty rows
-            if row.isna().all():
+            # Skip completely empty rows
+            if df.loc[idx].isna().all():
                 continue
             
-            # Determine statement type from index
-            statement_type = self._determine_statement_type(idx_str)
-            
-            # Create new row with enhanced value extraction
-            new_row = pd.Series(index=final_columns, dtype=np.float64)
+            # Determine statement type
+            statement_type = self._determine_statement_type_v2(idx_str)
             
             for year in final_columns:
-                # Get all columns that could contain this year's data
-                potential_columns = year_to_columns.get(year, [])
+                data_quality_stats['total_cells'] += 1
                 
-                # Filter by statement type if determined
-                if statement_type and statement_type in columns_by_statement:
-                    relevant_columns = [col for col in potential_columns 
-                                       if col in columns_by_statement[statement_type]]
-                else:
-                    relevant_columns = potential_columns
+                # Get potential source columns
+                source_columns = year_to_columns[year]
                 
-                # Extract value with priority handling
-                value = self._extract_best_value(row, relevant_columns, idx_str, year)
+                # Prioritize columns based on statement type
+                prioritized_columns = self._prioritize_columns_v2(
+                    source_columns, statement_type, column_metadata
+                )
+                
+                # Extract value with validation
+                value = self._extract_best_value_v3(
+                    df.loc[idx], prioritized_columns, idx_str, year
+                )
                 
                 if value is not None:
-                    # Validate the value
-                    validated_value = self._validate_and_clean_value(value, idx_str, year)
-                    new_row[year] = validated_value
-                else:
-                    new_row[year] = np.nan
-            
-            # Check if row has any non-null values
-            if new_row.notna().any():
-                restructured.loc[idx] = new_row
-            else:
-                data_quality_issues.append(f"No valid data found for: {idx_str}")
+                    # Apply comprehensive data quality rules
+                    cleaned_value, stats = self._apply_comprehensive_quality_rules(
+                        value, idx_str, year, statement_type
+                    )
+                    
+                    if cleaned_value is not None:
+                        restructured.loc[idx, year] = cleaned_value
+                        data_quality_stats['filled_cells'] += 1
+                        data_quality_stats['sign_corrections'] += stats.get('sign_corrected', 0)
+                        data_quality_stats['outliers_fixed'] += stats.get('outlier_fixed', 0)
+                    else:
+                        data_quality_stats['validation_failures'] += 1
         
-        # 5. Post-processing: Data quality checks and fixes
-        restructured = self._post_process_restructured_data(restructured)
+        # 4. Advanced post-processing
+        restructured = self._advanced_post_processing(restructured, data_quality_stats)
         
-        # 6. Log data quality summary
-        self._log_data_quality_summary(restructured, data_quality_issues)
+        # 5. Final validation and quality report
+        self._comprehensive_validation(restructured, data_quality_stats)
         
-        self.logger.info(f"[PN-RESTRUCTURE-V3] Restructuring complete. Final shape: {restructured.shape}")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Complete. Final shape: {restructured.shape}")
         self.logger.info("#"*80 + "\n")
         
         return restructured
-    
-    def _determine_statement_type(self, idx_str: str) -> Optional[str]:
-        """Determine statement type from index string"""
+
+    def _determine_statement_type_v2(self, idx_str: str) -> str:
+        """Enhanced statement type detection with fuzzy matching"""
         idx_lower = idx_str.lower()
         
-        if any(x in idx_lower for x in ['profitloss::', 'p&l::', 'income::', 'revenue', 'expense', 'profit']):
-            return 'Profit & Loss'
-        elif any(x in idx_lower for x in ['balancesheet::', 'bs::', 'assets', 'liabilities', 'equity']):
-            return 'Balance Sheet'
-        elif any(x in idx_lower for x in ['cashflow::', 'cf::', 'cash from', 'cash used']):
-            return 'Cash Flow'
+        # Direct prefix matching
+        if 'profitloss::' in idx_lower or 'p&l::' in idx_lower:
+            return 'ProfitLoss'
+        elif 'balancesheet::' in idx_lower or 'bs::' in idx_lower:
+            return 'BalanceSheet'
+        elif 'cashflow::' in idx_lower or 'cf::' in idx_lower:
+            return 'CashFlow'
         
-        return None
-    
-    def _extract_best_value(self, row: pd.Series, columns: List[str], metric_name: str, year: str) -> Optional[float]:
-        """Extract the best value from multiple possible columns"""
-        values = []
+        # Keyword-based detection with weights
+        statement_scores = {
+            'ProfitLoss': 0,
+            'BalanceSheet': 0,
+            'CashFlow': 0
+        }
+        
+        # P&L keywords
+        pl_keywords = {
+            'revenue': 3, 'sales': 3, 'income': 2, 'expense': 2,
+            'profit': 3, 'loss': 2, 'cost': 2, 'margin': 2,
+            'ebit': 3, 'ebitda': 3, 'tax': 2, 'interest': 2
+        }
+        
+        # Balance Sheet keywords
+        bs_keywords = {
+            'asset': 3, 'liability': 3, 'liabilities': 3, 'equity': 3,
+            'cash': 2, 'receivable': 2, 'inventory': 2, 'payable': 2,
+            'debt': 2, 'capital': 2, 'retained': 2, 'reserve': 2
+        }
+        
+        # Cash Flow keywords
+        cf_keywords = {
+            'cash flow': 5, 'cash from': 4, 'cash used': 4,
+            'operating activities': 4, 'investing activities': 4,
+            'financing activities': 4, 'capex': 3, 'dividend': 2
+        }
+        
+        # Score each statement type
+        for keyword, weight in pl_keywords.items():
+            if keyword in idx_lower:
+                statement_scores['ProfitLoss'] += weight
+        
+        for keyword, weight in bs_keywords.items():
+            if keyword in idx_lower:
+                statement_scores['BalanceSheet'] += weight
+        
+        for keyword, weight in cf_keywords.items():
+            if keyword in idx_lower:
+                statement_scores['CashFlow'] += weight
+        
+        # Return highest scoring type
+        max_score = max(statement_scores.values())
+        if max_score > 0:
+            return max(statement_scores, key=statement_scores.get)
+        
+        return 'Unknown'
+
+    def _prioritize_columns_v2(self, columns: List[str], statement_type: str, 
+                              column_metadata: Dict) -> List[str]:
+        """Enhanced column prioritization with metadata awareness"""
+        prioritized = []
+        others = []
+        
+        for col in columns:
+            col_lower = str(col).lower()
+            score = 0
+            
+            # Statement type match
+            if statement_type == 'ProfitLoss' and any(kw in col_lower for kw in ['profit', 'loss', 'p&l']):
+                score += 10
+            elif statement_type == 'BalanceSheet' and any(kw in col_lower for kw in ['balance', 'sheet']):
+                score += 10
+            elif statement_type == 'CashFlow' and any(kw in col_lower for kw in ['cash', 'flow']):
+                score += 10
+            
+            # Pattern priority (lower is better)
+            if col in column_metadata:
+                score -= column_metadata[col]['priority']
+            
+            # Standalone indicator
+            if 'standalone' in col_lower:
+                score += 5
+            elif 'consolidated' in col_lower:
+                score -= 3
+            
+            if score > 0:
+                prioritized.append((col, score))
+            else:
+                others.append((col, score))
+        
+        # Sort by score descending
+        prioritized.sort(key=lambda x: x[1], reverse=True)
+        others.sort(key=lambda x: x[1], reverse=True)
+        
+        return [col for col, _ in prioritized] + [col for col, _ in others]
+
+    def _extract_best_value_v3(self, series: pd.Series, columns: List[str], 
+                               metric: str, year: str) -> Optional[float]:
+        """Ultimate value extraction with conflict resolution"""
+        candidates = []
         
         for col in columns:
             try:
-                val = row[col]
+                val = series[col]
                 if pd.notna(val):
-                    # Try to convert to float
+                    # Parse value
                     if isinstance(val, str):
-                        # Remove common formatting
-                        val_clean = val.replace(',', '').replace('(', '-').replace(')', '')
-                        val_float = float(val_clean)
+                        # Remove formatting
+                        val_clean = (val.replace(',', '')
+                                       .replace('(', '-')
+                                       .replace(')', '')
+                                       .replace('₹', '')
+                                       .replace('$', '')
+                                       .strip())
+                        
+                        # Handle special cases
+                        if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil']:
+                            continue
+                        
+                        numeric_val = float(val_clean)
                     else:
-                        val_float = float(val)
+                        numeric_val = float(val)
                     
-                    values.append(val_float)
-            except:
+                    # Skip exact zeros for selection (might be missing data)
+                    if numeric_val != 0 or len(columns) == 1:
+                        candidates.append({
+                            'value': numeric_val,
+                            'column': col,
+                            'original': val
+                        })
+            except Exception as e:
+                self.logger.debug(f"Failed to parse value from {col}: {e}")
                 continue
         
-        if not values:
+        if not candidates:
             return None
         
-        # If multiple values, use logic to pick the best one
-        if len(values) == 1:
-            return values[0]
-        else:
-            # Check if all values are similar (within 1% tolerance)
-            if all(abs(v - values[0]) / abs(values[0]) < 0.01 for v in values[1:] if values[0] != 0):
-                return values[0]
-            else:
-                # Log discrepancy and return the first non-zero value
-                non_zero = [v for v in values if v != 0]
-                if non_zero:
-                    self.logger.warning(f"Multiple different values found for {metric_name} in {year}: {values}")
-                    return non_zero[0]
-                return values[0]
-    
-    def _validate_and_clean_value(self, value: float, metric_name: str, year: str) -> float:
-        """Validate and clean financial values"""
-        # Check for unrealistic values
+        # Single candidate
+        if len(candidates) == 1:
+            return candidates[0]['value']
+        
+        # Multiple candidates - apply selection logic
+        # Check if all values are similar (within 1%)
+        values = [c['value'] for c in candidates]
+        non_zero_values = [v for v in values if v != 0]
+        
+        if non_zero_values:
+            base_val = non_zero_values[0]
+            if all(abs((v - base_val) / base_val) < 0.01 for v in non_zero_values[1:]):
+                return base_val
+        
+        # Values differ significantly - log and select based on priority
+        self.logger.debug(f"Multiple different values for {metric} in {year}:")
+        for candidate in candidates:
+            self.logger.debug(f"  {candidate['column']}: {candidate['value']}")
+        
+        # Prefer non-zero values
+        non_zero_candidates = [c for c in candidates if c['value'] != 0]
+        if non_zero_candidates:
+            return non_zero_candidates[0]['value']
+        
+        return candidates[0]['value']
+
+    def _apply_comprehensive_quality_rules(self, value: float, metric: str, 
+                                         year: str, statement_type: str) -> Tuple[Optional[float], Dict]:
+        """Apply comprehensive data quality rules with statistics"""
+        stats = {}
+        metric_lower = metric.lower()
+        
+        # 1. Bounds checking
         if abs(value) > 1e15:  # Trillion threshold
-            self.logger.warning(f"Extremely large value for {metric_name} in {year}: {value}")
-            return np.nan
+            self.logger.warning(f"Extremely large value for {metric} in {year}: {value}")
+            stats['outlier_fixed'] = 1
+            return None, stats
         
-        # Handle sign conventions for specific metrics
-        metric_lower = metric_name.lower()
+        # 2. Sign conventions based on metric type
+        original_value = value
         
-        # Cash outflows should be negative
-        if any(x in metric_lower for x in ['purchase', 'purchased', 'expenditure', 'capex']):
-            return -abs(value)
+        # Cash flow items - outflows should be negative
+        if statement_type == 'CashFlow':
+            if any(kw in metric_lower for kw in ['purchase', 'purchased', 'payment', 
+                                                  'expenditure', 'capex', 'dividend paid',
+                                                  'repayment', 'acquisition']):
+                if value > 0:
+                    value = -value
+                    stats['sign_corrected'] = 1
+            elif any(kw in metric_lower for kw in ['proceeds', 'received', 'inflow']):
+                if value < 0:
+                    value = -value
+                    stats['sign_corrected'] = 1
         
-        # Revenue, assets, equity should be positive
-        elif any(x in metric_lower for x in ['revenue', 'sales', 'assets', 'equity']):
-            if value < 0:
-                self.logger.warning(f"Negative value for {metric_name} in {year}: {value}")
-                return abs(value)
+        # P&L items - expenses typically positive in Indian format
+        elif statement_type == 'ProfitLoss':
+            # Revenue items should be positive
+            if any(kw in metric_lower for kw in ['revenue', 'sales', 'income from operations']):
+                if value < 0:
+                    self.logger.warning(f"Negative revenue for {metric} in {year}: {value}")
+                    value = abs(value)
+                    stats['sign_corrected'] = 1
+            
+            # Net income can be negative (loss)
+            elif 'net' in metric_lower and 'income' in metric_lower:
+                pass  # Can be negative
+            
+            # EBIT/Operating income can be negative
+            elif any(kw in metric_lower for kw in ['ebit', 'operating income', 'operating profit']):
+                pass  # Can be negative
         
-        return value
-    
-    def _post_process_restructured_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Post-process restructured data for quality improvements"""
-        # 1. Forward fill for missing values (only for balance sheet items)
-        balance_sheet_indices = [idx for idx in df.index if 'BalanceSheet::' in str(idx)]
-        for idx in balance_sheet_indices:
-            df.loc[idx] = df.loc[idx].fillna(method='ffill', limit=1)
+        # Balance sheet items
+        elif statement_type == 'BalanceSheet':
+            # Assets should be positive
+            if 'asset' in metric_lower:
+                if value < 0:
+                    self.logger.warning(f"Negative asset for {metric} in {year}: {value}")
+                    value = abs(value)
+                    stats['sign_corrected'] = 1
+            
+            # Equity can be negative (accumulated losses)
+            elif 'equity' in metric_lower and 'total equity' in metric_lower:
+                pass  # Can be negative
+            
+            # Liabilities should be positive
+            elif 'liabilit' in metric_lower:
+                if value < 0 and 'net' not in metric_lower:
+                    value = abs(value)
+                    stats['sign_corrected'] = 1
         
-        # 2. Detect and fix outliers
-        for idx in df.index:
-            series = df.loc[idx].dropna()
-            if len(series) >= 3:
-                # Use IQR method
+        # 3. Reasonableness checks
+        # Check for percentage values entered as whole numbers
+        if any(kw in metric_lower for kw in ['margin', 'rate', 'ratio', 'yield']):
+            if value > 100:
+                self.logger.warning(f"Possible percentage as whole number for {metric}: {value}")
+                # Don't auto-correct, just warn
+        
+        return value, stats
+
+    def _advanced_post_processing(self, df: pd.DataFrame, stats: Dict) -> pd.DataFrame:
+        """Advanced post-processing with interpolation and outlier handling"""
+        processed = df.copy()
+        
+        # 1. Forward fill balance sheet items (point-in-time data)
+        bs_indices = [idx for idx in df.index if 'BalanceSheet::' in str(idx)]
+        for idx in bs_indices:
+            # Only forward fill if missing data is limited
+            null_pct = processed.loc[idx].isna().sum() / len(processed.columns)
+            if null_pct < 0.5:  # Less than 50% missing
+                processed.loc[idx] = processed.loc[idx].fillna(method='ffill', limit=1)
+                stats['forward_fills'] = stats.get('forward_fills', 0) + 1
+        
+        # 2. Interpolate flow items (P&L and Cash Flow)
+        flow_indices = [idx for idx in df.index 
+                       if any(prefix in str(idx) for prefix in ['ProfitLoss::', 'CashFlow::'])]
+        
+        for idx in flow_indices:
+            series = processed.loc[idx]
+            if series.notna().sum() >= 2:  # At least 2 data points
+                # Linear interpolation for internal gaps only
+                first_valid = series.first_valid_index()
+                last_valid = series.last_valid_index()
+                if first_valid and last_valid:
+                    processed.loc[idx, first_valid:last_valid] = \
+                        series.loc[first_valid:last_valid].interpolate(method='linear')
+                    stats['interpolations'] = stats.get('interpolations', 0) + 1
+        
+        # 3. Detect and handle outliers using IQR method
+        for idx in processed.index:
+            series = processed.loc[idx].dropna()
+            if len(series) >= 4:  # Need at least 4 points for IQR
                 Q1 = series.quantile(0.25)
                 Q3 = series.quantile(0.75)
                 IQR = Q3 - Q1
                 
                 if IQR > 0:
+                    # Use 3*IQR for financial data (more lenient)
                     lower_bound = Q1 - 3 * IQR
                     upper_bound = Q3 + 3 * IQR
                     
-                    # Replace outliers with interpolated values
-                    outlier_mask = (series < lower_bound) | (series > upper_bound)
-                    if outlier_mask.any():
-                        self.logger.warning(f"Outliers detected in {idx}: {series[outlier_mask].to_dict()}")
-                        # Use linear interpolation
-                        df.loc[idx] = series.where(~outlier_mask).interpolate(method='linear')
+                    outliers = series[(series < lower_bound) | (series > upper_bound)]
+                    if len(outliers) > 0:
+                        self.logger.info(f"Outliers in {idx}: {outliers.to_dict()}")
+                        
+                        # Don't auto-remove outliers, just flag them
+                        stats['outliers_detected'] = stats.get('outliers_detected', 0) + len(outliers)
         
-        return df
-    
-    def _log_data_quality_summary(self, df: pd.DataFrame, issues: List[str]):
-        """Log comprehensive data quality summary"""
-        self.logger.info("\n[PN-RESTRUCTURE-V3] Data Quality Summary:")
+        return processed
+
+    def _comprehensive_validation(self, df: pd.DataFrame, stats: Dict):
+        """Comprehensive validation with detailed reporting"""
+        self.logger.info("\n[PN-VALIDATE] Data Quality Report:")
         
         # Coverage statistics
         total_cells = df.size
         non_null_cells = df.notna().sum().sum()
         coverage = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
         
-        self.logger.info(f"  - Data Coverage: {coverage:.1f}% ({non_null_cells}/{total_cells} cells)")
-        self.logger.info(f"  - Metrics: {len(df)} rows")
-        self.logger.info(f"  - Years: {len(df.columns)} columns")
+        self.logger.info(f"  - Overall Coverage: {coverage:.1f}% ({non_null_cells}/{total_cells})")
+        self.logger.info(f"  - Fill Rate: {(stats['filled_cells']/stats['total_cells']*100):.1f}%")
+        self.logger.info(f"  - Sign Corrections: {stats.get('sign_corrections', 0)}")
+        self.logger.info(f"  - Validation Failures: {stats.get('validation_failures', 0)}")
+        self.logger.info(f"  - Outliers Detected: {stats.get('outliers_detected', 0)}")
         
         # Per-year coverage
-        year_coverage = (df.notna().sum() / len(df) * 100).round(1)
-        self.logger.info(f"  - Coverage by year: {year_coverage.to_dict()}")
+        year_coverage = df.notna().sum() / len(df) * 100
+        self.logger.info("  - Year Coverage:")
+        for year, cov in year_coverage.items():
+            self.logger.info(f"    {year}: {cov:.1f}%")
         
-        # Issues summary
-        if issues:
-            self.logger.warning(f"  - Data quality issues: {len(issues)}")
-            for issue in issues[:5]:  # Show first 5
-                self.logger.warning(f"    • {issue}")
-    
+        # Required metrics check
+        required_metrics = ['Revenue', 'Operating Income', 'Net Income', 
+                           'Total Assets', 'Total Equity', 'Operating Cash Flow']
+        
+        missing_required = []
+        for metric in required_metrics:
+            found = False
+            for idx in df.index:
+                if self.mappings.get(idx) == metric:
+                    if df.loc[idx].notna().sum() > 0:
+                        found = True
+                        break
+            if not found:
+                missing_required.append(metric)
+        
+        if missing_required:
+            self.logger.warning(f"  - Missing Required Metrics: {missing_required}")
+        else:
+            self.logger.info("  - All required metrics present ✓")
+        
+        # Store validation results
+        self.validation_results['data_quality_stats'] = stats
+        self.validation_results['coverage'] = coverage
+        self.validation_results['missing_required'] = missing_required
+
     def _validate_input_data(self):
-        """Comprehensive validation of input data"""
+        """Comprehensive validation of input data and mappings"""
         validation = {
             'data_quality_score': 0,
             'issues': [],
@@ -3970,56 +4153,38 @@ class EnhancedPenmanNissimAnalyzer:
         
         for metric in essential_metrics:
             source_metric = self._find_source_metric(metric)
-            if not source_metric or source_metric not in self.df.index:
+            if not source_metric or source_metric not in self._df_clean.index:
                 missing_essentials.append(metric)
         
         if missing_essentials:
             validation['issues'].append(f"Missing essential metrics: {', '.join(missing_essentials)}")
         
-        # Check accounting equation (more flexible for Indian formats)
-        total_assets = self._get_metric_series('Total Assets')
-        total_equity = self._get_metric_series('Total Equity')
+        # Check data quality in clean data
+        numeric_df = self._df_clean.select_dtypes(include=[np.number])
+        if not numeric_df.empty:
+            completeness = (numeric_df.notna().sum().sum() / numeric_df.size) * 100
+        else:
+            completeness = 0
         
-        if total_assets is not None and total_equity is not None:
-            # Check if we have explicit Total Liabilities
-            total_liabilities = self._get_metric_series('Total Liabilities')
-            
-            if total_liabilities is not None:
-                # Traditional format - check equation
-                for year in self.df.columns:
-                    if all(year in series.index for series in [total_assets, total_liabilities, total_equity]):
-                        assets = total_assets[year]
-                        liabilities = total_liabilities[year]
-                        equity = total_equity[year]
-                        
-                        if all(pd.notna([assets, liabilities, equity])):
-                            difference = abs(assets - (liabilities + equity))
-                            tolerance = assets * 0.05  # 5% tolerance
-                            
-                            if difference > tolerance:
-                                validation['warnings'].append(f"Accounting equation imbalance in {year}: {difference:,.0f}")
-            else:
-                # Indian format - check for "Total Equity and Liabilities"
-                tea_items = [idx for idx in self.df.index 
-                            if 'total equity and liabilities' in str(idx).lower()]
-                if tea_items:
-                    validation['recommendations'].append("Using Indian format with 'Total Equity and Liabilities'")
-                else:
-                    validation['recommendations'].append("Total Liabilities will be calculated as Total Assets - Total Equity")
+        # Check for minimum years
+        if len(self._df_clean.columns) < 2:
+            validation['issues'].append("Insufficient time periods for meaningful analysis")
         
         # Calculate quality score
         total_mappings = len(self.mappings)
         essential_mappings = len([m for m in essential_metrics if self._find_source_metric(m)])
-        data_completeness = self._calculate_data_completeness()
         
         validation['data_quality_score'] = (
             (essential_mappings / len(essential_metrics)) * 0.4 +
-            (min(total_mappings, 20) / 20) * 0.3 +  # Cap at 20 for scoring
-            data_completeness * 0.3
+            (min(total_mappings, 20) / 20) * 0.3 +
+            (completeness / 100) * 0.3
         ) * 100
         
         self.validation_results = validation
-    
+        
+        if validation['data_quality_score'] < 50:
+            self.logger.warning(f"Low data quality score: {validation['data_quality_score']:.1f}")
+
     def _find_source_metric(self, target_metric: str) -> Optional[str]:
         """Find source metric that maps to target"""
         for source, target in self.mappings.items():
@@ -4027,238 +4192,179 @@ class EnhancedPenmanNissimAnalyzer:
                 return source
         return None
 
-    
     def _get_metric_series(self, target_metric: str) -> Optional[pd.Series]:
         """Get series for a target metric with error handling"""
         source_metric = self._find_source_metric(target_metric)
-        if source_metric and source_metric in self.df.index:
-            return self.df.loc[source_metric]
+        if source_metric and source_metric in self._df_clean.index:
+            return self._df_clean.loc[source_metric]
         return None
-    
-    def _calculate_data_completeness(self) -> float:
-        """Calculate overall data completeness"""
-        mapped_metrics = [self._find_source_metric(target) for target in self.mappings.values()]
-        mapped_metrics = [m for m in mapped_metrics if m and m in self.df.index]
+
+    def _log_metric_fetch(self, target_metric: str, source_metric: str, 
+                         series: pd.Series, context: str = ""):
+        """Log detailed information about metric fetching"""
+        self.logger.debug(f"\n{'='*60}")
+        self.logger.debug(f"[PN-TRACE] Fetching: {target_metric}")
+        self.logger.debug(f"[PN-TRACE] Source: {source_metric}")
+        self.logger.debug(f"[PN-TRACE] Context: {context}")
         
-        if not mapped_metrics:
-            return 0.0
-        
-        total_cells = len(mapped_metrics) * len(self.df.columns)
-        non_null_cells = sum(self.df.loc[metric].notna().sum() for metric in mapped_metrics)
-        
-        return non_null_cells / total_cells if total_cells > 0 else 0.0
-    
-    @error_boundary({'error': 'Penman-Nissim analysis failed'})
-    def calculate_all(self):
-        """Calculate all Penman-Nissim metrics - using fallback due to core issues"""
-        return self._fallback_calculate_all()
-    
-    def _fallback_calculate_all(self):
-        """Fallback implementation of Penman-Nissim calculations"""
-        try:
-            # BUG FIX: The original code renamed the dataframe here, which broke the
-            # internal helper functions. The fix is to NOT rename the dataframe
-            # and instead pass the original self.df to the analysis functions.
-            # The analyzer's helper methods are designed to use self.df (the original data)
-            # and self.mappings (the mapping dictionary) to find the correct series.
+        if series is not None:
+            values_dict = series.to_dict()
+            self.logger.debug(f"[PN-TRACE] Values: {values_dict}")
             
-            results = {
-            'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(self.df),
-            'reformulated_income_statement': self._reformulate_income_statement_enhanced(self.df),
-            'ratios': self._calculate_ratios_enhanced(self.df),
-            'free_cash_flow': self._calculate_free_cash_flow_enhanced(self.df),
-            'value_drivers': self._calculate_value_drivers_enhanced(self.df),
-            'validation_results': self.validation_results,
-            'calculation_metadata': self.calculation_metadata
-            }
-            
-            return results
+            non_null_values = series.dropna()
+            if len(non_null_values) > 0:
+                self.logger.debug(f"[PN-TRACE] Stats: Count={len(non_null_values)}, "
+                                f"Mean={non_null_values.mean():.2f}, "
+                                f"Min={non_null_values.min():.2f}, "
+                                f"Max={non_null_values.max():.2f}")
+            else:
+                self.logger.debug(f"[PN-TRACE] All values are null/empty")
+        else:
+            self.logger.debug(f"[PN-TRACE] Series is None - metric not found")
         
-        except Exception as e:
-            self.logger.error(f"Error in fallback calculations: {e}", exc_info=True)
-            return {
-            'error': str(e),
-            'validation_results': self.validation_results,
-            'calculation_metadata': self.calculation_metadata
-            }
+        self.logger.debug(f"{'='*60}\n")
+
+    def _log_calculation(self, calc_name: str, formula: str, inputs: Dict[str, pd.Series], 
+                        result: pd.Series, metadata: Dict[str, Any] = None):
+        """Log detailed calculation steps"""
+        self.logger.debug(f"\n{'*'*60}")
+        self.logger.debug(f"[PN-CALC] Calculation: {calc_name}")
+        self.logger.debug(f"[PN-CALC] Formula: {formula}")
         
+        self.logger.debug(f"[PN-CALC] Inputs:")
+        for name, series in inputs.items():
+            if series is not None:
+                self.logger.debug(f"  - {name}: {series.to_dict()}")
+            else:
+                self.logger.debug(f"  - {name}: None")
+        
+        self.logger.debug(f"[PN-CALC] Result: {result.to_dict() if result is not None else 'None'}")
+        
+        if metadata:
+            self.logger.debug(f"[PN-CALC] Metadata: {metadata}")
+        
+        self.logger.debug(f"{'*'*60}\n")
+
     def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced balance sheet reformulation with detailed logging and proper data handling"""
+        """Enhanced balance sheet reformulation - ALWAYS uses cached clean data"""
+        # Use cached result if available
+        if self._cached_bs is not None:
+            return self._cached_bs
+        
+        # ALWAYS use clean data, ignore parameter
+        df = self._df_clean
+        
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation")
+        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V5)")
         self.logger.info("="*80)
         
-        # CRITICAL FIX: Restructure data first to avoid mixed columns
-        df_clean = self._restructure_for_penman_nissim(df)
-        
-        reformulated = pd.DataFrame(index=df_clean.columns)  # Years as index
+        reformulated = pd.DataFrame(index=df.columns)
         metadata = {}
         
         try:
-            # Get core balance sheet items
-            self.logger.info("\n[PN-BS-CORE] Fetching core balance sheet items...")
-            
-            total_assets = self._get_safe_series(df_clean, 'Total Assets')
+            # Core items with validation
+            total_assets = self._get_safe_series(df, 'Total Assets')
             self._log_metric_fetch('Total Assets', self._find_source_metric('Total Assets'), 
                                   total_assets, "Core BS Item")
             
-            total_equity = self._get_safe_series(df_clean, 'Total Equity')
+            total_equity = self._get_safe_series(df, 'Total Equity')
             self._log_metric_fetch('Total Equity', self._find_source_metric('Total Equity'), 
                                   total_equity, "Core BS Item")
             
-            # Handle Total Liabilities - may need to calculate
+            # Total Liabilities - try to find explicit first
+            total_liabilities = None
             try:
-                total_liabilities = self._get_safe_series(df_clean, 'Total Liabilities')
-                self._log_metric_fetch('Total Liabilities', self._find_source_metric('Total Liabilities'), 
-                                      total_liabilities, "Core BS Item")
+                total_liabilities = self._get_safe_series(df, 'Total Liabilities')
+                self.logger.info("[PN-BS] Found explicit Total Liabilities")
+                metadata['liabilities_source'] = 'explicit'
             except:
                 # Calculate from accounting equation
                 total_liabilities = total_assets - total_equity
-                self.logger.warning("[PN-BS-CALC] Calculated Total Liabilities from Assets - Equity")
-                self._log_calculation(
-                    "Total Liabilities (Calculated)",
-                    "Total Assets - Total Equity",
-                    {"Total Assets": total_assets, "Total Equity": total_equity},
-                    total_liabilities
-                )
-                metadata['liabilities_calculated'] = True
+                self.logger.info("[PN-BS] Calculated Total Liabilities = Assets - Equity")
+                metadata['liabilities_source'] = 'calculated'
             
-            # Get current items
-            self.logger.info("\n[PN-BS-CURRENT] Fetching current items...")
-            current_assets = self._get_safe_series(df_clean, 'Current Assets', default_zero=True)
-            self._log_metric_fetch('Current Assets', self._find_source_metric('Current Assets'), 
-                                  current_assets, "Current Item")
+            # Current items
+            current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
+            current_liabilities = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
             
-            current_liabilities = self._get_safe_series(df_clean, 'Current Liabilities', default_zero=True)
-            self._log_metric_fetch('Current Liabilities', self._find_source_metric('Current Liabilities'), 
-                                  current_liabilities, "Current Item")
-            
-            # Get cash and equivalents
-            self.logger.info("\n[PN-BS-CASH] Fetching cash items...")
-            cash = self._get_safe_series(df_clean, 'Cash and Cash Equivalents', default_zero=True)
+            # Cash and investments
+            cash = self._get_safe_series(df, 'Cash and Cash Equivalents', default_zero=True)
             if (cash == 0).all():
-                # Try alternative names
-                cash = self._get_safe_series(df_clean, 'Cash', default_zero=True)
-            self._log_metric_fetch('Cash and Cash Equivalents', self._find_source_metric('Cash and Cash Equivalents'), 
-                                  cash, "Cash Item")
+                # Try alternative name
+                cash = self._get_safe_series(df, 'Cash', default_zero=True)
             
-            # Get debt items
-            self.logger.info("\n[PN-BS-DEBT] Fetching debt items...")
-            debt_mapping = {
-                'short_term': ['Short-term Debt', 'Short Term Borrowings', 'Current Borrowings', 
-                              'Short-term Borrowings', 'Current Debt'],
-                'long_term': ['Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings',
-                             'Long-term Borrowings', 'Non-current Debt']
-            }
-            
-            short_term_debt = pd.Series(0, index=df_clean.columns)
-            long_term_debt = pd.Series(0, index=df_clean.columns)
-            
-            for debt_item in debt_mapping['short_term']:
-                try:
-                    debt_series = self._get_safe_series(df_clean, debt_item, default_zero=True)
-                    short_term_debt += debt_series
-                    if (debt_series > 0).any():
-                        metadata['short_term_debt_source'] = debt_item
-                        self.logger.info(f"[PN-BS-DEBT] Found short-term debt from: {debt_item}")
-                        self._log_metric_fetch(debt_item, self._find_source_metric(debt_item), 
-                                              debt_series, "Short-term Debt")
-                        break
-                except:
-                    continue
-            
-            for debt_item in debt_mapping['long_term']:
-                try:
-                    debt_series = self._get_safe_series(df_clean, debt_item, default_zero=True)
-                    long_term_debt += debt_series
-                    if (debt_series > 0).any():
-                        metadata['long_term_debt_source'] = debt_item
-                        self.logger.info(f"[PN-BS-DEBT] Found long-term debt from: {debt_item}")
-                        self._log_metric_fetch(debt_item, self._find_source_metric(debt_item), 
-                                              debt_series, "Long-term Debt")
-                        break
-                except:
-                    continue
-            
-            total_debt = short_term_debt + long_term_debt
-            self._log_calculation(
-                "Total Debt",
-                "Short-term Debt + Long-term Debt",
-                {"Short-term Debt": short_term_debt, "Long-term Debt": long_term_debt},
-                total_debt
-            )
-            
-            # Get other financial assets
-            self.logger.info("\n[PN-BS-INVESTMENTS] Fetching investment items...")
-            investments = self._get_safe_series(df_clean, 'Investments', default_zero=True)
+            investments = self._get_safe_series(df, 'Investments', default_zero=True)
             if (investments == 0).all():
-                investments = self._get_safe_series(df_clean, 'Short-term Investments', default_zero=True)
-            self._log_metric_fetch('Investments', self._find_source_metric('Investments'), 
-                                  investments, "Investment Item")
+                investments = self._get_safe_series(df, 'Short-term Investments', default_zero=True)
             
-            # Calculate Financial Assets and Liabilities
-            self.logger.info("\n[PN-BS-FINANCIAL] Calculating financial items...")
+            # CRITICAL: Proper debt identification
+            short_term_debt = pd.Series(0, index=df.columns)
+            long_term_debt = pd.Series(0, index=df.columns)
+            
+            # Explicit debt items only
+            debt_found = False
+            
+            # Short-term debt
+            st_debt_items = [
+                'Short-term Debt', 'Short Term Borrowings', 'Current Borrowings',
+                'Short-term Borrowings', 'Current Debt', 'Short Term Debt'
+            ]
+            
+            for item in st_debt_items:
+                try:
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        short_term_debt = debt_series
+                        metadata['short_term_debt_source'] = item
+                        self.logger.info(f"[PN-BS] Found short-term debt from: {item}")
+                        debt_found = True
+                        break
+                except:
+                    continue
+            
+            # Long-term debt
+            lt_debt_items = [
+                'Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings',
+                'Long-term Borrowings', 'Non-current Debt', 'Long Term Debt'
+            ]
+            
+            for item in lt_debt_items:
+                try:
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        long_term_debt = debt_series
+                        metadata['long_term_debt_source'] = item
+                        self.logger.info(f"[PN-BS] Found long-term debt from: {item}")
+                        debt_found = True
+                        break
+                except:
+                    continue
+            
+            # Total debt calculation
+            total_debt = short_term_debt + long_term_debt
+            
+            if not debt_found:
+                self.logger.warning("[PN-BS] No explicit debt found - company may be debt-free")
+                metadata['debt_status'] = 'debt_free'
+            
+            # Financial items classification
             financial_assets = cash + investments
-            self._log_calculation(
-                "Financial Assets",
-                "Cash + Investments",
-                {"Cash": cash, "Investments": investments},
-                financial_assets
-            )
+            financial_liabilities = total_debt  # Only actual debt
             
-            financial_liabilities = total_debt
-            
-            # If no explicit debt found, try to estimate from current liabilities
-            if (financial_liabilities == 0).all() and (current_liabilities > 0).any():
-                st_borrowings = self._get_safe_series(df_clean, 'Other Current Liabilities', default_zero=True)
-                if (st_borrowings > 0).any():
-                    financial_liabilities = st_borrowings
-                    metadata['debt_estimated'] = True
-                    self.logger.warning("[PN-BS-DEBT] Estimated debt from Other Current Liabilities")
-            
-            # Calculate Net positions
-            self.logger.info("\n[PN-BS-NET] Calculating net positions...")
+            # Net financial position
             net_financial_assets = financial_assets - financial_liabilities
-            self._log_calculation(
-                "Net Financial Assets (NFA)",
-                "Financial Assets - Financial Liabilities",
-                {"Financial Assets": financial_assets, "Financial Liabilities": financial_liabilities},
-                net_financial_assets
-            )
             
-            # Calculate Operating items (residual approach)
-            self.logger.info("\n[PN-BS-OPERATING] Calculating operating items...")
+            # Operating items (residual approach)
             operating_assets = total_assets - financial_assets
-            self._log_calculation(
-                "Operating Assets",
-                "Total Assets - Financial Assets",
-                {"Total Assets": total_assets, "Financial Assets": financial_assets},
-                operating_assets
-            )
-            
             operating_liabilities = total_liabilities - financial_liabilities
-            self._log_calculation(
-                "Operating Liabilities",
-                "Total Liabilities - Financial Liabilities",
-                {"Total Liabilities": total_liabilities, "Financial Liabilities": financial_liabilities},
-                operating_liabilities
-            )
             
-            # Ensure operating liabilities are non-negative
+            # Ensure non-negative operating liabilities
             operating_liabilities = operating_liabilities.clip(lower=0)
             
-            # Net Operating Assets - THE KEY METRIC FOR RNOA
-            self.logger.info("\n[PN-BS-NOA] CALCULATING NET OPERATING ASSETS (NOA)...")
+            # Net Operating Assets (NOA) - key metric
             net_operating_assets = operating_assets - operating_liabilities
-            self._log_calculation(
-                "Net Operating Assets (NOA)",
-                "Operating Assets - Operating Liabilities",
-                {"Operating Assets": operating_assets, "Operating Liabilities": operating_liabilities},
-                net_operating_assets,
-                {"purpose": "This is used as denominator for RNOA calculation"}
-            )
             
-            # Common Equity
+            # Common Equity (same as total equity for most companies)
             common_equity = total_equity
             
             # Build reformulated balance sheet
@@ -4276,187 +4382,137 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Short-term Debt'] = short_term_debt
             reformulated['Long-term Debt'] = long_term_debt
             
-            # Enhanced validation check
-            self.logger.info("\n[PN-BS-VALIDATION] Validating reformulation...")
+            # Validation check
             check = net_operating_assets + net_financial_assets - common_equity
             metadata['balance_check'] = check.abs().max()
+            metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100 if (common_equity != 0).any() else 0
             
-            if (common_equity != 0).any():
-                metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100
-            else:
-                metadata['balance_check_pct'] = 0
+            self.logger.info(f"[PN-BS] Balance check: NOA + NFA - CE = {check.to_dict()}")
+            self.logger.info(f"[PN-BS] Maximum absolute difference: {metadata['balance_check']:.2f}")
+            self.logger.info(f"[PN-BS] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
             
-            self.logger.info(f"[PN-BS-CHECK] Balance check: NOA + NFA - CE = {check.to_dict()}")
-            self.logger.info(f"[PN-BS-CHECK] Maximum absolute difference: {metadata['balance_check']:.2f}")
-            self.logger.info(f"[PN-BS-CHECK] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
-            
-            # Additional metadata for debugging
-            metadata.update({
-                'total_assets_sum': total_assets.sum(),
-                'total_equity_sum': total_equity.sum(),
-                'total_liabilities_sum': total_liabilities.sum(),
-                'net_operating_assets_sum': net_operating_assets.sum(),
-                'net_financial_assets_sum': net_financial_assets.sum()
-            })
-            
+            # Summary statistics
             self.logger.info("\n[PN-BS-SUMMARY] Balance Sheet Reformulation Summary:")
             self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}")
             self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}")
             self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}")
             self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}")
             self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}")
+            self.logger.info(f"  Total Debt: {total_debt.sum():,.0f}")
             
         except Exception as e:
-            self.logger.error(f"[PN-BS-ERROR] Enhanced BS reformulation failed: {e}", exc_info=True)
-            # Return simple version as fallback
-            return self._reformulate_balance_sheet_simple(df)
+            self.logger.error(f"[PN-BS-ERROR] Balance sheet reformulation failed: {e}", exc_info=True)
+            raise
         
         self.calculation_metadata['balance_sheet'] = metadata
         
         self.logger.info("\n[PN-BS-END] Balance Sheet Reformulation Complete")
         self.logger.info("="*80 + "\n")
         
-        return reformulated.T
-    
+        # Cache result
+        self._cached_bs = reformulated.T
+        return self._cached_bs
+
     def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced income statement reformulation with detailed logging and proper data handling"""
+        """Enhanced income statement reformulation - ALWAYS uses cached clean data"""
+        # Use cached result if available
+        if self._cached_is is not None:
+            return self._cached_is
+        
+        # ALWAYS use clean data, ignore parameter
+        df = self._df_clean
+        
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation")
+        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation (V5)")
         self.logger.info("="*80)
         
-        # CRITICAL FIX: Restructure data first to avoid mixed columns
-        df_clean = self._restructure_for_penman_nissim(df)
-        
-        reformulated = pd.DataFrame(index=df_clean.columns)  # Years as index
+        reformulated = pd.DataFrame(index=df.columns)
         metadata = {}
         
         try:
-            # Get revenue
-            self.logger.info("\n[PN-IS-REVENUE] Fetching revenue...")
-            revenue = self._get_safe_series(df_clean, 'Revenue')
+            # Revenue
+            revenue = self._get_safe_series(df, 'Revenue')
             self._log_metric_fetch('Revenue', self._find_source_metric('Revenue'), 
                                   revenue, "Income Statement Item")
             reformulated['Revenue'] = revenue
             
-            # Get operating income - try multiple variants
-            self.logger.info("\n[PN-IS-OPINCOME] Fetching operating income...")
+            # Operating Income - try multiple variants
             operating_income = None
             op_income_variants = [
                 'Operating Income', 'EBIT', 'Operating Profit',
-                'Profit Before Exceptional Items and Tax', 
+                'Profit Before Exceptional Items and Tax',
                 'Profit Before Interest and Tax'
             ]
             
             for variant in op_income_variants:
                 try:
-                    operating_income = self._get_safe_series(df_clean, variant)
-                    metadata['operating_income_source'] = variant
-                    self.logger.info(f"[PN-IS-OPINCOME] Found operating income from: {variant}")
-                    self._log_metric_fetch(variant, self._find_source_metric(variant), 
-                                          operating_income, "Operating Income")
-                    break
+                    operating_income = self._get_safe_series(df, variant)
+                    if operating_income is not None and (operating_income != 0).any():
+                        metadata['operating_income_source'] = variant
+                        self.logger.info(f"[PN-IS] Found operating income from: {variant}")
+                        break
                 except:
                     continue
             
             if operating_income is None:
                 # Try to calculate from components
-                self.logger.warning("[PN-IS-OPINCOME] Calculating operating income from components...")
+                self.logger.warning("[PN-IS] Calculating operating income from components...")
                 try:
-                    gross_profit = self._get_safe_series(df_clean, 'Gross Profit')
-                    operating_expenses = self._get_safe_series(df_clean, 'Operating Expenses', default_zero=True)
+                    gross_profit = self._get_safe_series(df, 'Gross Profit')
+                    operating_expenses = self._get_safe_series(df, 'Operating Expenses', default_zero=True)
                     operating_income = gross_profit - operating_expenses
                     metadata['operating_income_calculated'] = True
-                    
-                    self._log_calculation(
-                        "Operating Income (Calculated)",
-                        "Gross Profit - Operating Expenses",
-                        {"Gross Profit": gross_profit, "Operating Expenses": operating_expenses},
-                        operating_income
-                    )
                 except:
                     raise ValueError("Cannot determine Operating Income")
             
             reformulated['Operating Income Before Tax'] = operating_income
             
-            # Get tax rate and calculate tax on operating income
-            self.logger.info("\n[PN-IS-TAX] Calculating tax on operating income...")
+            # Tax calculation - CRITICAL
             try:
-                tax_expense = self._get_safe_series(df_clean, 'Tax Expense')
-                self._log_metric_fetch('Tax Expense', self._find_source_metric('Tax Expense'), 
-                                      tax_expense, "Tax Item")
+                tax_expense = self._get_safe_series(df, 'Tax Expense')
+                income_before_tax = self._get_safe_series(df, 'Income Before Tax')
                 
-                income_before_tax = self._get_safe_series(df_clean, 'Income Before Tax')
-                self._log_metric_fetch('Income Before Tax', self._find_source_metric('Income Before Tax'), 
-                                      income_before_tax, "Tax Item")
+                # Calculate effective tax rate year by year
+                tax_rate = pd.Series(index=df.columns, dtype=float)
                 
-                # Calculate effective tax rate
-                tax_rate = (tax_expense / income_before_tax.replace(0, np.nan)).fillna(0)
-                tax_rate = tax_rate.clip(0, 1)  # Ensure between 0 and 1
-                
-                self._log_calculation(
-                    "Tax Rate",
-                    "Tax Expense / Income Before Tax",
-                    {"Tax Expense": tax_expense, "Income Before Tax": income_before_tax},
-                    tax_rate,
-                    {"note": "Clipped to [0, 1]"}
-                )
+                for year in df.columns:
+                    if pd.notna(income_before_tax[year]) and income_before_tax[year] > 0:
+                        # Standard calculation
+                        rate = tax_expense[year] / income_before_tax[year]
+                        # Sanity check - corporate tax rates typically 15-40%
+                        tax_rate[year] = max(0.0, min(0.40, rate))
+                    else:
+                        # Default rate
+                        tax_rate[year] = 0.25
                 
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
                 
-                self._log_calculation(
-                    "Tax on Operating Income",
-                    "Operating Income × Tax Rate",
-                    {"Operating Income": operating_income, "Tax Rate": tax_rate},
-                    reformulated['Tax on Operating Income']
-                )
-                
-                # NOPAT - THE KEY METRIC FOR RNOA
-                self.logger.info("\n[PN-IS-NOPAT] CALCULATING NOPAT (Operating Income After Tax)...")
+                # NOPAT - Operating Income After Tax
                 reformulated['Operating Income After Tax'] = operating_income - reformulated['Tax on Operating Income']
                 
                 self._log_calculation(
                     "NOPAT (Operating Income After Tax)",
-                    "Operating Income - Tax on Operating Income",
-                    {"Operating Income": operating_income, "Tax on Operating Income": reformulated['Tax on Operating Income']},
+                    "Operating Income × (1 - Tax Rate)",
+                    {"Operating Income": operating_income, "Tax Rate": tax_rate},
                     reformulated['Operating Income After Tax'],
                     {"purpose": "This is the numerator for RNOA calculation"}
                 )
                 
             except Exception as e:
-                # Fallback - assume 25% tax rate
-                self.logger.warning(f"[PN-IS-TAX] Tax calculation failed: {e}. Using default 25% tax rate")
+                self.logger.warning(f"[PN-IS-TAX] Tax calculation issue: {e}. Using default 25% tax rate")
                 tax_rate = 0.25
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
                 reformulated['Operating Income After Tax'] = operating_income * (1 - tax_rate)
-                
-                self._log_calculation(
-                    "NOPAT (with default tax)",
-                    "Operating Income × (1 - 0.25)",
-                    {"Operating Income": operating_income},
-                    reformulated['Operating Income After Tax'],
-                    {"note": "Using default 25% tax rate"}
-                )
+                metadata['tax_calculation'] = 'default'
             
-            # Get financial items
-            self.logger.info("\n[PN-IS-FINANCIAL] Fetching financial items...")
-            interest_expense = self._get_safe_series(df_clean, 'Interest Expense', default_zero=True)
-            self._log_metric_fetch('Interest Expense', self._find_source_metric('Interest Expense'), 
-                                  interest_expense, "Financial Item")
+            # Financial items
+            interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
+            interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             
-            interest_income = self._get_safe_series(df_clean, 'Interest Income', default_zero=True)
-            self._log_metric_fetch('Interest Income', self._find_source_metric('Interest Income'), 
-                                  interest_income, "Financial Item")
-            
-            # Net Financial Expense (positive = expense, negative = income)
+            # Net Financial Expense
             net_financial_expense = interest_expense - interest_income
-            self._log_calculation(
-                "Net Financial Expense",
-                "Interest Expense - Interest Income",
-                {"Interest Expense": interest_expense, "Interest Income": interest_income},
-                net_financial_expense
-            )
             
             reformulated['Interest Expense'] = interest_expense
             reformulated['Interest Income'] = interest_income
@@ -4466,24 +4522,10 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Tax Benefit on Financial Expense'] = net_financial_expense * tax_rate
             reformulated['Net Financial Expense After Tax'] = net_financial_expense * (1 - tax_rate)
             
-            # Net Income check
-            self.logger.info("\n[PN-IS-CHECK] Validating with reported net income...")
-            net_income = self._get_safe_series(df_clean, 'Net Income')
-            self._log_metric_fetch('Net Income', self._find_source_metric('Net Income'), 
-                                  net_income, "Validation Item")
-            
+            # Net Income reconciliation
+            net_income = self._get_safe_series(df, 'Net Income')
             calculated_net_income = (reformulated['Operating Income After Tax'] - 
                                     reformulated['Net Financial Expense After Tax'])
-            
-            self._log_calculation(
-                "Net Income (Calculated)",
-                "NOPAT - Net Financial Expense After Tax",
-                {
-                    "NOPAT": reformulated['Operating Income After Tax'],
-                    "Net Financial Expense After Tax": reformulated['Net Financial Expense After Tax']
-                },
-                calculated_net_income
-            )
             
             reformulated['Net Income (Reported)'] = net_income
             reformulated['Net Income (Calculated)'] = calculated_net_income
@@ -4492,9 +4534,12 @@ class EnhancedPenmanNissimAnalyzer:
             income_diff = (net_income - calculated_net_income).abs().max()
             metadata['income_reconciliation_diff'] = income_diff
             
-            self.logger.info(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
-            self.logger.info(f"[PN-IS-CHECK] Reported Net Income: {net_income.to_dict()}")
-            self.logger.info(f"[PN-IS-CHECK] Calculated Net Income: {calculated_net_income.to_dict()}")
+            if income_diff > 0.01:  # More than 1 cent difference
+                self.logger.info(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
+                self.logger.info(f"[PN-IS-CHECK] Reported vs Calculated:")
+                for year in df.columns:
+                    if pd.notna(net_income[year]):
+                        self.logger.debug(f"  {year}: {net_income[year]:,.2f} vs {calculated_net_income[year]:,.2f}")
             
             # Summary
             self.logger.info("\n[PN-IS-SUMMARY] Income Statement Reformulation Summary:")
@@ -4504,104 +4549,70 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info(f"  Net Income: {net_income.sum():,.0f}")
             
         except Exception as e:
-            self.logger.error(f"[PN-IS-ERROR] Enhanced IS reformulation failed: {e}", exc_info=True)
-            return self._reformulate_income_statement_simple(df)
+            self.logger.error(f"[PN-IS-ERROR] Income statement reformulation failed: {e}", exc_info=True)
+            raise
         
         self.calculation_metadata['income_statement'] = metadata
         
         self.logger.info("\n[PN-IS-END] Income Statement Reformulation Complete")
         self.logger.info("="*80 + "\n")
         
-        return reformulated.T
-    
+        # Cache result
+        self._cached_is = reformulated.T
+        return self._cached_is
+
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced ratio calculation with detailed logging and proper data alignment"""
+        """Enhanced ratio calculations - uses cached reformulated statements"""
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-RATIOS-START] Starting Ratio Calculations")
+        self.logger.info("[PN-RATIOS-START] Starting Ratio Calculations (V5)")
         self.logger.info("="*80)
         
-        # CRITICAL FIX: Restructure data first
-        df_clean = self._restructure_for_penman_nissim(df)
+        # Get reformulated statements (already cached)
+        ref_bs = self._reformulate_balance_sheet_enhanced(None)
+        ref_is = self._reformulate_income_statement_enhanced(None)
         
-        ratios = pd.DataFrame(index=df_clean.columns)  # Years as index
+        self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
+        self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
+        
+        ratios = pd.DataFrame(index=ref_bs.columns)  # Years as index
         metadata = {}
         
         try:
-            # Get reformulated statements
-            self.logger.info("\n[PN-RATIOS-REFORM] Getting reformulated statements...")
-            ref_bs = self._reformulate_balance_sheet_enhanced(df)
-            ref_is = self._reformulate_income_statement_enhanced(df)
-            
-            # Log shapes for debugging
-            self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
-            self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
-            self.logger.info(f"[PN-RATIOS-DATA] BS columns: {ref_bs.columns.tolist()}")
-            self.logger.info(f"[PN-RATIOS-DATA] IS columns: {ref_is.columns.tolist()}")
-            
-            # RNOA (Return on Net Operating Assets) - THE KEY RATIO
+            # RNOA (Return on Net Operating Assets)
             self.logger.info("\n[PN-RATIOS-RNOA] CALCULATING RNOA...")
-            if all(item in ref_is.index for item in ['Operating Income After Tax']) and \
-               all(item in ref_bs.index for item in ['Net Operating Assets']):
-                
-                # Get NOPAT and NOA
-                oiat = ref_is.loc['Operating Income After Tax']  # NOPAT
+            
+            if 'Operating Income After Tax' in ref_is.index and 'Net Operating Assets' in ref_bs.index:
+                nopat = ref_is.loc['Operating Income After Tax']
                 noa = ref_bs.loc['Net Operating Assets']
                 
-                # CRITICAL: Ensure we're using the same years for both
-                common_years = sorted(set(oiat.index) & set(noa.index))
-                self.logger.info(f"[PN-RATIOS-RNOA] Common years for RNOA: {common_years}")
-                
-                # Filter to common years
-                oiat_aligned = oiat[common_years]
-                noa_aligned = noa[common_years]
-                
-                self.logger.info(f"[PN-RATIOS-RNOA] NOPAT values: {oiat_aligned.to_dict()}")
-                self.logger.info(f"[PN-RATIOS-RNOA] NOA values: {noa_aligned.to_dict()}")
-                
                 # Use average NOA for more accurate calculation
-                avg_noa = noa_aligned.rolling(window=2, min_periods=1).mean()
-                self.logger.info(f"[PN-RATIOS-RNOA] Average NOA values: {avg_noa.to_dict()}")
+                avg_noa = noa.rolling(window=2, min_periods=1).mean()
                 
                 # Calculate RNOA
-                rnoa = (oiat_aligned / avg_noa.replace(0, np.nan)) * 100
+                rnoa = (nopat / avg_noa.replace(0, np.nan)) * 100
                 ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
                 
                 self._log_calculation(
                     "RNOA",
                     "(NOPAT / Average NOA) × 100",
-                    {"NOPAT": oiat_aligned, "Average NOA": avg_noa},
+                    {"NOPAT": nopat, "Average NOA": avg_noa},
                     rnoa,
                     {"formula": "RNOA = (Operating Income After Tax / Average Net Operating Assets) × 100"}
                 )
                 
-                # Log the actual RNOA values
                 self.logger.info(f"[PN-RATIOS-RNOA] CALCULATED RNOA VALUES: {rnoa.to_dict()}")
                 
-                # Calculate components
+                # RNOA Components
                 if 'Revenue' in ref_is.index:
-                    revenue = ref_is.loc['Revenue'][common_years]
+                    revenue = ref_is.loc['Revenue']
                     
-                    # Operating Profit Margin
-                    opm = (oiat_aligned / revenue.replace(0, np.nan)) * 100
+                    # Operating Profit Margin (OPM)
+                    opm = (nopat / revenue.replace(0, np.nan)) * 100
                     ratios['Operating Profit Margin (OPM) %'] = opm
                     
-                    self._log_calculation(
-                        "Operating Profit Margin",
-                        "(NOPAT / Revenue) × 100",
-                        {"NOPAT": oiat_aligned, "Revenue": revenue},
-                        opm
-                    )
-                    
-                    # Net Operating Asset Turnover
+                    # Net Operating Asset Turnover (NOAT)
                     noat = revenue / avg_noa.replace(0, np.nan)
                     ratios['Net Operating Asset Turnover (NOAT)'] = noat
-                    
-                    self._log_calculation(
-                        "Net Operating Asset Turnover",
-                        "Revenue / Average NOA",
-                        {"Revenue": revenue, "Average NOA": avg_noa},
-                        noat
-                    )
                     
                     # Verify RNOA = OPM × NOAT
                     calculated_rnoa = (opm * noat) / 100
@@ -4610,140 +4621,77 @@ class EnhancedPenmanNissimAnalyzer:
                     self.logger.info("\n[PN-RATIOS-RNOA-CHECK] RNOA Decomposition Check:")
                     self.logger.info(f"  RNOA (direct): {rnoa.to_dict()}")
                     self.logger.info(f"  RNOA (OPM × NOAT): {calculated_rnoa.to_dict()}")
-                    self.logger.info(f"  Maximum difference: {metadata['rnoa_decomposition_check']:.4f}")
-                else:
-                    self.logger.warning("[PN-RATIOS-RNOA] Revenue not found - cannot decompose RNOA")
-            else:
-                self.logger.error("[PN-RATIOS-RNOA] Missing required items for RNOA calculation")
-                self.logger.info(f"  Has Operating Income After Tax: {'Operating Income After Tax' in ref_is.index}")
-                self.logger.info(f"  Has Net Operating Assets: {'Net Operating Assets' in ref_bs.index}")
-                
-            # FLEV (Financial Leverage)
+            
+            # Financial Leverage (FLEV)
             self.logger.info("\n[PN-RATIOS-FLEV] Calculating Financial Leverage...")
-            if all(item in ref_bs.index for item in ['Net Financial Assets', 'Common Equity']):
+            
+            if 'Net Financial Assets' in ref_bs.index and 'Common Equity' in ref_bs.index:
                 nfa = ref_bs.loc['Net Financial Assets']
                 ce = ref_bs.loc['Common Equity']
                 
-                # Align years
-                common_years_flev = sorted(set(nfa.index) & set(ce.index))
-                nfa_aligned = nfa[common_years_flev]
-                ce_aligned = ce[common_years_flev]
+                avg_ce = ce.rolling(window=2, min_periods=1).mean()
                 
-                avg_ce = ce_aligned.rolling(window=2, min_periods=1).mean()
-                
-                # FLEV = -NFO/CE (negative NFA = positive NFO)
-                flev = -nfa_aligned / avg_ce.replace(0, np.nan)
+                # FLEV = -NFA/CE (negative NFA means net debt)
+                flev = -nfa / avg_ce.replace(0, np.nan)
                 ratios['Financial Leverage (FLEV)'] = flev
                 
-                self._log_calculation(
-                    "Financial Leverage",
-                    "-NFA / Average Common Equity",
-                    {"NFA": nfa_aligned, "Average Common Equity": avg_ce},
-                    flev,
-                    {"note": "Negative NFA means positive Net Financial Obligations"}
-                )
-                
-                # Alternative: Debt to Equity if available
+                # Alternative: Debt to Equity
                 if 'Total Debt' in ref_bs.index:
-                    total_debt = ref_bs.loc['Total Debt'][common_years_flev]
+                    total_debt = ref_bs.loc['Total Debt']
                     debt_to_equity = total_debt / avg_ce.replace(0, np.nan)
                     ratios['Debt to Equity'] = debt_to_equity
-                    
-                    self._log_calculation(
-                        "Debt to Equity",
-                        "Total Debt / Average Common Equity",
-                        {"Total Debt": total_debt, "Average Common Equity": avg_ce},
-                        debt_to_equity
-                    )
             
-            # NBC (Net Borrowing Cost)
+            # Net Borrowing Cost (NBC)
             self.logger.info("\n[PN-RATIOS-NBC] Calculating Net Borrowing Cost...")
-            if all(item in ref_is.index for item in ['Net Financial Expense After Tax']) and \
-               all(item in ref_bs.index for item in ['Net Financial Assets']):
-                
+            
+            if 'Net Financial Expense After Tax' in ref_is.index and 'Net Financial Assets' in ref_bs.index:
                 nfe_after_tax = ref_is.loc['Net Financial Expense After Tax']
                 nfa = ref_bs.loc['Net Financial Assets']
                 
-                # Align years
-                common_years_nbc = sorted(set(nfe_after_tax.index) & set(nfa.index))
-                nfe_aligned = nfe_after_tax[common_years_nbc]
-                nfa_aligned = nfa[common_years_nbc]
+                avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
                 
-                # Use average NFA
-                avg_nfa = nfa_aligned.rolling(window=2, min_periods=1).mean()
+                # NBC calculation (when company has net debt, i.e., negative NFA)
+                nbc = pd.Series(index=ref_bs.columns, dtype=float)
                 
-                # NBC = NFE / (-NFA) for when NFA is negative (i.e., net debt position)
-                nbc = (nfe_aligned / (-avg_nfa).replace(0, np.nan)) * 100
+                for year in ref_bs.columns:
+                    if avg_nfa[year] < 0:  # Net debt position
+                        nbc[year] = (nfe_after_tax[year] / -avg_nfa[year]) * 100
+                    else:
+                        nbc[year] = 0  # No borrowing cost if net cash position
+                
                 ratios['Net Borrowing Cost (NBC) %'] = nbc
                 
-                self._log_calculation(
-                    "Net Borrowing Cost",
-                    "(Net Financial Expense After Tax / -Average NFA) × 100",
-                    {"NFE After Tax": nfe_aligned, "Average NFA": avg_nfa},
-                    nbc,
-                    {"note": "NBC = cost of net debt position"}
-                )
-                
-                # Alternative calculation using gross rates
+                # Alternative: Gross borrowing rate
                 if 'Interest Expense' in ref_is.index and 'Total Debt' in ref_bs.index:
                     interest_expense = ref_is.loc['Interest Expense']
                     total_debt = ref_bs.loc['Total Debt']
+                    avg_debt = total_debt.rolling(window=2, min_periods=1).mean()
                     
-                    common_years_gross = sorted(set(interest_expense.index) & set(total_debt.index))
-                    interest_aligned = interest_expense[common_years_gross]
-                    debt_aligned = total_debt[common_years_gross]
-                    
-                    avg_debt = debt_aligned.rolling(window=2, min_periods=1).mean()
-                    
-                    gross_borrowing_rate = (interest_aligned / avg_debt.replace(0, np.nan)) * 100
-                    ratios['Gross Borrowing Rate %'] = gross_borrowing_rate
+                    gross_rate = (interest_expense / avg_debt.replace(0, np.nan)) * 100
+                    ratios['Gross Borrowing Rate %'] = gross_rate
             
             # Spread (RNOA - NBC)
             self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
-            if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %', 
-                                                    'Net Borrowing Cost (NBC) %']):
-                spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - \
-                        ratios.loc['Net Borrowing Cost (NBC) %']
+            
+            if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
+                spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - ratios.loc['Net Borrowing Cost (NBC) %']
                 ratios['Spread %'] = spread
                 ratios['Leverage Spread %'] = spread  # Alternative name
-                
-                self._log_calculation(
-                    "Spread",
-                    "RNOA - NBC",
-                    {
-                        "RNOA": ratios.loc['Return on Net Operating Assets (RNOA) %'],
-                        "NBC": ratios.loc['Net Borrowing Cost (NBC) %']
-                    },
-                    spread,
-                    {"interpretation": "Positive spread means operations earn more than cost of debt"}
-                )
             
             # ROE and its decomposition
             self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
+            
             if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
                 net_income = ref_is.loc['Net Income (Reported)']
                 ce = ref_bs.loc['Common Equity']
+                avg_ce = ce.rolling(window=2, min_periods=1).mean()
                 
-                # Align years
-                common_years_roe = sorted(set(net_income.index) & set(ce.index))
-                ni_aligned = net_income[common_years_roe]
-                ce_aligned = ce[common_years_roe]
-                
-                avg_ce = ce_aligned.rolling(window=2, min_periods=1).mean()
-                
-                roe = (ni_aligned / avg_ce.replace(0, np.nan)) * 100
+                roe = (net_income / avg_ce.replace(0, np.nan)) * 100
                 ratios['Return on Equity (ROE) %'] = roe
                 
-                self._log_calculation(
-                    "ROE",
-                    "(Net Income / Average Common Equity) × 100",
-                    {"Net Income": ni_aligned, "Average Common Equity": avg_ce},
-                    roe
-                )
-                
                 # ROE = RNOA + (FLEV × Spread)
-                if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %',
-                                                        'Financial Leverage (FLEV)', 'Spread %']):
+                if all(x in ratios.index for x in ['Return on Net Operating Assets (RNOA) %', 
+                                                   'Financial Leverage (FLEV)', 'Spread %']):
                     rnoa = ratios.loc['Return on Net Operating Assets (RNOA) %']
                     flev = ratios.loc['Financial Leverage (FLEV)']
                     spread = ratios.loc['Spread %']
@@ -4752,29 +4700,14 @@ class EnhancedPenmanNissimAnalyzer:
                     ratios['ROE (Calculated) %'] = calculated_roe
                     
                     metadata['roe_decomposition_diff'] = (roe - calculated_roe).abs().max()
-                    
-                    self.logger.info("\n[PN-RATIOS-ROE-CHECK] ROE Decomposition Check:")
-                    self.logger.info("  Formula: ROE = RNOA + (FLEV × Spread)")
-                    self.logger.info(f"  ROE (direct): {roe.to_dict()}")
-                    self.logger.info(f"  ROE (calculated): {calculated_roe.to_dict()}")
-                    self.logger.info(f"  RNOA: {rnoa.to_dict()}")
-                    self.logger.info(f"  FLEV: {flev.to_dict()}")
-                    self.logger.info(f"  Spread: {spread.to_dict()}")
-                    self.logger.info(f"  FLEV × Spread: {(flev * spread).to_dict()}")
-                    self.logger.info(f"  Maximum difference: {metadata['roe_decomposition_diff']:.4f}")
             
             # Additional performance metrics
             if 'Total Assets' in ref_bs.index and 'Net Income (Reported)' in ref_is.index:
                 total_assets = ref_bs.loc['Total Assets']
                 net_income = ref_is.loc['Net Income (Reported)']
+                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
                 
-                common_years_roa = sorted(set(total_assets.index) & set(net_income.index))
-                ta_aligned = total_assets[common_years_roa]
-                ni_aligned = net_income[common_years_roa]
-                
-                avg_assets = ta_aligned.rolling(window=2, min_periods=1).mean()
-                
-                roa = (ni_aligned / avg_assets.replace(0, np.nan)) * 100
+                roa = (net_income / avg_assets.replace(0, np.nan)) * 100
                 ratios['Return on Assets (ROA) %'] = roa
             
             # Growth metrics
@@ -4792,41 +4725,15 @@ class EnhancedPenmanNissimAnalyzer:
             if 'Revenue' in ref_is.index and 'Total Assets' in ref_bs.index:
                 revenue = ref_is.loc['Revenue']
                 total_assets = ref_bs.loc['Total Assets']
+                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
                 
-                common_years_eff = sorted(set(revenue.index) & set(total_assets.index))
-                rev_aligned = revenue[common_years_eff]
-                ta_aligned = total_assets[common_years_eff]
-                
-                avg_assets = ta_aligned.rolling(window=2, min_periods=1).mean()
-                
-                asset_turnover = rev_aligned / avg_assets.replace(0, np.nan)
+                asset_turnover = revenue / avg_assets.replace(0, np.nan)
                 ratios['Asset Turnover'] = asset_turnover
-            
-            # Profitability ratios
-            if 'Revenue' in ref_is.index and 'Net Income (Reported)' in ref_is.index:
-                revenue = ref_is.loc['Revenue']
-                net_income = ref_is.loc['Net Income (Reported)']
-                
-                common_years_prof = sorted(set(revenue.index) & set(net_income.index))
-                rev_aligned = revenue[common_years_prof]
-                ni_aligned = net_income[common_years_prof]
-                
-                net_margin = (ni_aligned / rev_aligned.replace(0, np.nan)) * 100
-                ratios['Net Profit Margin %'] = net_margin
-            
-            # Quality checks
-            metadata['ratio_count'] = len(ratios.index)
-            metadata['complete_years'] = sum(ratios.notna().all())
-            metadata['missing_ratio_pct'] = (ratios.isna().sum().sum() / (len(ratios.index) * len(ratios.columns))) * 100 if len(ratios.columns) > 0 else 0
-            
-            if metadata['missing_ratio_pct'] > 50:
-                self.logger.warning(f"High percentage of missing ratios: {metadata['missing_ratio_pct']:.1f}%")
             
             # Summary
             self.logger.info("\n[PN-RATIOS-SUMMARY] Ratio Calculation Summary:")
             self.logger.info(f"  Total ratios calculated: {len(ratios.index)}")
             self.logger.info(f"  Key ratios: {list(ratios.index)}")
-            self.logger.info(f"  Years covered: {list(ratios.columns)}")
             
             # Log all calculated ratios
             self.logger.info("\n[PN-RATIOS-ALL] All Calculated Ratios:")
@@ -4834,479 +4741,371 @@ class EnhancedPenmanNissimAnalyzer:
                 self.logger.info(f"  {ratio_name}: {ratios.loc[ratio_name].to_dict()}")
             
         except Exception as e:
-            self.logger.error(f"[PN-RATIOS-ERROR] Error in ratio calculation: {e}", exc_info=True)
-            # Return simple version as fallback
-            return self._calculate_ratios_simple(df)
+            self.logger.error(f"[PN-RATIOS-ERROR] Ratio calculation failed: {e}", exc_info=True)
+            raise
         
         self.calculation_metadata['ratios'] = metadata
         
         self.logger.info("\n[PN-RATIOS-END] Ratio Calculations Complete")
         self.logger.info("="*80 + "\n")
         
-        return ratios.T  # Transpose for better display
-    
+        return ratios.T  # Transpose for display
+
     def _calculate_free_cash_flow_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced free cash flow calculation with detailed logging and proper data handling"""
-        self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-FCF-START] Starting Free Cash Flow Calculation")
-        self.logger.info("="*80)
-    
-        # CRITICAL FIX: Restructure data first to get clean year columns
-        df_clean = self._restructure_for_penman_nissim(df)
+        """Enhanced free cash flow calculation"""
+        # Always use clean data
+        df = self._df_clean
         
-        fcf = pd.DataFrame(index=df_clean.columns) # Years as index
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-FCF-START] Starting Free Cash Flow Calculation (V5)")
+        self.logger.info("="*80)
+        
+        fcf = pd.DataFrame(index=df.columns)
         metadata = {}
         
         try:
-            # --- Free Cash Flow to Firm (FCFF) ---
-            self.logger.info("\n[PN-FCF-FCFF] Calculating Free Cash Flow to Firm (FCFF)...")
-            
-            # Get Operating Cash Flow
-            ocf = self._get_safe_series(df_clean, 'Operating Cash Flow')
-            self._log_metric_fetch('Operating Cash Flow', self._find_source_metric('Operating Cash Flow'), ocf, "FCF Component")
+            # Operating Cash Flow
+            ocf = self._get_safe_series(df, 'Operating Cash Flow')
             fcf['Operating Cash Flow'] = ocf
             
-            # Get Capital Expenditure
-            capex = self._get_safe_series(df_clean, 'Capital Expenditure', default_zero=True)
-            # Additional attempts to find CapEx with common variations
-            if (capex == 0).all():
-                capex_alternatives = [
-                    'Purchase of Fixed Assets', 'Purchased of Fixed Assets',
-                    'Purchase of Investments', 'Additions to Fixed Assets'
-                ]
-                for alt in capex_alternatives:
-                    try:
-                        temp_capex = self._get_safe_series(df_clean, alt, default_zero=True)
-                        if (temp_capex != 0).any():
-                            capex = temp_capex
-                            self.logger.info(f"[PN-FCF-CAPEX] Found CapEx using alternative name: {alt}")
-                            break
-                    except:
-                        continue
-            
-            # Ensure CapEx is positive (it's an outflow)
-            capex = capex.abs()
-            self._log_metric_fetch('Capital Expenditure', self._find_source_metric('Capital Expenditure'), capex, "FCF Component (Absolute value taken)")
+            # Capital Expenditure (ensure positive for subtraction)
+            capex = self._get_safe_series(df, 'Capital Expenditure', default_zero=True)
+            capex = capex.abs()  # Ensure positive
             fcf['Capital Expenditure'] = capex
             
             # Free Cash Flow to Firm
             fcff = ocf - capex
             fcf['Free Cash Flow to Firm'] = fcff
-            self._log_calculation("Free Cash Flow to Firm", "Operating Cash Flow - Capital Expenditure", {"OCF": ocf, "CapEx": capex}, fcff)
             
-            # --- Alternative FCFF Calculation (from Net Income) ---
-            self.logger.info("\n[PN-FCF-ALT] Performing alternative FCFF calculation for validation...")
+            # Alternative FCF calculation for validation
             try:
-                net_income = self._get_safe_series(df_clean, 'Net Income')
-                depreciation = self._get_safe_series(df_clean, 'Depreciation', default_zero=True)
-                self._log_metric_fetch('Net Income', self._find_source_metric('Net Income'), net_income, "Alt FCF Component")
-                self._log_metric_fetch('Depreciation', self._find_source_metric('Depreciation'), depreciation, "Alt FCF Component")
-    
-                # Change in Working Capital (if available)
-                if self._find_source_metric('Current Assets') in df_clean.index and self._find_source_metric('Current Liabilities') in df_clean.index:
-                    current_assets = self._get_safe_series(df_clean, 'Current Assets')
-                    current_liabilities = self._get_safe_series(df_clean, 'Current Liabilities')
+                net_income = self._get_safe_series(df, 'Net Income')
+                depreciation = self._get_safe_series(df, 'Depreciation', default_zero=True)
+                
+                # Working capital change
+                if self._find_source_metric('Current Assets') and self._find_source_metric('Current Liabilities'):
+                    current_assets = self._get_safe_series(df, 'Current Assets')
+                    current_liabilities = self._get_safe_series(df, 'Current Liabilities')
                     
                     working_capital = current_assets - current_liabilities
                     change_in_wc = working_capital.diff()
                     
                     fcf['Working Capital'] = working_capital
                     fcf['Change in Working Capital'] = change_in_wc
-                    self._log_calculation("Working Capital", "Current Assets - Current Liabilities", {"Current Assets": current_assets, "Current Liabilities": current_liabilities}, working_capital)
                     
-                    # Alternative FCF calculation
-                    # FCFF = NI + Depr - ∆WC - CapEx + Int(1-tax)
-                    # For simplicity here we'll do NI + Depr - ∆WC - CapEx
+                    # Alternative FCF
                     alt_fcff = net_income + depreciation - change_in_wc.fillna(0) - capex
                     fcf['FCF (from Net Income)'] = alt_fcff
-                    self._log_calculation("FCF (from NI)", "NI + Depr - ∆WC - CapEx", {"NI": net_income, "Depr": depreciation, "∆WC": change_in_wc, "CapEx": capex}, alt_fcff)
-                else:
-                    self.logger.warning("[PN-FCF-ALT] Cannot calculate change in WC, skipping alternative FCF calculation.")
-    
+                    
+                    # Log comparison
+                    fcf_diff = (fcff - alt_fcff).abs().max()
+                    metadata['fcf_calculation_diff'] = fcf_diff
+                    
             except Exception as e:
-                self.logger.warning(f"[PN-FCF-ALT] Alternative FCF calculations failed: {e}")
+                self.logger.warning(f"[PN-FCF-ALT] Alternative FCF calculation failed: {e}")
             
-            # --- Free Cash Flow to Equity (FCFE) ---
-            self.logger.info("\n[PN-FCF-FCFE] Calculating Free Cash Flow to Equity (FCFE)...")
+            # FCF to Equity
             try:
-                ref_bs = self._reformulate_balance_sheet_enhanced(df) # Pass original df, it will be cleaned inside
+                ref_bs = self._reformulate_balance_sheet_enhanced(None)
                 if 'Financial Liabilities' in ref_bs.index:
                     debt = ref_bs.loc['Financial Liabilities']
-                    # Align years
-                    common_years = sorted(set(fcff.index) & set(debt.index))
-                    fcff_aligned = fcff[common_years]
-                    debt_aligned = debt[common_years]
-    
-                    debt_change = debt_aligned.diff().fillna(0)
-                    fcfe = fcff_aligned + debt_change
+                    debt_change = debt.diff().fillna(0)
+                    
+                    fcfe = fcff + debt_change
                     fcf['Net Borrowing'] = debt_change
                     fcf['Free Cash Flow to Equity'] = fcfe
                     
-                    self._log_calculation("Free Cash Flow to Equity", "FCFF + Net Borrowing (∆Debt)", {"FCFF": fcff_aligned, "Net Borrowing": debt_change}, fcfe)
-                else:
-                    self.logger.warning("[PN-FCF-FCFE] Financial Liabilities not found, cannot calculate FCFE.")
             except Exception as e:
                 self.logger.warning(f"[PN-FCF-FCFE] FCFE calculation failed: {e}")
-                
-            # FCF Yield calculation
-            self.logger.info("\n[PN-FCF-YIELD] Calculating FCF Yield...")
-            if self._find_source_metric('Total Assets') in df_clean.index:
-                total_assets = self._get_safe_series(df_clean, 'Total Assets')
-                # Align years
-                common_years_yield = sorted(set(fcff.index) & set(total_assets.index))
-                fcff_aligned = fcff[common_years_yield]
-                ta_aligned = total_assets[common_years_yield]
-                
-                fcf_yield = (fcff_aligned / ta_aligned.replace(0, np.nan)) * 100
+            
+            # FCF Yield
+            if 'Total Assets' in ref_bs.index:
+                total_assets = ref_bs.loc['Total Assets']
+                fcf_yield = (fcff / total_assets.replace(0, np.nan)) * 100
                 fcf['FCF Yield %'] = fcf_yield
-                self._log_calculation("FCF Yield %", "(FCFF / Total Assets) * 100", {"FCFF": fcff_aligned, "Total Assets": ta_aligned}, fcf_yield)
+            
+            # Summary
+            self.logger.info("\n[PN-FCF-SUMMARY] Free Cash Flow Summary:")
+            self.logger.info(f"  Operating Cash Flow: {ocf.sum():,.0f}")
+            self.logger.info(f"  Capital Expenditure: {capex.sum():,.0f}")
+            self.logger.info(f"  Free Cash Flow: {fcff.sum():,.0f}")
             
         except Exception as e:
             self.logger.error(f"[PN-FCF-ERROR] FCF calculation failed: {e}", exc_info=True)
-            return self._calculate_free_cash_flow_simple(df)
+            raise
         
         self.calculation_metadata['free_cash_flow'] = metadata
-        self.logger.info(f"\n[PN-FCF-END] Free Cash Flow Calculation Complete. Found {len(fcf.index)} metrics.")
+        
+        self.logger.info("\n[PN-FCF-END] Free Cash Flow Calculation Complete")
         self.logger.info("="*80 + "\n")
         
         return fcf.T
-    
+
     def _calculate_value_drivers_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced value drivers calculation for DCF analysis with detailed logging"""
-        self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-DRIVERS-START] Starting Value Drivers Calculation")
-        self.logger.info("="*80)
-    
-        # CRITICAL FIX: Restructure data first to get clean year columns
-        df_clean = self._restructure_for_penman_nissim(df)
+        """Enhanced value drivers calculation"""
+        # Always use clean data
+        df = self._df_clean
         
-        drivers = pd.DataFrame(index=df_clean.columns) # Years as index
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-DRIVERS-START] Starting Value Drivers Calculation (V5)")
+        self.logger.info("="*80)
+        
+        drivers = pd.DataFrame(index=df.columns)
         metadata = {}
         
         try:
-            # --- Revenue Drivers ---
-            self.logger.info("\n[PN-DRIVERS-REVENUE] Calculating Revenue Drivers...")
-            if self._find_source_metric('Revenue') in df_clean.index:
-                revenue = df_clean.loc[self._find_source_metric('Revenue')]
-                drivers['Revenue'] = revenue
-                self._log_metric_fetch('Revenue', self._find_source_metric('Revenue'), revenue, "Value Driver")
-    
-                revenue_growth = revenue.pct_change() * 100
-                drivers['Revenue Growth %'] = revenue_growth
-                self._log_calculation("Revenue Growth", "pct_change() * 100", {"Revenue": revenue}, revenue_growth)
-    
-                # Calculate CAGR
-                if len(revenue.dropna()) > 1:
-                    valid_revenue = revenue.dropna()
-                    years = len(valid_revenue) - 1
-                    cagr = ((valid_revenue.iloc[-1] / valid_revenue.iloc[0]) ** (1/years) - 1) * 100 if years > 0 else 0
-                    # Assign CAGR to all columns for display purposes
+            # Revenue drivers
+            revenue = self._get_safe_series(df, 'Revenue')
+            drivers['Revenue'] = revenue
+            drivers['Revenue Growth %'] = revenue.pct_change() * 100
+            
+            # CAGR calculation
+            if len(revenue.dropna()) > 1:
+                valid_revenue = revenue.dropna()
+                years = len(valid_revenue) - 1
+                if years > 0 and valid_revenue.iloc[0] > 0:
+                    cagr = ((valid_revenue.iloc[-1] / valid_revenue.iloc[0]) ** (1/years) - 1) * 100
                     drivers['Revenue CAGR %'] = cagr
-                    self.logger.info(f"[PN-DRIVERS-REVENUE] Calculated Revenue CAGR: {cagr:.2f}%")
-    
-            # --- Profitability Drivers ---
-            self.logger.info("\n[PN-DRIVERS-PROFIT] Calculating Profitability Drivers...")
-            ref_is = self._reformulate_income_statement_enhanced(df) # Pass original df, it will be cleaned inside
-            if 'Operating Income After Tax' in ref_is.index and 'Revenue' in ref_is.index:
-                oiat = ref_is.loc['Operating Income After Tax']
-                revenue_prof = ref_is.loc['Revenue']
+                    metadata['revenue_cagr'] = cagr
+            
+            # Get reformulated statements
+            ref_is = self._reformulate_income_statement_enhanced(None)
+            ref_bs = self._reformulate_balance_sheet_enhanced(None)
+            
+            # Profitability drivers
+            if 'Operating Income After Tax' in ref_is.index:
+                nopat = ref_is.loc['Operating Income After Tax']
+                drivers['NOPAT'] = nopat
+                drivers['NOPAT Growth %'] = nopat.pct_change() * 100
                 
-                # Align data
-                common_years_prof = sorted(set(oiat.index) & set(revenue_prof.index))
-                oiat_aligned = oiat[common_years_prof]
-                revenue_aligned = revenue_prof[common_years_prof]
-    
-                nopat_margin = (oiat_aligned / revenue_aligned.replace(0, np.nan)) * 100
+                # NOPAT Margin
+                nopat_margin = (nopat / revenue.replace(0, np.nan)) * 100
                 drivers['NOPAT Margin %'] = nopat_margin
-                self._log_calculation("NOPAT Margin", "(NOPAT / Revenue) * 100", {"NOPAT": oiat_aligned, "Revenue": revenue_aligned}, nopat_margin)
-                
                 drivers['NOPAT Margin Change %'] = nopat_margin.diff()
-    
-            # --- Investment Drivers ---
-            self.logger.info("\n[PN-DRIVERS-INVEST] Calculating Investment Drivers...")
-            ref_bs = self._reformulate_balance_sheet_enhanced(df) # Pass original df
+            
+            # Investment drivers
             if 'Net Operating Assets' in ref_bs.index:
                 noa = ref_bs.loc['Net Operating Assets']
                 drivers['Net Operating Assets'] = noa
-                self._log_metric_fetch('Net Operating Assets', 'Calculated', noa, "Value Driver")
-    
-                noa_growth = noa.pct_change() * 100
-                drivers['NOA Growth %'] = noa_growth
-                self._log_calculation("NOA Growth", "pct_change() * 100", {"NOA": noa}, noa_growth)
-    
-                # Investment rate (∆NOA / NOPAT)
-                if 'Operating Income After Tax' in ref_is.index:
-                    oiat_inv = ref_is.loc['Operating Income After Tax']
-                    common_years_inv = sorted(set(noa.index) & set(oiat_inv.index))
-                    noa_aligned = noa[common_years_inv]
-                    oiat_aligned = oiat_inv[common_years_inv]
-                    
-                    noa_change = noa_aligned.diff()
-                    investment_rate = (noa_change / oiat_aligned.replace(0, np.nan)) * 100
+                drivers['NOA Growth %'] = noa.pct_change() * 100
+                
+                # Investment Rate
+                if 'NOPAT' in drivers.columns:
+                    noa_change = noa.diff()
+                    investment_rate = (noa_change / drivers['NOPAT'].replace(0, np.nan)) * 100
                     drivers['Investment Rate %'] = investment_rate
-                    self._log_calculation("Investment Rate", "(∆NOA / NOPAT) * 100", {"∆NOA": noa_change, "NOPAT": oiat_aligned}, investment_rate)
-    
-            # --- Working Capital Drivers ---
-            self.logger.info("\n[PN-DRIVERS-WC] Calculating Working Capital Drivers...")
-            if self._find_source_metric('Current Assets') in df_clean.index and self._find_source_metric('Current Liabilities') in df_clean.index:
-                current_assets = df_clean.loc[self._find_source_metric('Current Assets')]
-                current_liabilities = df_clean.loc[self._find_source_metric('Current Liabilities')]
+            
+            # Working Capital drivers
+            if self._find_source_metric('Current Assets') and self._find_source_metric('Current Liabilities'):
+                current_assets = self._get_safe_series(df, 'Current Assets')
+                current_liabilities = self._get_safe_series(df, 'Current Liabilities')
                 
                 working_capital = current_assets - current_liabilities
                 drivers['Working Capital'] = working_capital
-                self._log_calculation("Working Capital", "Current Assets - Current Liabilities", {"Current Assets": current_assets, "Current Liabilities": current_liabilities}, working_capital)
-    
-                if 'Revenue' in drivers.index:
-                    revenue_wc = drivers.loc['Revenue']
-                    wc_to_revenue = (working_capital / revenue_wc.replace(0, np.nan)) * 100
+                
+                if 'Revenue' in drivers.columns:
+                    wc_to_revenue = (working_capital / revenue.replace(0, np.nan)) * 100
                     drivers['Working Capital % of Revenue'] = wc_to_revenue
-                    self._log_calculation("Working Capital % of Revenue", "(WC / Revenue) * 100", {"WC": working_capital, "Revenue": revenue_wc}, wc_to_revenue)
-    
-            # --- Asset Efficiency Drivers ---
-            self.logger.info("\n[PN-DRIVERS-EFFICIENCY] Calculating Asset Efficiency Drivers...")
-            if self._find_source_metric('Total Assets') in df_clean.index and 'Revenue' in drivers.index:
-                total_assets = df_clean.loc[self._find_source_metric('Total Assets')]
-                revenue_eff = drivers.loc['Revenue']
-    
-                common_years_eff = sorted(set(total_assets.index) & set(revenue_eff.index))
-                ta_aligned = total_assets[common_years_eff]
-                rev_aligned = revenue_eff[common_years_eff]
-                
-                asset_turnover = rev_aligned / ta_aligned.replace(0, np.nan)
+            
+            # Asset efficiency
+            if 'Total Assets' in ref_bs.index:
+                total_assets = ref_bs.loc['Total Assets']
+                asset_turnover = revenue / total_assets.replace(0, np.nan)
                 drivers['Asset Turnover'] = asset_turnover
-                self._log_calculation("Asset Turnover", "Revenue / Total Assets", {"Revenue": rev_aligned, "Total Assets": ta_aligned}, asset_turnover)
-    
-            # --- Cash Conversion Drivers ---
-            self.logger.info("\n[PN-DRIVERS-CASH] Calculating Cash Conversion Drivers...")
-            fcf_df = self._calculate_free_cash_flow_enhanced(df) # Pass original df
-            if 'Free Cash Flow to Firm' in fcf_df.index and 'Operating Income After Tax' in ref_is.index:
+            
+            # Cash conversion
+            fcf_df = self._calculate_free_cash_flow_enhanced(None)
+            if 'Free Cash Flow to Firm' in fcf_df.index and 'NOPAT' in drivers.columns:
                 fcf = fcf_df.loc['Free Cash Flow to Firm']
-                oiat_cash = ref_is.loc['Operating Income After Tax']
-                
-                common_years_cash = sorted(set(fcf.index) & set(oiat_cash.index))
-                fcf_aligned = fcf[common_years_cash]
-                oiat_aligned = oiat_cash[common_years_cash]
-                
-                cash_conversion = (fcf_aligned / oiat_aligned.replace(0, np.nan)) * 100
+                cash_conversion = (fcf / drivers['NOPAT'].replace(0, np.nan)) * 100
                 drivers['Cash Conversion %'] = cash_conversion
-                self._log_calculation("Cash Conversion %", "(FCF / NOPAT) * 100", {"FCF": fcf_aligned, "NOPAT": oiat_aligned}, cash_conversion)
-                
+            
+            # Summary
+            self.logger.info("\n[PN-DRIVERS-SUMMARY] Value Drivers Summary:")
+            self.logger.info(f"  Revenue CAGR: {metadata.get('revenue_cagr', 'N/A'):.1f}%")
+            self.logger.info(f"  Latest NOPAT Margin: {drivers['NOPAT Margin %'].iloc[-1]:.1f}%")
+            self.logger.info(f"  Latest Asset Turnover: {drivers['Asset Turnover'].iloc[-1]:.2f}")
+            
         except Exception as e:
             self.logger.error(f"[PN-DRIVERS-ERROR] Value drivers calculation failed: {e}", exc_info=True)
-            return self._calculate_value_drivers_simple(df)
+            raise
         
         self.calculation_metadata['value_drivers'] = metadata
-        self.logger.info(f"\n[PN-DRIVERS-END] Value Drivers Calculation Complete. Found {len(drivers.index)} drivers.")
+        
+        self.logger.info("\n[PN-DRIVERS-END] Value Drivers Calculation Complete")
         self.logger.info("="*80 + "\n")
         
         return drivers.T
-    
-    # Fallback simple methods for robustness
-    def _reformulate_balance_sheet_simple(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Simple balance sheet reformulation fallback"""
-        reformulated = pd.DataFrame(index=df.columns)
-        
-        try:
-            # Basic items
-            total_assets = df.loc[self._find_source_metric('Total Assets')]
-            total_equity = df.loc[self._find_source_metric('Total Equity')]
-            total_liabilities = total_assets - total_equity
-            
-            # Simple assumptions
-            cash = df.loc[self._find_source_metric('Cash and Cash Equivalents')] if self._find_source_metric('Cash and Cash Equivalents') in df.index else pd.Series(0, index=df.columns)
-            
-            reformulated['Total Assets'] = total_assets
-            reformulated['Financial Assets'] = cash
-            reformulated['Operating Assets'] = total_assets - cash
-            reformulated['Total Liabilities'] = total_liabilities
-            reformulated['Financial Liabilities'] = pd.Series(0, index=df.columns)  # Unknown
-            reformulated['Operating Liabilities'] = total_liabilities
-            reformulated['Net Operating Assets'] = reformulated['Operating Assets'] - reformulated['Operating Liabilities']
-            reformulated['Net Financial Assets'] = reformulated['Financial Assets'] - reformulated['Financial Liabilities']
-            reformulated['Common Equity'] = total_equity
-            
-        except Exception as e:
-            self.logger.error(f"Simple BS reformulation failed: {e}")
-            
-        return reformulated
-    
-    def _reformulate_income_statement_simple(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Simple income statement reformulation fallback"""
-        reformulated = pd.DataFrame(index=df.columns)
-        
-        try:
-            # Basic items
-            revenue = df.loc[self._find_source_metric('Revenue')]
-            net_income = df.loc[self._find_source_metric('Net Income')]
-            
-            # Try to find operating income
-            op_income = None
-            for variant in ['Operating Income', 'EBIT', 'Operating Profit']:
-                if self._find_source_metric(variant) in df.index:
-                    op_income = df.loc[self._find_source_metric(variant)]
-                    break
-            
-            if op_income is None:
-                # Rough estimate
-                op_income = net_income * 1.3  # Assume 30% financial/tax effects
-            
-            reformulated['Revenue'] = revenue
-            reformulated['Operating Income Before Tax'] = op_income
-            reformulated['Operating Income After Tax'] = op_income * 0.75  # Assume 25% tax
-            reformulated['Net Income'] = net_income
-            
-        except Exception as e:
-            self.logger.error(f"Simple IS reformulation failed: {e}")
-            
-        return reformulated
-    
-    def _calculate_ratios_simple(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Simple ratio calculation fallback"""
-        ratios = pd.DataFrame(index=df.columns)
-        
-        try:
-            # Basic ROE
-            if self._find_source_metric('Net Income') in df.index and self._find_source_metric('Total Equity') in df.index:
-                net_income = df.loc[self._find_source_metric('Net Income')]
-                equity = df.loc[self._find_source_metric('Total Equity')]
-                ratios['Return on Equity (ROE) %'] = (net_income / equity.replace(0, np.nan)) * 100
-            
-            # Basic ROA
-            if self._find_source_metric('Net Income') in df.index and self._find_source_metric('Total Assets') in df.index:
-                net_income = df.loc[self._find_source_metric('Net Income')]
-                assets = df.loc[self._find_source_metric('Total Assets')]
-                ratios['Return on Assets (ROA) %'] = (net_income / assets.replace(0, np.nan)) * 100
-            
-        except Exception as e:
-            self.logger.error(f"Simple ratios calculation failed: {e}")
-            
-        return ratios.T
-    
-    def _calculate_free_cash_flow_simple(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Simple free cash flow calculation fallback"""
-        fcf = pd.DataFrame(index=df.columns)
-        
-        try:
-            if self._find_source_metric('Operating Cash Flow') in df.index:
-                ocf = df.loc[self._find_source_metric('Operating Cash Flow')]
-                fcf['Operating Cash Flow'] = ocf
-                fcf['Free Cash Flow'] = ocf  # Simplified
-                
-        except Exception as e:
-            self.logger.error(f"Simple FCF calculation failed: {e}")
-            
-        return fcf.T
-    
-    def _calculate_value_drivers_simple(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Simple value drivers calculation fallback"""
-        drivers = pd.DataFrame(index=df.columns)
-        
-        try:
-            if self._find_source_metric('Revenue') in df.index:
-                revenue = df.loc[self._find_source_metric('Revenue')]
-                drivers['Revenue'] = revenue
-                drivers['Revenue Growth %'] = revenue.pct_change() * 100
-                
-        except Exception as e:
-            self.logger.error(f"Simple value drivers calculation failed: {e}")
-            
-        return drivers.T
-    
-    # PASTE THIS CODE: Add this enhanced version of _get_safe_series to replace the existing one
 
+    def calculate_all(self):
+        """Calculate all Penman-Nissim metrics with optimized data flow"""
+        try:
+            results = {
+                'reformulated_balance_sheet': self._reformulate_balance_sheet_enhanced(None),
+                'reformulated_income_statement': self._reformulate_income_statement_enhanced(None),
+                'ratios': self._calculate_ratios_enhanced(None),
+                'free_cash_flow': self._calculate_free_cash_flow_enhanced(None),
+                'value_drivers': self._calculate_value_drivers_enhanced(None),
+                'validation_results': self.validation_results,
+                'calculation_metadata': self.calculation_metadata
+            }
+            
+            return results
+            
+        except Exception as e:
+            self.logger.error(f"Error in Penman-Nissim calculations: {e}", exc_info=True)
+            return {
+                'error': str(e),
+                'validation_results': self.validation_results,
+                'calculation_metadata': self.calculation_metadata
+            }
+
+    # Helper methods
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Enhanced safe series retrieval with better fallback logic"""
+        """Safely get a series with comprehensive logging and fallback options"""
         self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
         
         # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
         if source_metric and source_metric in df.index:
-            series = df.loc[source_metric]
-            
-            # Validate the series
-            if series.notna().any():  # Has at least one non-null value
-                self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
-                return series.fillna(0 if default_zero else np.nan)
-            else:
-                self.logger.warning(f"[PN-FETCH-EMPTY] Found '{target_metric}' but all values are null")
+            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
+            self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
+            self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
+            return series
         
-        # Enhanced search patterns with typo tolerance
+        # Log what we're looking for
+        self.logger.warning(f"[PN-FETCH-MISS] Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
+        
+        # Define comprehensive search patterns
         search_patterns = {
+            'Depreciation': [
+                'ProfitLoss::Depreciation and Amortisation Expenses',
+                'ProfitLoss::Depreciation and Amortization Expenses',
+                'ProfitLoss::Depreciation',
+                'ProfitLoss::Depreciation & Amortization',
+                'ProfitLoss::Depreciation and Amortisation',
+                'ProfitLoss::Depreciation & Amortisation'
+            ],
+            'Capital Expenditure': [
+                'CashFlow::Purchase of Fixed Assets',
+                'CashFlow::Purchased of Fixed Assets',
+                'CashFlow::Purchase of Investments',
+                'CashFlow::Capital Expenditure',
+                'CashFlow::CAPEX',
+                'CashFlow::Additions to Fixed Assets',
+                'CashFlow::Purchase of Property Plant and Equipment'
+            ],
+            'Revenue': [
+                'ProfitLoss::Revenue From Operations',
+                'ProfitLoss::Revenue From Operations(Net)',
+                'ProfitLoss::Total Revenue',
+                'ProfitLoss::Net Sales',
+                'ProfitLoss::Sales'
+            ],
+            'Operating Income': [
+                'ProfitLoss::Profit Before Exceptional Items and Tax',
+                'ProfitLoss::Operating Profit',
+                'ProfitLoss::EBIT',
+                'ProfitLoss::Profit Before Interest and Tax'
+            ],
+            'Net Income': [
+                'ProfitLoss::Profit After Tax',
+                'ProfitLoss::Profit/Loss For The Period',
+                'ProfitLoss::Net Profit',
+                'ProfitLoss::PAT'
+            ],
+            'Tax Expense': [
+                'ProfitLoss::Tax Expense',
+                'ProfitLoss::Tax Expenses',
+                'ProfitLoss::Current Tax',
+                'ProfitLoss::Total Tax Expense',
+                'ProfitLoss::Income Tax'
+            ],
+            'Interest Expense': [
+                'ProfitLoss::Finance Cost',
+                'ProfitLoss::Finance Costs',
+                'ProfitLoss::Interest',
+                'ProfitLoss::Interest Expense',
+                'ProfitLoss::Interest and Finance Charges'
+            ],
+            'Income Before Tax': [
+                'ProfitLoss::Profit Before Tax',
+                'ProfitLoss::PBT',
+                'ProfitLoss::Income Before Tax'
+            ],
             'Operating Cash Flow': [
                 'CashFlow::Net Cash from Operating Activities',
                 'CashFlow::Net CashFlow From Operating Activities',
                 'CashFlow::Operating Cash Flow',
                 'CashFlow::Cash from Operating Activities',
-                'CashFlow::Cash Flow from Operating Activities',
                 'CashFlow::Net Cash Generated from Operating Activities'
             ],
-            'Capital Expenditure': [
-                'CashFlow::Purchase of Fixed Assets',
-                'CashFlow::Purchased of Fixed Assets',  # Common typo
-                'CashFlow::Purchase of Property Plant and Equipment',
-                'CashFlow::Additions to Fixed Assets',
-                'CashFlow::Capital Expenditure',
-                'CashFlow::CAPEX',
-                'CashFlow::Investment in Fixed Assets'
-            ],
-            'Depreciation': [
-                'ProfitLoss::Depreciation and Amortisation Expenses',
-                'ProfitLoss::Depreciation and Amortization Expenses',
-                'ProfitLoss::Depreciation & Amortisation',
-                'ProfitLoss::Depreciation',
-                'ProfitLoss::Depreciation and Amortisation',
-                'ProfitLoss::Depreciation & Amortization'
-            ],
-            # Add more patterns as needed
         }
         
-        # Try exact matches from patterns
+        # Try to find using search patterns
         if target_metric in search_patterns:
+            self.logger.info(f"[PN-FETCH-SEARCH] Searching patterns for '{target_metric}'")
             for pattern in search_patterns[target_metric]:
                 if pattern in df.index:
-                    series = df.loc[pattern]
-                    if series.notna().any():
-                        self.logger.info(f"[PN-FETCH-PATTERN] Found '{target_metric}' using pattern: {pattern}")
-                        return series.fillna(0 if default_zero else np.nan)
+                    self.logger.info(f"[PN-FETCH-FOUND] Auto-discovered '{pattern}' for '{target_metric}'")
+                    series = df.loc[pattern].fillna(0 if default_zero else np.nan)
+                    self._log_metric_fetch(target_metric, pattern, series, "Pattern search")
+                    return series
         
-        # Fuzzy matching as last resort
+        # If still not found, do a case-insensitive search
         target_lower = target_metric.lower()
-        best_match = None
-        best_score = 0
+        self.logger.info(f"[PN-FETCH-FALLBACK] Trying case-insensitive search for '{target_metric}'")
         
         for idx in df.index:
-            idx_clean = str(idx).split('::')[-1].lower() if '::' in str(idx) else str(idx).lower()
+            idx_lower = str(idx).lower()
             
-            # Calculate similarity score
-            score = self._calculate_similarity(target_lower, idx_clean)
+            # Remove common prefixes for comparison
+            idx_clean = idx_lower.replace('profitloss::', '').replace('balancesheet::', '').replace('cashflow::', '')
             
-            if score > best_score and score > 0.8:  # 80% threshold
-                best_score = score
-                best_match = idx
+            # Check for exact match after cleaning
+            if target_lower == idx_clean:
+                self.logger.info(f"[PN-FETCH-FOUND] Found exact match after cleaning: '{idx}' for '{target_metric}'")
+                series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive exact match")
+                return series
+            
+            # Check for partial match
+            if target_lower in idx_clean or idx_clean in target_lower:
+                self.logger.info(f"[PN-FETCH-FOUND] Found partial match: '{idx}' for '{target_metric}'")
+                series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive partial match")
+                return series
         
-        if best_match:
-            series = df.loc[best_match]
-            if series.notna().any():
-                self.logger.info(f"[PN-FETCH-FUZZY] Found '{target_metric}' via fuzzy match: {best_match} (score: {best_score:.2f})")
-                return series.fillna(0 if default_zero else np.nan)
+        # List of optional metrics that can default to zero
+        optional_metrics = [
+            'Depreciation', 'Investments', 'Short-term Investments',
+            'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
+            'Total Liabilities'  # Can be calculated from Assets - Equity
+        ]
         
-        # Return zeros or NaN based on whether it's optional
-        if default_zero or self._is_optional_metric(target_metric):
+        if default_zero or target_metric in optional_metrics:
             self.logger.info(f"[PN-FETCH-DEFAULT] Optional metric '{target_metric}' not found, using zeros")
-            return pd.Series(0, index=df.columns)
-        else:
-            self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
-            raise ValueError(f"Required metric '{target_metric}' not found")
-    
+            series = pd.Series(0, index=df.columns)
+            self._log_metric_fetch(target_metric, "DEFAULT_ZEROS", series, "Default to zero")
+            return series
+        
+        # For required metrics, log available options and raise error
+        self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
+        self.logger.info(f"[PN-FETCH-HELP] Available indices that might match:")
+        for idx in df.index:
+            if any(word in str(idx).lower() for word in target_lower.split()):
+                self.logger.info(f"  - {idx}")
+        
+        raise ValueError(f"Required metric '{target_metric}' not found")
+
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         """Calculate similarity between two strings"""
-        # Simple character-based similarity
         if not str1 or not str2:
             return 0.0
         
         # Tokenize
-        tokens1 = set(str1.split())
-        tokens2 = set(str2.split())
+        tokens1 = set(str1.lower().split())
+        tokens2 = set(str2.lower().split())
         
         if not tokens1 or not tokens2:
             return 0.0
@@ -5316,15 +5115,29 @@ class EnhancedPenmanNissimAnalyzer:
         union = tokens1.union(tokens2)
         
         return len(intersection) / len(union) if union else 0.0
-    
+
     def _is_optional_metric(self, metric: str) -> bool:
         """Check if a metric is optional"""
         optional_metrics = [
             'Depreciation', 'Investments', 'Short-term Investments',
             'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
-            'Intangible Assets', 'Other Income', 'Other Expenses'
+            'Intangible Assets', 'Other Income', 'Other Expenses',
+            'Total Liabilities'  # Can be calculated
         ]
         return metric in optional_metrics
+
+    def _calculate_data_completeness(self) -> float:
+        """Calculate overall data completeness"""
+        mapped_metrics = [self._find_source_metric(target) for target in self.mappings.values()]
+        mapped_metrics = [m for m in mapped_metrics if m and m in self._df_clean.index]
+        
+        if not mapped_metrics:
+            return 0.0
+        
+        total_cells = len(mapped_metrics) * len(self._df_clean.columns)
+        non_null_cells = sum(self._df_clean.loc[metric].notna().sum() for metric in mapped_metrics)
+        
+        return non_null_cells / total_cells if total_cells > 0 else 0.0
        
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:

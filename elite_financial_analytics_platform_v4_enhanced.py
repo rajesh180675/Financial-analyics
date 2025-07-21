@@ -8931,7 +8931,11 @@ class FinancialAnalyticsPlatform:
                             
                             df = self._parse_single_file(temp_file)
                             if df is not None and not df.empty:
+                                # --- CHANGE IS HERE (for compressed files) ---
+                                df_before = df.copy()  # <<<--- ADD THIS LINE
                                 df = self._clean_dataframe(df)
+                                self._verify_cash_flow_preservation(df_before, df) # <<<--- ADD THIS LINE
+                                # --- END OF CHANGE ---
                                 self._inspect_dataframe(df, extracted_name)
                                 all_dataframes.append(df)
                                 file_info.append({
@@ -8942,7 +8946,11 @@ class FinancialAnalyticsPlatform:
                     else:
                         df = self._parse_single_file(file)
                         if df is not None and not df.empty:
+                            # --- CHANGE IS HERE (for regular files) ---
+                            df_before = df.copy()  # <<<--- ADD THIS LINE
                             df = self._clean_dataframe(df)
+                            self._verify_cash_flow_preservation(df_before, df) # <<<--- ADD THIS LINE
+                            # --- END OF CHANGE ---
                             self._inspect_dataframe(df, file.name)
                             all_dataframes.append(df)
                             file_info.append({
@@ -9208,12 +9216,33 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error cleaning dataframe: {e}")
             return df
+
+    def _trace_cash_flow_items(self, df: pd.DataFrame, stage: str) -> None:
+        """Debug helper to trace cash flow items through processing"""
+        cash_flow_items = [idx for idx in df.index if 'cash' in str(idx).lower() or 'flow' in str(idx).lower()]
+        capex_items = [idx for idx in df.index if any(kw in str(idx).lower() 
+                       for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset'])]
         
+        self.logger.info(f"\n{'='*60}")
+        self.logger.info(f"[TRACE-{stage}] Cash Flow Item Tracking")
+        self.logger.info(f"[TRACE-{stage}] Found {len(cash_flow_items)} cash flow items")
+        self.logger.info(f"[TRACE-{stage}] Found {len(capex_items)} potential CapEx items")
+        
+        if capex_items:
+            self.logger.info(f"[TRACE-{stage}] CapEx items:")
+            for item in capex_items[:10]:
+                series = df.loc[item]
+                non_null = series.notna().sum()
+                self.logger.info(f"  - {item} (non-null values: {non_null})")
+        
+        self.logger.info(f"{'='*60}\n")
+    
     def _standardize_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Standardize DataFrame structure specifically for financial data"""
         try:
             std_df = df.copy()
-
+    
+            # Clean column names
             if isinstance(std_df.columns, pd.Index):
                 std_df.columns = [
                     str(col).strip()
@@ -9224,6 +9253,7 @@ class FinancialAnalyticsPlatform:
                     for col in std_df.columns
                 ]
             
+            # CRITICAL: Preserve cash flow items during duplicate handling
             if std_df.index.duplicated().any():
                 self.logger.info("Found rows with similar names - making indices unique")
                 
@@ -9233,25 +9263,50 @@ class FinancialAnalyticsPlatform:
                 for idx in std_df.index:
                     idx_str = str(idx) if not pd.isna(idx) else "EmptyIndex"
                     
-                    if idx_str in seen_indices:
-                        seen_indices[idx_str] += 1
-                        unique_idx = f"{idx_str}_v{seen_indices[idx_str]}"
+                    # Special handling for cash flow items - preserve original names
+                    if 'cashflow::' in idx_str.lower() or 'cash flow' in idx_str.lower():
+                        # For cash flow items, append file identifier instead of version
+                        if idx_str in seen_indices:
+                            seen_indices[idx_str] += 1
+                            # Keep original name but log the duplicate
+                            self.logger.warning(f"Duplicate cash flow item found: {idx_str}")
+                            unique_idx = idx_str  # Keep original name
+                        else:
+                            seen_indices[idx_str] = 0
+                            unique_idx = idx_str
                     else:
-                        seen_indices[idx_str] = 0
-                        unique_idx = idx_str
+                        # Standard duplicate handling for non-cash flow items
+                        if idx_str in seen_indices:
+                            seen_indices[idx_str] += 1
+                            unique_idx = f"{idx_str}_v{seen_indices[idx_str]}"
+                        else:
+                            seen_indices[idx_str] = 0
+                            unique_idx = idx_str
                     
                     new_index.append(unique_idx)
                 
                 std_df.index = new_index
                 self.logger.info(f"Made {sum(v for v in seen_indices.values() if v > 0)} indices unique")
             
+            # Remove completely empty rows but preserve cash flow items
             before_count = len(std_df)
-            std_df = std_df.dropna(how='all')
+            
+            # Identify cash flow items to preserve
+            cash_flow_indices = [idx for idx in std_df.index 
+                                if 'cashflow::' in str(idx).lower() or 'cash flow' in str(idx).lower()]
+            
+            # Remove only non-cash flow empty rows
+            non_cash_flow_mask = ~std_df.index.isin(cash_flow_indices)
+            empty_rows_mask = std_df.isnull().all(axis=1)
+            rows_to_remove = non_cash_flow_mask & empty_rows_mask
+            
+            std_df = std_df[~rows_to_remove]
             after_count = len(std_df)
             
             if before_count != after_count:
-                self.logger.info(f"Removed {before_count - after_count} completely empty rows")
+                self.logger.info(f"Removed {before_count - after_count} completely empty rows (preserved cash flow items)")
             
+            # Remove completely empty columns
             before_cols = len(std_df.columns)
             std_df = std_df.dropna(how='all', axis=1)
             after_cols = len(std_df.columns)
@@ -9260,7 +9315,7 @@ class FinancialAnalyticsPlatform:
                 self.logger.info(f"Removed {before_cols - after_cols} completely empty columns")
             
             return std_df
-
+    
         except Exception as e:
             self.logger.error(f"Error standardizing DataFrame: {e}")
             return df
@@ -9281,14 +9336,25 @@ class FinancialAnalyticsPlatform:
         """Merge dataframes preserving all financial line items"""
         try:
             analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
-
+    
             if analysis_mode == "Standalone Analysis":
                 self.logger.info("Using standalone analysis mode - preserving all financial data")
+                
+                # Track cash flow items before and after
+                all_cash_flow_items = set()
                 
                 processed_dfs = []
                 
                 for i, df in enumerate(dataframes):
+                    # Trace cash flow items before processing
+                    self._trace_cash_flow_items(df, f"BEFORE-MERGE-FILE-{i}")
+                    
                     df_copy = df.copy()
+                    
+                    # Collect cash flow items
+                    for idx in df_copy.index:
+                        if 'cash' in str(idx).lower() or 'flow' in str(idx).lower():
+                            all_cash_flow_items.add(str(idx))
                     
                     statement_type = self._detect_statement_type(df_copy)
                     self.logger.info(f"Processing {statement_type} with {len(df_copy)} line items")
@@ -9299,16 +9365,45 @@ class FinancialAnalyticsPlatform:
                             new_idx = f"{statement_type}_EmptyRow_{df_copy.index.get_loc(idx)}"
                         else:
                             clean_idx = str(idx).strip()
-                            new_idx = f"{statement_type}::{clean_idx}"
+                            # Don't add prefix if it already has one
+                            if '::' in clean_idx:
+                                new_idx = clean_idx
+                            else:
+                                new_idx = f"{statement_type}::{clean_idx}"
                         new_index.append(new_idx)
                     
                     df_copy.index = new_index
                     processed_dfs.append(df_copy)
+                    
+                    # Trace after processing
+                    self._trace_cash_flow_items(df_copy, f"AFTER-PROCESS-FILE-{i}")
                 
+                # Use concat with proper handling of duplicates
                 merged_df = pd.concat(processed_dfs, axis=0, sort=False)
                 
+                # If there are duplicate indices, keep all cash flow items
+                if merged_df.index.duplicated().any():
+                    self.logger.warning("Found duplicate indices after merge")
+                    
+                    # Separate cash flow and non-cash flow items
+                    cash_flow_mask = merged_df.index.str.contains('CashFlow::', case=False, na=False)
+                    
+                    # For cash flow items, keep all duplicates
+                    cash_flow_df = merged_df[cash_flow_mask]
+                    non_cash_flow_df = merged_df[~cash_flow_mask]
+                    
+                    # Remove duplicates from non-cash flow items only
+                    non_cash_flow_df = non_cash_flow_df[~non_cash_flow_df.index.duplicated(keep='first')]
+                    
+                    # Combine back
+                    merged_df = pd.concat([non_cash_flow_df, cash_flow_df], axis=0)
+                
+                # Final trace
+                self._trace_cash_flow_items(merged_df, "AFTER-MERGE-FINAL")
+                
                 total_original = sum(len(df) for df in dataframes)
-                self.logger.info(f"Successfully preserved all {len(merged_df)} line items (original: {total_original})")
+                self.logger.info(f"Successfully preserved {len(merged_df)} line items (original: {total_original})")
+                self.logger.info(f"Total cash flow items tracked: {len(all_cash_flow_items)}")
                 
                 company_info = self._extract_company_info(merged_df)
                 if company_info:
@@ -9335,6 +9430,25 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error merging dataframes: {e}")
             return dataframes[0] if dataframes else pd.DataFrame()
+
+    def _verify_cash_flow_preservation(self, original_data: pd.DataFrame, processed_data: pd.DataFrame) -> bool:
+        """Verify that cash flow items are preserved during processing"""
+        original_cf_items = set(idx for idx in original_data.index 
+                               if 'cash' in str(idx).lower() or 'flow' in str(idx).lower())
+        
+        processed_cf_items = set(idx for idx in processed_data.index 
+                                if 'cash' in str(idx).lower() or 'flow' in str(idx).lower())
+        
+        missing_items = original_cf_items - processed_cf_items
+        
+        if missing_items:
+            self.logger.error(f"CRITICAL: Lost {len(missing_items)} cash flow items during processing!")
+            for item in list(missing_items)[:10]:
+                self.logger.error(f"  - Lost: {item}")
+            return False
+        
+        self.logger.info(f"✓ All {len(original_cf_items)} cash flow items preserved")
+        return True
 
     def _merge_standalone_data(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
         """Helper function to merge standalone data"""
@@ -11791,6 +11905,66 @@ class FinancialAnalyticsPlatform:
                         st.text(f"{target} ← {source}")
                 
                 st.rerun()
+
+       # <<<--- START: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
+        if st.button("🔧 Recover Lost Cash Flow Items", key="recover_cf_items", type="secondary"):
+            """Emergency recovery for lost cash flow items"""
+            with st.spinner("Searching for cash flow items..."):
+                # Get the original unprocessed data if available
+                original_files = self.get_state('uploaded_files', [])
+                
+                if original_files:
+                    st.info("Re-processing files to recover cash flow items...")
+                    
+                    # Reprocess with cash flow preservation
+                    recovered_items = []
+                    
+                    for file in original_files:
+                        try:
+                            # Parse file again
+                            df = self._parse_single_file(file)
+                            if df is not None:
+                                # Look for cash flow items
+                                for idx in df.index:
+                                    idx_lower = str(idx).lower()
+                                    if any(kw in idx_lower for kw in ['cash', 'flow', 'capex', 'capital', 'purchase', 'fixed asset']):
+                                        # Check if this item exists in current data
+                                        prefixed_idx = f"CashFlow::{idx}"
+                                        if prefixed_idx not in data.index and idx not in data.index:
+                                            recovered_items.append((idx, df.loc[idx]))
+                                            
+                        except Exception as e:
+                            self.logger.error(f"Error recovering from {file.name}: {e}")
+                            continue
+                    
+                    if recovered_items:
+                        st.success(f"Found {len(recovered_items)} missing cash flow items!")
+                        
+                        # Show recovered items
+                        with st.expander("Recovered Cash Flow Items", expanded=True):
+                            for item, series in recovered_items[:10]:
+                                st.write(f"**{item}**")
+                                non_null = series.notna().sum()
+                                st.write(f"  Non-null values: {non_null}")
+                                if non_null > 0:
+                                    st.write(f"  Sample: {series.dropna().head(3).to_dict()}")
+                                st.write("---")
+                        
+                        # Option to re-process with preservation
+                        if st.button("Re-process with Cash Flow Preservation", key="reprocess_with_cf"):
+                            # Clear existing data
+                            self.set_state('analysis_data', None)
+                            self.set_state('metric_mappings', None)
+                            self.set_state('pn_mappings', None)
+                            
+                            # Re-process files
+                            self._process_uploaded_files(original_files)
+                            st.rerun()
+                    else:
+                        st.warning("No additional cash flow items found in source files")
+                else:
+                    st.error("No uploaded files found for recovery")
+        # <<<--- END: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
         
         with col2:
             if st.button("💼 Clear All", key="pn_clear_all"):
@@ -11872,7 +12046,7 @@ class FinancialAnalyticsPlatform:
         if st.button("🔍 Auto-Detect Missing Mappings", key="auto_detect_mappings"):
             with st.spinner("Analyzing data for missing mappings..."):
                 # Create temporary analyzer to get suggestions
-                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings or {})
                 suggestions = temp_analyzer.suggest_missing_mappings()
                 
                 if suggestions:
@@ -11907,7 +12081,7 @@ class FinancialAnalyticsPlatform:
         # Show current CapEx detection results
         if st.checkbox("🔧 Show CapEx Detection Details", key="show_capex_details"):
             with st.expander("Capital Expenditure Detection Analysis", expanded=True):
-                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings or {})
                 capex_candidates = temp_analyzer.detect_capex_candidates()
                 
                 if capex_candidates:

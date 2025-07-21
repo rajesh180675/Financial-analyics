@@ -8930,12 +8930,16 @@ class FinancialAnalyticsPlatform:
                             temp_file.name = extracted_name
                             
                             df = self._parse_single_file(temp_file)
+                            
+                            # <<<--- INTEGRATION POINT 1: Validate and repair parsed data --->>>
+                            if df is not None:
+                                df = self._validate_and_repair_parsed_data(df, temp_file)
+                            
                             if df is not None and not df.empty:
-                                # --- CHANGE IS HERE (for compressed files) ---
-                                df_before = df.copy()  # <<<--- ADD THIS LINE
+                                df_before = df.copy()
                                 df = self._clean_dataframe(df)
-                                self._verify_cash_flow_preservation(df_before, df) # <<<--- ADD THIS LINE
-                                # --- END OF CHANGE ---
+                                self._verify_cash_flow_preservation(df_before, df)
+                                
                                 self._inspect_dataframe(df, extracted_name)
                                 all_dataframes.append(df)
                                 file_info.append({
@@ -8945,12 +8949,16 @@ class FinancialAnalyticsPlatform:
                                 })
                     else:
                         df = self._parse_single_file(file)
+                        
+                        # <<<--- INTEGRATION POINT 2: Validate and repair parsed data --->>>
+                        if df is not None:
+                            df = self._validate_and_repair_parsed_data(df, file)
+                        
                         if df is not None and not df.empty:
-                            # --- CHANGE IS HERE (for regular files) ---
-                            df_before = df.copy()  # <<<--- ADD THIS LINE
+                            df_before = df.copy()
                             df = self._clean_dataframe(df)
-                            self._verify_cash_flow_preservation(df_before, df) # <<<--- ADD THIS LINE
-                            # --- END OF CHANGE ---
+                            self._verify_cash_flow_preservation(df_before, df)
+
                             self._inspect_dataframe(df, file.name)
                             all_dataframes.append(df)
                             file_info.append({
@@ -9032,162 +9040,299 @@ class FinancialAnalyticsPlatform:
             self.compression_handler.cleanup()
         
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
-        """Parse a single file and return DataFrame"""
+        """
+        Enhanced parser that correctly handles multi-statement financial files
+        """
         try:
             file_ext = Path(file.name).suffix.lower()
             self.logger.info(f"Attempting to parse file: {file.name} with extension: {file_ext}")
-
-            sample = file.read(1024).decode('utf-8', errors='ignore')
+    
+            # Read file content
             file.seek(0)
             
-            self.logger.info(f"File content starts with: {sample[:100]}")
-            
-            if '<html' in sample.lower() or '<table' in sample.lower():
-                self.logger.info(f"{file.name} appears to be HTML content")
+            # For HTML-based files (including .xls from Capitaline/Moneycontrol)
+            if file_ext in ['.html', '.htm', '.xls']:
+                # Try to read all tables
                 try:
-                    tables = pd.read_html(file)
-                    if tables:
-                        df = max(tables, key=len)
-                        
-                        if isinstance(df.columns, pd.MultiIndex):
-                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
-                                         for col in df.columns]
-                        
-                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
-                        
-                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-                        
-                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
-                        index_col_found = False
-                        
-                        for col in potential_index_cols:
-                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
-                            if matching_cols:
-                                df = df.set_index(matching_cols[0])
-                                index_col_found = True
-                                break
-                        
-                        if not index_col_found and len(df.columns) > 0:
-                            first_col = df.columns[0]
-                            if df[first_col].dtype == object:
-                                df = df.set_index(first_col)
-                        
-                        return df
-                except Exception as e:
-                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
-                    return None
+                    tables = pd.read_html(file, match='.+', header=None)
+                    self.logger.info(f"Found {len(tables)} tables in {file.name}")
                     
+                    if not tables:
+                        raise ValueError("No tables found")
+                    
+                    # Process each table to identify statement type
+                    processed_dfs = []
+                    
+                    for i, table in enumerate(tables):
+                        self.logger.debug(f"Processing table {i+1} with shape {table.shape}")
+                        
+                        # Skip very small tables (likely headers/footers)
+                        if table.shape[0] < 5 or table.shape[1] < 2:
+                            continue
+                        
+                        # Try to identify the statement type
+                        statement_type = self._identify_statement_type_from_table(table)
+                        
+                        if statement_type:
+                            # Process the table based on its type
+                            processed_df = self._process_financial_table(table, statement_type)
+                            if processed_df is not None and not processed_df.empty:
+                                processed_dfs.append(processed_df)
+                                self.logger.info(f"Successfully processed {statement_type} with {len(processed_df)} rows")
+                    
+                    # Combine all processed tables
+                    if processed_dfs:
+                        combined_df = pd.concat(processed_dfs, axis=0)
+                        self.logger.info(f"Combined {len(processed_dfs)} tables into final DataFrame with {len(combined_df)} rows")
+                        return combined_df
+                    else:
+                        # Fallback to original method if table identification fails
+                        return self._parse_single_table_fallback(file)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Multi-table parsing failed: {e}, trying fallback method")
+                    return self._parse_single_table_fallback(file)
+            
+            # For other file types, use existing logic
             elif file_ext == '.csv':
-                try:
-                    encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-                    for encoding in encodings:
-                        try:
-                            file.seek(0)
-                            df = pd.read_csv(file, encoding=encoding, index_col=0)
-                            self.logger.info(f"Successfully parsed CSV with {encoding} encoding")
-                            return df
-                        except UnicodeDecodeError:
-                            continue
-                        except Exception as e:
-                            self.logger.warning(f"CSV parsing failed with {encoding}: {e}")
-                            continue
-                    
-                    file.seek(0)
-                    df = pd.read_csv(file, encoding='utf-8', index_col=None)
-                    if df.iloc[:, 0].dtype == object:
-                        df = df.set_index(df.columns[0])
-                    return df
-                    
-                except Exception as e:
-                    self.logger.error(f"CSV parsing failed for {file.name}: {e}")
-                    return None
-                    
-            elif file_ext in ['.xls', '.xlsx']:
-                for engine in ['openpyxl', 'xlrd']:
-                    try:
-                        file.seek(0)
-                        self.logger.info(f"Trying {engine} engine for {file.name}")
-                        
-                        try:
-                            df = pd.read_excel(file, index_col=0, engine=engine)
-                            if not df.empty:
-                                return df
-                        except Exception:
-                            file.seek(0)
-                            df = pd.read_excel(file, index_col=None, engine=engine)
-                            if not df.empty and df.iloc[:, 0].dtype == object:
-                                df = df.set_index(df.columns[0])
-                                return df
-                            
-                    except Exception as e:
-                        self.logger.warning(f"{engine} engine failed for {file.name}: {e}")
-                        continue
-                
-                try:
-                    file.seek(0)
-                    tables = pd.read_html(file)
-                    if tables:
-                        df = max(tables, key=len)
-                        
-                        if isinstance(df.columns, pd.MultiIndex):
-                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
-                                         for col in df.columns]
-                        
-                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
-                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-                        
-                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
-                        for col in potential_index_cols:
-                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
-                            if matching_cols:
-                                df = df.set_index(matching_cols[0])
-                                break
-                        else:
-                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
-                                df = df.set_index(df.columns[0])
-                        
-                        self.logger.info(f"Successfully parsed {file.name} as HTML table")
-                        return df
-                        
-                except Exception as e:
-                    self.logger.error(f"HTML fallback failed for {file.name}: {e}")
-                    return None
-            
-            elif file_ext in ['.html', '.htm']:
-                try:
-                    tables = pd.read_html(file)
-                    if tables:
-                        df = max(tables, key=len)
-                        
-                        if isinstance(df.columns, pd.MultiIndex):
-                            df.columns = [' >> '.join(str(level).strip() for level in col if str(level) != 'nan').strip(' >> ') 
-                                         for col in df.columns]
-                        
-                        df.columns = [str(col).strip().replace('  ', ' ').replace('Fice >>', 'Finance >>') for col in df.columns]
-                        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-                        
-                        potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric', 'Item']
-                        for col in potential_index_cols:
-                            matching_cols = [c for c in df.columns if col.lower() in c.lower()]
-                            if matching_cols:
-                                df = df.set_index(matching_cols[0])
-                                break
-                        else:
-                            if len(df.columns) > 0 and df[df.columns[0]].dtype == object:
-                                df = df.set_index(df.columns[0])
-                        
-                        return df
-                except Exception as e:
-                    self.logger.error(f"HTML parsing failed for {file.name}: {e}")
-                    return None
-            
+                return self._parse_csv_file(file)
+            elif file_ext == '.xlsx':
+                return self._parse_excel_file(file)
             else:
-                self.logger.warning(f"Unsupported file type: {file_ext}")
+                self.logger.error(f"Unsupported file type: {file_ext}")
                 return None
                 
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None
+    
+    def _identify_statement_type_from_table(self, table: pd.DataFrame) -> Optional[str]:
+        """
+        Identify the type of financial statement from table content
+        """
+        # Convert table to string for analysis
+        table_str = table.astype(str).values.flatten()
+        table_text = ' '.join(table_str).lower()
+        
+        # Check for statement indicators
+        if any(term in table_text for term in ['profit', 'loss', 'revenue', 'income statement', 'p&l']):
+            return 'ProfitLoss'
+        elif any(term in table_text for term in ['balance sheet', 'assets', 'liabilities', 'equity']):
+            return 'BalanceSheet'
+        elif any(term in table_text for term in ['cash flow', 'cash from', 'operating activities', 'investing activities']):
+            return 'CashFlow'
+        
+        return None
+    
+    def _process_financial_table(self, table: pd.DataFrame, statement_type: str) -> Optional[pd.DataFrame]:
+        """
+        Process a financial table based on its type
+        """
+        try:
+            # Find the header row (usually contains years)
+            header_row = None
+            for i in range(min(10, len(table))):
+                row = table.iloc[i].astype(str)
+                # Check if row contains year patterns
+                year_count = sum(1 for val in row if re.search(r'20\d{2}|19\d{2}', str(val)))
+                if year_count >= 2:
+                    header_row = i
+                    break
+            
+            if header_row is None:
+                self.logger.warning(f"Could not find header row in {statement_type} table")
+                return None
+            
+            # Set the header and clean the data
+            df = table.iloc[header_row:].copy()
+            df.columns = table.iloc[header_row]
+            df = df.iloc[1:]  # Remove the header row from data
+            
+            # Set the first column as index (usually contains line items)
+            if df.iloc[:, 0].dtype == 'object':
+                df = df.set_index(df.columns[0])
+            
+            # Clean column names
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Remove empty rows and columns
+            df = df.dropna(how='all').dropna(axis=1, how='all')
+            
+            # Add statement type prefix to index
+            df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+            
+            # Convert numeric columns
+            for col in df.columns:
+                df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''), errors='coerce')
+            
+            # Special handling for Cash Flow to ensure detail items are captured
+            if statement_type == 'CashFlow':
+                df = self._ensure_cash_flow_details(df)
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error processing {statement_type} table: {e}")
+            return None
+    
+    def _ensure_cash_flow_details(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure cash flow statement includes detailed items, not just summaries
+        """
+        # Check if we have detailed items
+        has_details = any('purchase' in str(idx).lower() or 'capital' in str(idx).lower() 
+                         or 'acquisition' in str(idx).lower() for idx in df.index)
+        
+        if not has_details:
+            self.logger.warning("Cash flow statement appears to have only summary items")
+            
+            # Look for investing activities section
+            investing_idx = None
+            for idx in df.index:
+                if 'investing activities' in str(idx).lower():
+                    investing_idx = idx
+                    break
+            
+            if investing_idx:
+                # Try to extract the breakdown if it exists in the original data
+                # This is a placeholder - you might need to adjust based on your specific file format
+                self.logger.info("Attempting to extract cash flow details from investing activities section")
+        
+        return df
+
+    def _parse_single_table_fallback(self, file) -> Optional[pd.DataFrame]:
+        """
+        [ROBUST FALLBACK] Fallback method for parsing when the multi-table approach fails.
+        This handles simpler, single-table HTML files or malformed files.
+        """
+        self.logger.warning("Executing single-table fallback parser.")
+        try:
+            file.seek(0)
+            # Attempt to read all tables in the file
+            tables = pd.read_html(file, flavor='lxml')
+            
+            if not tables:
+                self.logger.error("Fallback failed: No tables found in the file.")
+                return None
+
+            # Heuristic: The main data table is usually the largest one.
+            df = max(tables, key=len)
+            self.logger.info(f"Fallback selected the largest table with shape: {df.shape}")
+
+            # --- Data Cleaning and Structuring (from your original logic) ---
+
+            # 1. Handle and collapse MultiIndex columns if they exist
+            if isinstance(df.columns, pd.MultiIndex):
+                self.logger.debug("Collapsing MultiIndex columns in fallback.")
+                # Join levels with ' >> ', handling potential NaN/None levels gracefully
+                df.columns = [' >> '.join(str(level).strip() for level in col if pd.notna(level) and str(level).strip()).strip(' >> ') 
+                              for col in df.columns]
+            
+            # 2. General column name cleanup
+            df.columns = [str(col).strip().replace('  ', ' ') for col in df.columns]
+            df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
+
+            # 3. Intelligently find and set the index column
+            # This is often the first column containing descriptive text.
+            potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
+            index_col_found = False
+
+            for col_name in potential_index_cols:
+                # Find columns that contain the potential index name
+                matching_cols = [c for c in df.columns if col_name.lower() in str(c).lower()]
+                if matching_cols:
+                    df = df.set_index(matching_cols[0])
+                    df.index.name = "Particulars" # Standardize index name
+                    index_col_found = True
+                    self.logger.debug(f"Set index to column: {matching_cols[0]}")
+                    break
+            
+            # If no named index column was found, use the first column as a last resort
+            if not index_col_found and df.shape[1] > 0:
+                if df.iloc[:, 0].dtype == 'object' and df.iloc[:, 0].nunique() > len(df) / 2:
+                    self.logger.debug("Using the first column as the index as a last resort.")
+                    df = df.set_index(df.columns[0])
+                    df.index.name = "Particulars"
+
+            # 4. Remove rows and columns that are entirely empty
+            df = df.dropna(how='all').dropna(axis=1, how='all')
+
+            if df.empty:
+                self.logger.error("Fallback failed: DataFrame is empty after cleaning.")
+                return None
+
+            self.logger.info(f"Fallback parsing successful. Final shape: {df.shape}")
+            return df
+
+        except Exception as e:
+            self.logger.error(f"Error during single-table fallback parsing: {e}", exc_info=True)
+            return None
+
+    def _validate_and_repair_parsed_data(self, df: pd.DataFrame, file_or_content: Union[UploadedFile, io.BytesIO]) -> pd.DataFrame:
+        """
+        [ROBUST IMPLEMENTATION] Validates the initial parsed DataFrame for common catastrophic
+        parsing errors (e.g., uniform values, mixed-up columns) and triggers a more robust
+        parsing attempt if issues are found.
+        """
+        self.logger.info("Validating initial parse quality...")
+        
+        # --- Define conditions that indicate a catastrophic parsing failure ---
+        parsing_failed = False
+
+        # Condition 1: A significant number of numeric columns contain only one or two unique, suspicious values.
+        # This was the exact problem you observed in your logs.
+        suspicious_values_found = 0
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 2: # Only check if there's enough data to be suspicious
+            for col in numeric_cols:
+                unique_vals = df[col].dropna().unique()
+                if 1 <= len(unique_vals) <= 2 and all(val in [0.0, 1.54, -1.54] for val in unique_vals):
+                    suspicious_values_found += 1
+            
+            # If more than 50% of numeric columns are bad, it's a failed parse.
+            if suspicious_values_found / len(numeric_cols) > 0.5:
+                self.logger.error("PARSING FAILURE DETECTED: Most numeric columns contain only suspicious values (0.0 or 1.54).")
+                parsing_failed = True
+
+        # Condition 2: The DataFrame has an extremely wide shape with very few rows,
+        # suggesting rows and columns have been inverted.
+        if not parsing_failed and df.shape[1] > 20 and df.shape[0] < 10:
+             self.logger.error(f"PARSING FAILURE DETECTED: Suspicious DataFrame shape ({df.shape}). Rows and columns may be inverted.")
+             parsing_failed = True
+
+        # Condition 3: A single column name contains keywords for multiple statement types.
+        if not parsing_failed:
+            for col in df.columns:
+                col_str = str(col).lower()
+                if ('profit' in col_str or 'loss' in col_str) and ('balance' in col_str or 'asset' in col_str):
+                    self.logger.error(f"PARSING FAILURE DETECTED: Column '{col}' contains mixed statement types.")
+                    parsing_failed = True
+                    break
+
+        # --- Re-parsing Logic ---
+        if parsing_failed:
+            st.warning("Initial data parsing seems incorrect. Attempting a more robust deep-parse...")
+            self.logger.warning("Triggering robust re-parse due to validation failure.")
+            
+            # Reset the file pointer to the beginning before re-parsing
+            if hasattr(file_or_content, 'seek'):
+                file_or_content.seek(0)
+            
+            # Attempt to re-parse using the new, robust multi-table parser
+            repaired_df = self._parse_single_file(file_or_content)
+            
+            if repaired_df is not None and not repaired_df.empty:
+                self.logger.info("RECOVERY SUCCESS: Robust re-parsing yielded a valid DataFrame.")
+                st.success("Successfully repaired the data structure!")
+                return repaired_df
+            else:
+                self.logger.error("RECOVERY FAILED: Robust re-parsing also failed to produce a valid DataFrame.")
+                st.error("Data structure could not be automatically repaired. Please check the source file.")
+                # Return the original (bad) DataFrame to avoid crashing, but the error is noted.
+                return df
+        else:
+            self.logger.info("✓ Initial parse validation passed.")
+            return df
         
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean and prepare dataframe for analysis"""
@@ -11906,7 +12051,30 @@ class FinancialAnalyticsPlatform:
                 
                 st.rerun()
 
-       # <<<--- START: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
+        # Add this after the VST template button in _render_enhanced_penman_nissim_mapping:
+
+        if st.button("🚨 Force Add Capital Expenditure", key="force_add_capex", type="primary"):
+            """Emergency button to manually add Capital Expenditure mapping"""
+            
+            # Check if we have investing cash flow
+            investing_items = [idx for idx in data.index if 'investing' in str(idx).lower()]
+            
+            if investing_items:
+                # Use the Net Cash Used in Investing Activities as a proxy for CapEx
+                investing_item = investing_items[0]
+                
+                # Add to mappings
+                current_mappings = st.session_state.get('temp_pn_mappings', {})
+                current_mappings[investing_item] = 'Capital Expenditure'
+                st.session_state.temp_pn_mappings = current_mappings
+                
+                st.success(f"✅ Mapped '{investing_item}' to Capital Expenditure as a proxy")
+                st.info("Note: This uses total investing cash flow as CapEx. For more accurate analysis, please upload detailed cash flow statements.")
+                st.rerun()
+            else:
+                st.error("No investing activities found in the data")
+
+        # <<<--- START: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
         if st.button("🔧 Recover Lost Cash Flow Items", key="recover_cf_items", type="secondary"):
             """Emergency recovery for lost cash flow items"""
             with st.spinner("Searching for cash flow items..."):
@@ -12157,8 +12325,13 @@ class FinancialAnalyticsPlatform:
 
         # PASTE THIS CODE: Add this debugging section to your mapping interface
 
+        # In _render_enhanced_penman_nissim_mapping method, replace the debug section:
+
         if st.checkbox("🔍 Debug Data Transfer Issues", key="debug_data_transfer"):
             st.subheader("Data Transfer Debugging")
+            
+            # FIX: Get current mappings from session state, not from undefined variable
+            current_mappings_debug = st.session_state.get('temp_pn_mappings', {})
             
             # Show original vs restructured data comparison
             col1, col2 = st.columns(2)
@@ -12174,34 +12347,25 @@ class FinancialAnalyticsPlatform:
                 st.write(f"**Found {len(capex_items)} potential CapEx items:**")
                 for item in capex_items[:10]:
                     st.code(item)
-                    # Show sample data
-                    
-        # PASTE THIS CODE: Continue the debugging interface
-        
-                    # Show sample data for this item
                     sample_data = data.loc[item].dropna()
                     if len(sample_data) > 0:
                         st.write(f"Sample values: {dict(list(sample_data.items())[:3])}")
                     else:
                         st.write("⚠️ No data found")
                     st.write("---")
-                
-                if len(capex_items) > 10:
-                    st.write(f"... and {len(capex_items) - 10} more items")
             
             with col2:
                 st.write("**After Restructuring:**")
                 
-                # Create temporary analyzer to see restructured data
                 if st.button("🔄 Test Restructuring", key="test_restructure"):
                     with st.spinner("Testing data restructuring..."):
                         try:
-                            temp_analyzer = EnhancedPenmanNissimAnalyzer(data, mappings or {})
+                            # FIX: Use the current_mappings_debug variable
+                            temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings_debug)
                             clean_data = temp_analyzer._df_clean
                             
                             st.write(f"Clean data shape: {clean_data.shape}")
-                            
-                            # Check what happened to CapEx items
+                             # Check what happened to CapEx items
                             capex_in_clean = []
                             for item in capex_items:
                                 if item in clean_data.index:

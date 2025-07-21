@@ -515,6 +515,8 @@ class Configuration:
             'enable_telemetry': True,
             'enable_collaboration': True,
             'enable_ml_features': True,
+            'enable_pn_debug_logging': True,  
+            'pn_log_level': 'DEBUG',  
         },
         'processing': {
             'max_workers': 4,
@@ -3654,6 +3656,56 @@ class EnhancedPenmanNissimAnalyzer:
         # Don't use core analyzer due to NotImplemented error
         self.core_analyzer = None
         self._validate_input_data()
+
+    def _log_metric_fetch(self, target_metric: str, source_metric: str, series: pd.Series, context: str = ""):
+        """Log detailed information about metric fetching"""
+        self.logger.debug(f"\n{'='*60}")
+        self.logger.debug(f"[PN-TRACE] Fetching: {target_metric}")
+        self.logger.debug(f"[PN-TRACE] Source: {source_metric}")
+        self.logger.debug(f"[PN-TRACE] Context: {context}")
+        
+        if series is not None:
+            # Log first few values and basic stats
+            values_dict = series.to_dict()
+            self.logger.debug(f"[PN-TRACE] Values: {values_dict}")
+            
+            # Log statistics
+            non_null_values = series.dropna()
+            if len(non_null_values) > 0:
+                self.logger.debug(f"[PN-TRACE] Stats: Count={len(non_null_values)}, "
+                                f"Mean={non_null_values.mean():.2f}, "
+                                f"Min={non_null_values.min():.2f}, "
+                                f"Max={non_null_values.max():.2f}")
+            else:
+                self.logger.debug(f"[PN-TRACE] All values are null/empty")
+        else:
+            self.logger.debug(f"[PN-TRACE] Series is None - metric not found")
+        
+        self.logger.debug(f"{'='*60}\n")
+    
+    def _log_calculation(self, calc_name: str, formula: str, inputs: Dict[str, pd.Series], 
+                        result: pd.Series, metadata: Dict[str, Any] = None):
+        """Log detailed calculation steps"""
+        self.logger.debug(f"\n{'*'*60}")
+        self.logger.debug(f"[PN-CALC] Calculation: {calc_name}")
+        self.logger.debug(f"[PN-CALC] Formula: {formula}")
+        
+        # Log inputs
+        self.logger.debug(f"[PN-CALC] Inputs:")
+        for name, series in inputs.items():
+            if series is not None:
+                self.logger.debug(f"  - {name}: {series.to_dict()}")
+            else:
+                self.logger.debug(f"  - {name}: None")
+        
+        # Log result
+        self.logger.debug(f"[PN-CALC] Result: {result.to_dict() if result is not None else 'None'}")
+        
+        # Log any additional metadata
+        if metadata:
+            self.logger.debug(f"[PN-CALC] Metadata: {metadata}")
+        
+        self.logger.debug(f"{'*'*60}\n")
     
     def _validate_input_data(self):
         """Comprehensive validation of input data"""
@@ -3782,13 +3834,19 @@ class EnhancedPenmanNissimAnalyzer:
             'calculation_metadata': self.calculation_metadata
             }
         
-    def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced balance sheet reformulation with robust calculations and Indian format support"""
+   def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Enhanced balance sheet reformulation with detailed logging"""
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation")
+        self.logger.info("="*80)
+        
         reformulated = pd.DataFrame(index=self.df.columns)
         metadata = {}
         
         try:
             # Get core balance sheet items
+            self.logger.info("\n[PN-BS-CORE] Fetching core balance sheet items...")
+            
             total_assets = self._get_safe_series(df, 'Total Assets')
             total_equity = self._get_safe_series(df, 'Total Equity')
             
@@ -3798,20 +3856,29 @@ class EnhancedPenmanNissimAnalyzer:
             except:
                 # Calculate from accounting equation
                 total_liabilities = total_assets - total_equity
-                self.logger.info("Calculated Total Liabilities from Assets - Equity")
+                self.logger.warning("[PN-BS-CALC] Calculated Total Liabilities from Assets - Equity")
+                self._log_calculation(
+                    "Total Liabilities (Calculated)",
+                    "Total Assets - Total Equity",
+                    {"Total Assets": total_assets, "Total Equity": total_equity},
+                    total_liabilities
+                )
                 metadata['liabilities_calculated'] = True
             
             # Get current items
+            self.logger.info("\n[PN-BS-CURRENT] Fetching current items...")
             current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
             current_liabilities = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
             
             # Get cash and equivalents
+            self.logger.info("\n[PN-BS-CASH] Fetching cash items...")
             cash = self._get_safe_series(df, 'Cash and Cash Equivalents', default_zero=True)
             if (cash == 0).all():
                 # Try alternative names
                 cash = self._get_safe_series(df, 'Cash', default_zero=True)
             
-            # Get debt items - try multiple names
+            # Get debt items
+            self.logger.info("\n[PN-BS-DEBT] Fetching debt items...")
             debt_mapping = {
                 'short_term': ['Short-term Debt', 'Short Term Borrowings', 'Current Borrowings', 
                               'Short-term Borrowings', 'Current Debt'],
@@ -3828,6 +3895,7 @@ class EnhancedPenmanNissimAnalyzer:
                     short_term_debt += debt_series
                     if (debt_series > 0).any():
                         metadata['short_term_debt_source'] = debt_item
+                        self.logger.info(f"[PN-BS-DEBT] Found short-term debt from: {debt_item}")
                         break
                 except:
                     continue
@@ -3838,19 +3906,35 @@ class EnhancedPenmanNissimAnalyzer:
                     long_term_debt += debt_series
                     if (debt_series > 0).any():
                         metadata['long_term_debt_source'] = debt_item
+                        self.logger.info(f"[PN-BS-DEBT] Found long-term debt from: {debt_item}")
                         break
                 except:
                     continue
             
             total_debt = short_term_debt + long_term_debt
+            self._log_calculation(
+                "Total Debt",
+                "Short-term Debt + Long-term Debt",
+                {"Short-term Debt": short_term_debt, "Long-term Debt": long_term_debt},
+                total_debt
+            )
             
-            # Get other financial assets if available
+            # Get other financial assets
+            self.logger.info("\n[PN-BS-INVESTMENTS] Fetching investment items...")
             investments = self._get_safe_series(df, 'Investments', default_zero=True)
             if (investments == 0).all():
                 investments = self._get_safe_series(df, 'Short-term Investments', default_zero=True)
             
             # Calculate Financial Assets and Liabilities
+            self.logger.info("\n[PN-BS-FINANCIAL] Calculating financial items...")
             financial_assets = cash + investments
+            self._log_calculation(
+                "Financial Assets",
+                "Cash + Investments",
+                {"Cash": cash, "Investments": investments},
+                financial_assets
+            )
+            
             financial_liabilities = total_debt
             
             # If no explicit debt found, try to estimate from current liabilities
@@ -3859,106 +3943,127 @@ class EnhancedPenmanNissimAnalyzer:
                 if (st_borrowings > 0).any():
                     financial_liabilities = st_borrowings
                     metadata['debt_estimated'] = True
+                    self.logger.warning("[PN-BS-DEBT] Estimated debt from Other Current Liabilities")
             
             # Calculate Net positions
+            self.logger.info("\n[PN-BS-NET] Calculating net positions...")
             net_financial_assets = financial_assets - financial_liabilities
+            self._log_calculation(
+                "Net Financial Assets (NFA)",
+                "Financial Assets - Financial Liabilities",
+                {"Financial Assets": financial_assets, "Financial Liabilities": financial_liabilities},
+                net_financial_assets
+            )
             
             # Calculate Operating items (residual approach)
+            self.logger.info("\n[PN-BS-OPERATING] Calculating operating items...")
             operating_assets = total_assets - financial_assets
+            self._log_calculation(
+                "Operating Assets",
+                "Total Assets - Financial Assets",
+                {"Total Assets": total_assets, "Financial Assets": financial_assets},
+                operating_assets
+            )
+            
             operating_liabilities = total_liabilities - financial_liabilities
+            self._log_calculation(
+                "Operating Liabilities",
+                "Total Liabilities - Financial Liabilities",
+                {"Total Liabilities": total_liabilities, "Financial Liabilities": financial_liabilities},
+                operating_liabilities
+            )
             
             # Ensure operating liabilities are non-negative
             operating_liabilities = operating_liabilities.clip(lower=0)
             
-            # Net Operating Assets
+            # Net Operating Assets - THE KEY METRIC FOR RNOA
+            self.logger.info("\n[PN-BS-NOA] CALCULATING NET OPERATING ASSETS (NOA)...")
             net_operating_assets = operating_assets - operating_liabilities
+            self._log_calculation(
+                "Net Operating Assets (NOA)",
+                "Operating Assets - Operating Liabilities",
+                {"Operating Assets": operating_assets, "Operating Liabilities": operating_liabilities},
+                net_operating_assets,
+                {"purpose": "This is used as denominator for RNOA calculation"}
+            )
             
-            # Common Equity (same as Total Equity for simplicity)
+            # Common Equity
             common_equity = total_equity
             
             # Build reformulated balance sheet
             reformulated['Total Assets'] = total_assets
             reformulated['Operating Assets'] = operating_assets
             reformulated['Financial Assets'] = financial_assets
-            
             reformulated['Total Liabilities'] = total_liabilities
             reformulated['Operating Liabilities'] = operating_liabilities
             reformulated['Financial Liabilities'] = financial_liabilities
-            
             reformulated['Net Operating Assets'] = net_operating_assets
             reformulated['Net Financial Assets'] = net_financial_assets
             reformulated['Common Equity'] = common_equity
-            
-            # Additional detail rows
             reformulated['Cash and Equivalents'] = cash
             reformulated['Total Debt'] = total_debt
             reformulated['Short-term Debt'] = short_term_debt
             reformulated['Long-term Debt'] = long_term_debt
             
-            # Enhanced validation check with Indian format support
-            # Fix the balance check issue
-            # In Indian format, Total Equity and Liabilities = Total Assets, so the equation is different
-            if 'Total Equity and Liabilities' in self.mappings.values():
-                # Indian format - the check should be different
-                # NOA + NFA should equal Common Equity
-                check = net_operating_assets + net_financial_assets - common_equity
-                metadata['balance_check'] = check.abs().max()
-                metadata['format_type'] = 'Indian'
-                
-                # Calculate percentage check differently for Indian format
-                if (common_equity != 0).any():
-                    metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100
-                else:
-                    metadata['balance_check_pct'] = 0
-                    
-                # Only warn if check is greater than 5% for Indian format (more lenient)
-                if metadata['balance_check_pct'] > 5:
-                    self.logger.warning(f"Indian format reformulation balance check: {metadata['balance_check_pct']:.2f}%")
-                else:
-                    self.logger.info(f"Indian format balance check passed: {metadata['balance_check_pct']:.2f}%")
+            # Enhanced validation check
+            self.logger.info("\n[PN-BS-VALIDATION] Validating reformulation...")
+            check = net_operating_assets + net_financial_assets - common_equity
+            metadata['balance_check'] = check.abs().max()
+            
+            if (common_equity != 0).any():
+                metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100
             else:
-                # Original check for non-Indian format
-                check = net_operating_assets + net_financial_assets - common_equity
-                metadata['balance_check'] = check.abs().max()
-                metadata['format_type'] = 'International'
-                
-                if (common_equity != 0).any():
-                    metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100
-                else:
-                    metadata['balance_check_pct'] = 0
-                
-                # Stricter check for international format
-                if metadata['balance_check_pct'] > 1:
-                    self.logger.warning(f"International format reformulation balance check: {metadata['balance_check_pct']:.2f}%")
-                else:
-                    self.logger.info(f"International format balance check passed: {metadata['balance_check_pct']:.2f}%")
+                metadata['balance_check_pct'] = 0
+            
+            self.logger.info(f"[PN-BS-CHECK] Balance check: NOA + NFA - CE = {check.to_dict()}")
+            self.logger.info(f"[PN-BS-CHECK] Maximum absolute difference: {metadata['balance_check']:.2f}")
+            self.logger.info(f"[PN-BS-CHECK] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
             
             # Additional metadata for debugging
-            metadata['total_assets_sum'] = total_assets.sum()
-            metadata['total_equity_sum'] = total_equity.sum()
-            metadata['total_liabilities_sum'] = total_liabilities.sum()
-            metadata['net_operating_assets_sum'] = net_operating_assets.sum()
-            metadata['net_financial_assets_sum'] = net_financial_assets.sum()
+            metadata.update({
+                'total_assets_sum': total_assets.sum(),
+                'total_equity_sum': total_equity.sum(),
+                'total_liabilities_sum': total_liabilities.sum(),
+                'net_operating_assets_sum': net_operating_assets.sum(),
+                'net_financial_assets_sum': net_financial_assets.sum()
+            })
+            
+            self.logger.info("\n[PN-BS-SUMMARY] Balance Sheet Reformulation Summary:")
+            self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}")
+            self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}")
+            self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}")
+            self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}")
+            self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}")
             
         except Exception as e:
-            self.logger.error(f"Enhanced BS reformulation failed: {e}", exc_info=True)
+            self.logger.error(f"[PN-BS-ERROR] Enhanced BS reformulation failed: {e}", exc_info=True)
             # Return simple version as fallback
             return self._reformulate_balance_sheet_simple(df)
         
         self.calculation_metadata['balance_sheet'] = metadata
+        
+        self.logger.info("\n[PN-BS-END] Balance Sheet Reformulation Complete")
+        self.logger.info("="*80 + "\n")
+        
         return reformulated.T
     
     def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced income statement reformulation"""
+        """Enhanced income statement reformulation with detailed logging"""
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation")
+        self.logger.info("="*80)
+        
         reformulated = pd.DataFrame(index=self.df.columns)
         metadata = {}
         
         try:
             # Get revenue
+            self.logger.info("\n[PN-IS-REVENUE] Fetching revenue...")
             revenue = self._get_safe_series(df, 'Revenue')
             reformulated['Revenue'] = revenue
             
             # Get operating income - try multiple variants
+            self.logger.info("\n[PN-IS-OPINCOME] Fetching operating income...")
             operating_income = None
             op_income_variants = [
                 'Operating Income', 'EBIT', 'Operating Profit',
@@ -3970,23 +4075,33 @@ class EnhancedPenmanNissimAnalyzer:
                 try:
                     operating_income = self._get_safe_series(df, variant)
                     metadata['operating_income_source'] = variant
+                    self.logger.info(f"[PN-IS-OPINCOME] Found operating income from: {variant}")
                     break
                 except:
                     continue
             
             if operating_income is None:
                 # Try to calculate from components
+                self.logger.warning("[PN-IS-OPINCOME] Calculating operating income from components...")
                 try:
                     gross_profit = self._get_safe_series(df, 'Gross Profit')
                     operating_expenses = self._get_safe_series(df, 'Operating Expenses', default_zero=True)
                     operating_income = gross_profit - operating_expenses
                     metadata['operating_income_calculated'] = True
+                    
+                    self._log_calculation(
+                        "Operating Income (Calculated)",
+                        "Gross Profit - Operating Expenses",
+                        {"Gross Profit": gross_profit, "Operating Expenses": operating_expenses},
+                        operating_income
+                    )
                 except:
                     raise ValueError("Cannot determine Operating Income")
             
             reformulated['Operating Income Before Tax'] = operating_income
             
             # Get tax rate and calculate tax on operating income
+            self.logger.info("\n[PN-IS-TAX] Calculating tax on operating income...")
             try:
                 tax_expense = self._get_safe_series(df, 'Tax Expense')
                 income_before_tax = self._get_safe_series(df, 'Income Before Tax')
@@ -3995,24 +4110,66 @@ class EnhancedPenmanNissimAnalyzer:
                 tax_rate = (tax_expense / income_before_tax.replace(0, np.nan)).fillna(0)
                 tax_rate = tax_rate.clip(0, 1)  # Ensure between 0 and 1
                 
+                self._log_calculation(
+                    "Tax Rate",
+                    "Tax Expense / Income Before Tax",
+                    {"Tax Expense": tax_expense, "Income Before Tax": income_before_tax},
+                    tax_rate,
+                    {"note": "Clipped to [0, 1]"}
+                )
+                
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
+                
+                self._log_calculation(
+                    "Tax on Operating Income",
+                    "Operating Income × Tax Rate",
+                    {"Operating Income": operating_income, "Tax Rate": tax_rate},
+                    reformulated['Tax on Operating Income']
+                )
+                
+                # NOPAT - THE KEY METRIC FOR RNOA
+                self.logger.info("\n[PN-IS-NOPAT] CALCULATING NOPAT (Operating Income After Tax)...")
                 reformulated['Operating Income After Tax'] = operating_income - reformulated['Tax on Operating Income']
                 
-            except:
+                self._log_calculation(
+                    "NOPAT (Operating Income After Tax)",
+                    "Operating Income - Tax on Operating Income",
+                    {"Operating Income": operating_income, "Tax on Operating Income": reformulated['Tax on Operating Income']},
+                    reformulated['Operating Income After Tax'],
+                    {"purpose": "This is the numerator for RNOA calculation"}
+                )
+                
+            except Exception as e:
                 # Fallback - assume 25% tax rate
-                self.logger.warning("Using default 25% tax rate")
+                self.logger.warning(f"[PN-IS-TAX] Tax calculation failed: {e}. Using default 25% tax rate")
                 tax_rate = 0.25
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
                 reformulated['Operating Income After Tax'] = operating_income * (1 - tax_rate)
+                
+                self._log_calculation(
+                    "NOPAT (with default tax)",
+                    "Operating Income × (1 - 0.25)",
+                    {"Operating Income": operating_income},
+                    reformulated['Operating Income After Tax'],
+                    {"note": "Using default 25% tax rate"}
+                )
             
             # Get financial items
+            self.logger.info("\n[PN-IS-FINANCIAL] Fetching financial items...")
             interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
             interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             
             # Net Financial Expense (positive = expense, negative = income)
             net_financial_expense = interest_expense - interest_income
+            self._log_calculation(
+                "Net Financial Expense",
+                "Interest Expense - Interest Income",
+                {"Interest Expense": interest_expense, "Interest Income": interest_income},
+                net_financial_expense
+            )
+            
             reformulated['Interest Expense'] = interest_expense
             reformulated['Interest Income'] = interest_income
             reformulated['Net Financial Expense Before Tax'] = net_financial_expense
@@ -4022,9 +4179,20 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Net Financial Expense After Tax'] = net_financial_expense * (1 - tax_rate)
             
             # Net Income check
+            self.logger.info("\n[PN-IS-CHECK] Validating with reported net income...")
             net_income = self._get_safe_series(df, 'Net Income')
             calculated_net_income = (reformulated['Operating Income After Tax'] - 
                                     reformulated['Net Financial Expense After Tax'])
+            
+            self._log_calculation(
+                "Net Income (Calculated)",
+                "NOPAT - Net Financial Expense After Tax",
+                {
+                    "NOPAT": reformulated['Operating Income After Tax'],
+                    "Net Financial Expense After Tax": reformulated['Net Financial Expense After Tax']
+                },
+                calculated_net_income
+            )
             
             reformulated['Net Income (Reported)'] = net_income
             reformulated['Net Income (Calculated)'] = calculated_net_income
@@ -4033,46 +4201,73 @@ class EnhancedPenmanNissimAnalyzer:
             income_diff = (net_income - calculated_net_income).abs().max()
             metadata['income_reconciliation_diff'] = income_diff
             
+            self.logger.info(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
+            self.logger.info(f"[PN-IS-CHECK] Reported Net Income: {net_income.to_dict()}")
+            self.logger.info(f"[PN-IS-CHECK] Calculated Net Income: {calculated_net_income.to_dict()}")
+            
+            # Summary
+            self.logger.info("\n[PN-IS-SUMMARY] Income Statement Reformulation Summary:")
+            self.logger.info(f"  Revenue: {revenue.sum():,.0f}")
+            self.logger.info(f"  Operating Income: {operating_income.sum():,.0f}")
+            self.logger.info(f"  NOPAT: {reformulated['Operating Income After Tax'].sum():,.0f}")
+            self.logger.info(f"  Net Income: {net_income.sum():,.0f}")
+            
         except Exception as e:
-            self.logger.error(f"Enhanced IS reformulation failed: {e}")
+            self.logger.error(f"[PN-IS-ERROR] Enhanced IS reformulation failed: {e}", exc_info=True)
             return self._reformulate_income_statement_simple(df)
         
         self.calculation_metadata['income_statement'] = metadata
+        
+        self.logger.info("\n[PN-IS-END] Income Statement Reformulation Complete")
+        self.logger.info("="*80 + "\n")
+        
         return reformulated.T
     
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced ratio calculation with multiple methods and validation"""
+        """Enhanced ratio calculation with detailed logging"""
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-RATIOS-START] Starting Ratio Calculations")
+        self.logger.info("="*80)
+        
         ratios = pd.DataFrame(index=self.df.columns)
         metadata = {}
         
         try:
-            # Debug: Log what metrics we have
-            self.logger.info("Starting ratio calculation...")
-            self.logger.info(f"Available mappings: {list(self.mappings.keys())[:20]}")
-            
             # Get reformulated statements
+            self.logger.info("\n[PN-RATIOS-REFORM] Getting reformulated statements...")
             ref_bs = self._reformulate_balance_sheet_enhanced(df)
             ref_is = self._reformulate_income_statement_enhanced(df)
             
-            # Debug: Check if we have the required data
-            self.logger.info(f"Reformulated BS shape: {ref_bs.shape}")
-            self.logger.info(f"Reformulated IS shape: {ref_is.shape}")
-            self.logger.info(f"BS indices: {list(ref_bs.index)[:10]}")
-            self.logger.info(f"IS indices: {list(ref_is.index)[:10]}")
+            # Log shapes for debugging
+            self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
+            self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
             
-            # RNOA (Return on Net Operating Assets)
+            # RNOA (Return on Net Operating Assets) - THE KEY RATIO
+            self.logger.info("\n[PN-RATIOS-RNOA] CALCULATING RNOA...")
             if all(item in ref_is.index for item in ['Operating Income After Tax']) and \
                all(item in ref_bs.index for item in ['Net Operating Assets']):
                 
-                oiat = ref_is.loc['Operating Income After Tax']
+                oiat = ref_is.loc['Operating Income After Tax']  # NOPAT
                 noa = ref_bs.loc['Net Operating Assets']
+                
+                self.logger.info(f"[PN-RATIOS-RNOA] NOPAT values: {oiat.to_dict()}")
+                self.logger.info(f"[PN-RATIOS-RNOA] NOA values: {noa.to_dict()}")
                 
                 # Use average NOA for more accurate calculation
                 avg_noa = noa.rolling(window=2, min_periods=1).mean()
+                self.logger.info(f"[PN-RATIOS-RNOA] Average NOA values: {avg_noa.to_dict()}")
                 
                 # Ensure no division by zero
                 rnoa = (oiat / avg_noa.replace(0, np.nan)) * 100
                 ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
+                
+                self._log_calculation(
+                    "RNOA",
+                    "(NOPAT / Average NOA) × 100",
+                    {"NOPAT": oiat, "Average NOA": avg_noa},
+                    rnoa,
+                    {"formula": "RNOA = (Operating Income After Tax / Average Net Operating Assets) × 100"}
+                )
                 
                 # Calculate components
                 if 'Revenue' in ref_is.index:
@@ -4082,21 +4277,39 @@ class EnhancedPenmanNissimAnalyzer:
                     opm = (oiat / revenue.replace(0, np.nan)) * 100
                     ratios['Operating Profit Margin (OPM) %'] = opm
                     
+                    self._log_calculation(
+                        "Operating Profit Margin",
+                        "(NOPAT / Revenue) × 100",
+                        {"NOPAT": oiat, "Revenue": revenue},
+                        opm
+                    )
+                    
                     # Net Operating Asset Turnover
                     noat = revenue / avg_noa.replace(0, np.nan)
                     ratios['Net Operating Asset Turnover (NOAT)'] = noat
                     
+                    self._log_calculation(
+                        "Net Operating Asset Turnover",
+                        "Revenue / Average NOA",
+                        {"Revenue": revenue, "Average NOA": avg_noa},
+                        noat
+                    )
+                    
                     # Verify RNOA = OPM × NOAT
                     calculated_rnoa = (opm * noat) / 100
                     metadata['rnoa_decomposition_check'] = (rnoa - calculated_rnoa).abs().max()
+                    
+                    self.logger.info("\n[PN-RATIOS-RNOA-CHECK] RNOA Decomposition Check:")
+                    self.logger.info(f"  RNOA (direct): {rnoa.to_dict()}")
+                    self.logger.info(f"  RNOA (OPM × NOAT): {calculated_rnoa.to_dict()}")
+                    self.logger.info(f"  Maximum difference: {metadata['rnoa_decomposition_check']:.4f}")
                 else:
-                    self.logger.warning("Revenue not found in reformulated income statement")
+                    self.logger.warning("[PN-RATIOS-RNOA] Revenue not found - cannot decompose RNOA")
             else:
-                self.logger.warning("Missing required items for RNOA calculation")
-                self.logger.info(f"Have Operating Income After Tax: {'Operating Income After Tax' in ref_is.index}")
-                self.logger.info(f"Have Net Operating Assets: {'Net Operating Assets' in ref_bs.index}")
-            
+                self.logger.error("[PN-RATIOS-RNOA] Missing required items for RNOA calculation")
+                
             # FLEV (Financial Leverage)
+            self.logger.info("\n[PN-RATIOS-FLEV] Calculating Financial Leverage...")
             if all(item in ref_bs.index for item in ['Net Financial Assets', 'Common Equity']):
                 nfa = ref_bs.loc['Net Financial Assets']
                 ce = ref_bs.loc['Common Equity']
@@ -4107,15 +4320,29 @@ class EnhancedPenmanNissimAnalyzer:
                 flev = -nfa / avg_ce.replace(0, np.nan)
                 ratios['Financial Leverage (FLEV)'] = flev
                 
+                self._log_calculation(
+                    "Financial Leverage",
+                    "-NFA / Average Common Equity",
+                    {"NFA": nfa, "Average Common Equity": avg_ce},
+                    flev,
+                    {"note": "Negative NFA means positive Net Financial Obligations"}
+                )
+                
                 # Alternative: Debt to Equity if available
                 if 'Total Debt' in ref_bs.index:
                     total_debt = ref_bs.loc['Total Debt']
                     debt_to_equity = total_debt / avg_ce.replace(0, np.nan)
                     ratios['Debt to Equity'] = debt_to_equity
-            else:
-                self.logger.warning("Missing required items for FLEV calculation")
+                    
+                    self._log_calculation(
+                        "Debt to Equity",
+                        "Total Debt / Average Common Equity",
+                        {"Total Debt": total_debt, "Average Common Equity": avg_ce},
+                        debt_to_equity
+                    )
             
             # NBC (Net Borrowing Cost)
+            self.logger.info("\n[PN-RATIOS-NBC] Calculating Net Borrowing Cost...")
             if all(item in ref_is.index for item in ['Net Financial Expense After Tax']) and \
                all(item in ref_bs.index for item in ['Net Financial Assets']):
                 
@@ -4126,30 +4353,39 @@ class EnhancedPenmanNissimAnalyzer:
                 avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
                 
                 # NBC = NFE / (-NFA) for when NFA is negative (i.e., net debt position)
-                # When NFA is positive (net cash), NBC is negative (earning return on cash)
                 nbc = (nfe_after_tax / (-avg_nfa).replace(0, np.nan)) * 100
                 ratios['Net Borrowing Cost (NBC) %'] = nbc
                 
-                # Alternative calculation using gross rates
-                if 'Interest Expense' in ref_is.index and 'Total Debt' in ref_bs.index:
-                    interest_expense = ref_is.loc['Interest Expense']
-                    total_debt = ref_bs.loc['Total Debt']
-                    avg_debt = total_debt.rolling(window=2, min_periods=1).mean()
-                    
-                    gross_borrowing_rate = (interest_expense / avg_debt.replace(0, np.nan)) * 100
-                    ratios['Gross Borrowing Rate %'] = gross_borrowing_rate
-            else:
-                self.logger.warning("Missing required items for NBC calculation")
+                self._log_calculation(
+                    "Net Borrowing Cost",
+                    "(Net Financial Expense After Tax / -Average NFA) × 100",
+                    {"NFE After Tax": nfe_after_tax, "Average NFA": avg_nfa},
+                    nbc,
+                    {"note": "NBC = cost of net debt position"}
+                )
             
             # Spread (RNOA - NBC)
+            self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
             if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %', 
                                                     'Net Borrowing Cost (NBC) %']):
                 spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - \
                         ratios.loc['Net Borrowing Cost (NBC) %']
                 ratios['Spread %'] = spread
                 ratios['Leverage Spread %'] = spread  # Alternative name
+                
+                self._log_calculation(
+                    "Spread",
+                    "RNOA - NBC",
+                    {
+                        "RNOA": ratios.loc['Return on Net Operating Assets (RNOA) %'],
+                        "NBC": ratios.loc['Net Borrowing Cost (NBC) %']
+                    },
+                    spread,
+                    {"interpretation": "Positive spread means operations earn more than cost of debt"}
+                )
             
             # ROE and its decomposition
+            self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
             if 'Net Income' in ref_is.index and 'Common Equity' in ref_bs.index:
                 net_income = ref_is.loc['Net Income']
                 ce = ref_bs.loc['Common Equity']
@@ -4157,6 +4393,13 @@ class EnhancedPenmanNissimAnalyzer:
                 
                 roe = (net_income / avg_ce.replace(0, np.nan)) * 100
                 ratios['Return on Equity (ROE) %'] = roe
+                
+                self._log_calculation(
+                    "ROE",
+                    "(Net Income / Average Common Equity) × 100",
+                    {"Net Income": net_income, "Average Common Equity": avg_ce},
+                    roe
+                )
                 
                 # ROE = RNOA + (FLEV × Spread)
                 if all(item in ratios.index for item in ['Return on Net Operating Assets (RNOA) %',
@@ -4169,59 +4412,32 @@ class EnhancedPenmanNissimAnalyzer:
                     ratios['ROE (Calculated) %'] = calculated_roe
                     
                     metadata['roe_decomposition_diff'] = (roe - calculated_roe).abs().max()
+                    
+                    self.logger.info("\n[PN-RATIOS-ROE-CHECK] ROE Decomposition Check:")
+                    self.logger.info("  Formula: ROE = RNOA + (FLEV × Spread)")
+                    self.logger.info(f"  ROE (direct): {roe.to_dict()}")
+                    self.logger.info(f"  ROE (calculated): {calculated_roe.to_dict()}")
+                    self.logger.info(f"  RNOA: {rnoa.to_dict()}")
+                    self.logger.info(f"  FLEV: {flev.to_dict()}")
+                    self.logger.info(f"  Spread: {spread.to_dict()}")
+                    self.logger.info(f"  FLEV × Spread: {(flev * spread).to_dict()}")
+                    self.logger.info(f"  Maximum difference: {metadata['roe_decomposition_diff']:.4f}")
             
-            # Additional performance metrics
-            if 'Total Assets' in ref_bs.index and 'Net Income' in ref_is.index:
-                total_assets = ref_bs.loc['Total Assets']
-                net_income = ref_is.loc['Net Income']
-                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
-                
-                roa = (net_income / avg_assets.replace(0, np.nan)) * 100
-                ratios['Return on Assets (ROA) %'] = roa
-            
-            # Growth metrics
-            if 'Revenue' in ref_is.index:
-                revenue = ref_is.loc['Revenue']
-                revenue_growth = revenue.pct_change() * 100
-                ratios['Revenue Growth %'] = revenue_growth
-            
-            if 'Net Operating Assets' in ref_bs.index:
-                noa = ref_bs.loc['Net Operating Assets']
-                noa_growth = noa.pct_change() * 100
-                ratios['NOA Growth %'] = noa_growth
-            
-            # Efficiency ratios
-            if 'Revenue' in ref_is.index and 'Total Assets' in ref_bs.index:
-                revenue = ref_is.loc['Revenue']
-                total_assets = ref_bs.loc['Total Assets']
-                avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
-                
-                asset_turnover = revenue / avg_assets.replace(0, np.nan)
-                ratios['Asset Turnover'] = asset_turnover
-            
-            # Profitability ratios
-            if 'Revenue' in ref_is.index and 'Net Income' in ref_is.index:
-                revenue = ref_is.loc['Revenue']
-                net_income = ref_is.loc['Net Income']
-                
-                net_margin = (net_income / revenue.replace(0, np.nan)) * 100
-                ratios['Net Profit Margin %'] = net_margin
-            
-            # Quality checks
-            metadata['ratio_count'] = len(ratios.index)
-            metadata['complete_years'] = sum(ratios.notna().all())
-            metadata['missing_ratio_pct'] = (ratios.isna().sum().sum() / (len(ratios.index) * len(ratios.columns))) * 100
-            
-            if metadata['missing_ratio_pct'] > 50:
-                self.logger.warning(f"High percentage of missing ratios: {metadata['missing_ratio_pct']:.1f}%")
+            # Summary
+            self.logger.info("\n[PN-RATIOS-SUMMARY] Ratio Calculation Summary:")
+            self.logger.info(f"  Total ratios calculated: {len(ratios.index)}")
+            self.logger.info(f"  Key ratios: {list(ratios.index)}")
             
         except Exception as e:
-            self.logger.error(f"Error in ratio calculation: {e}", exc_info=True)
-            # Return simple version as fallback
+            self.logger.error(f"[PN-RATIOS-ERROR] Error in ratio calculation: {e}", exc_info=True)
             return self._calculate_ratios_simple(df)
         
         self.calculation_metadata['ratios'] = metadata
-        return ratios.T  # Transpose for better display
+        
+        self.logger.info("\n[PN-RATIOS-END] Ratio Calculations Complete")
+        self.logger.info("="*80 + "\n")
+        
+        return ratios.T
     
     def _calculate_free_cash_flow_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced free cash flow calculation"""
@@ -4493,16 +4709,19 @@ class EnhancedPenmanNissimAnalyzer:
         return drivers.T
     
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with comprehensive fallback options"""
+        """Safely get a series with comprehensive logging and fallback options"""
+        self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
+        
         # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
         if source_metric and source_metric in df.index:
             series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
-            self.logger.info(f"Found '{target_metric}' mapped to '{source_metric}'")
+            self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
+            self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
             return series
         
         # Log what we're looking for
-        self.logger.warning(f"Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
+        self.logger.warning(f"[PN-FETCH-MISS] Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
         
         # Define comprehensive search patterns for VST data
         search_patterns = {
@@ -4596,14 +4815,18 @@ class EnhancedPenmanNissimAnalyzer:
         
         # Try to find using search patterns
         if target_metric in search_patterns:
+            self.logger.info(f"[PN-FETCH-SEARCH] Searching patterns for '{target_metric}'")
             for pattern in search_patterns[target_metric]:
                 if pattern in df.index:
-                    self.logger.info(f"Auto-discovered '{pattern}' for '{target_metric}'")
+                    self.logger.info(f"[PN-FETCH-FOUND] Auto-discovered '{pattern}' for '{target_metric}'")
                     series = df.loc[pattern].fillna(0 if default_zero else np.nan)
+                    self._log_metric_fetch(target_metric, pattern, series, "Pattern search")
                     return series
         
         # If still not found, do a case-insensitive search
         target_lower = target_metric.lower()
+        self.logger.info(f"[PN-FETCH-FALLBACK] Trying case-insensitive search for '{target_metric}'")
+        
         for idx in df.index:
             idx_lower = str(idx).lower()
             
@@ -4612,14 +4835,16 @@ class EnhancedPenmanNissimAnalyzer:
             
             # Check for exact match after cleaning
             if target_lower == idx_clean:
-                self.logger.info(f"Found exact match after cleaning: '{idx}' for '{target_metric}'")
+                self.logger.info(f"[PN-FETCH-FOUND] Found exact match after cleaning: '{idx}' for '{target_metric}'")
                 series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive exact match")
                 return series
             
             # Check for partial match
             if target_lower in idx_clean or idx_clean in target_lower:
-                self.logger.info(f"Found partial match: '{idx}' for '{target_metric}'")
+                self.logger.info(f"[PN-FETCH-FOUND] Found partial match: '{idx}' for '{target_metric}'")
                 series = df.loc[idx].fillna(0 if default_zero else np.nan)
+                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive partial match")
                 return series
         
         # List of optional metrics that can default to zero
@@ -4630,12 +4855,14 @@ class EnhancedPenmanNissimAnalyzer:
         ]
         
         if default_zero or target_metric in optional_metrics:
-            self.logger.info(f"Optional metric '{target_metric}' not found, using zeros")
-            return pd.Series(0, index=df.columns)
+            self.logger.info(f"[PN-FETCH-DEFAULT] Optional metric '{target_metric}' not found, using zeros")
+            series = pd.Series(0, index=df.columns)
+            self._log_metric_fetch(target_metric, "DEFAULT_ZEROS", series, "Default to zero")
+            return series
         
         # For required metrics, log available options and raise error
-        self.logger.error(f"Required metric '{target_metric}' not found")
-        self.logger.info(f"Available indices that might match:")
+        self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
+        self.logger.info(f"[PN-FETCH-HELP] Available indices that might match:")
         for idx in df.index:
             if any(word in str(idx).lower() for word in target_lower.split()):
                 self.logger.info(f"  - {idx}")
@@ -9660,7 +9887,8 @@ class FinancialAnalyticsPlatform:
             "💰 Cash Flow Analysis",
             "🎯 Value Drivers",
             "📉 Time Series",
-            "🔍 Debug"  # Add this
+            "🔍 Debug",
+            "📋 Calculation Trace"  # Add this new tab
         ])
         
         with tabs[0]:
@@ -9803,6 +10031,52 @@ class FinancialAnalyticsPlatform:
                         if not results['ratios'].empty:
                             st.write("Index:", list(results['ratios'].index))
                             st.write("Columns:", list(results['ratios'].columns))
+
+        # Add implementation for the new tab
+        with tabs[8]:  # Calculation Trace tab
+            st.subheader("📋 Penman-Nissim Calculation Trace")
+            
+            if st.checkbox("Show detailed calculation logs", key="show_pn_trace"):
+                # Read recent logs
+                log_file = Path("logs/PenmanNissim.log")
+                if log_file.exists():
+                    with open(log_file, 'r') as f:
+                        # Get last 1000 lines
+                        lines = f.readlines()[-1000:]
+                        
+                        # Filter for PN-specific logs
+                        pn_logs = [line for line in lines if any(tag in line for tag in ['[PN-', 'RNOA', 'NOA', 'NOPAT'])]
+                        
+                        # Display in expandable sections
+                        with st.expander("Balance Sheet Reformulation Trace", expanded=False):
+                            bs_logs = [log for log in pn_logs if '[PN-BS' in log]
+                            st.code('\n'.join(bs_logs))
+                        
+                        with st.expander("Income Statement Reformulation Trace", expanded=False):
+                            is_logs = [log for log in pn_logs if '[PN-IS' in log]
+                            st.code('\n'.join(is_logs))
+                        
+                        with st.expander("Ratio Calculation Trace", expanded=False):
+                            ratio_logs = [log for log in pn_logs if '[PN-RATIOS' in log]
+                            st.code('\n'.join(ratio_logs))
+                        
+                        with st.expander("All Calculations", expanded=False):
+                            calc_logs = [log for log in pn_logs if '[PN-CALC]' in log]
+                            st.code('\n'.join(calc_logs))
+                else:
+                    st.info("No log file found. Run an analysis to generate logs.")
+            
+            # Download logs button
+            if st.button("Download Full Trace Log", key="download_pn_trace"):
+                log_file = Path("logs/PenmanNissim.log")
+                if log_file.exists():
+                    with open(log_file, 'rb') as f:
+                        st.download_button(
+                            label="📥 Download Log File",
+                            data=f.read(),
+                            file_name=f"penman_nissim_trace_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+                            mime="text/plain"
+                        )
                             
 
     def _render_pn_trend_analysis(self, results):

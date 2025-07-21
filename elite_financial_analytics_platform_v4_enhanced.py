@@ -9041,359 +9041,70 @@ class FinancialAnalyticsPlatform:
         
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
         """
-        [ENHANCED PARSER V3] Robust parser for Indian financial statements with multiple fallback strategies
+        Enhanced parser that correctly handles multi-statement financial files
         """
         try:
-            # Ensure dependencies are available
-            try:
-                from bs4 import BeautifulSoup
-                import re
-            except ImportError:
-                st.error("Missing required parsing library. Please run: pip install beautifulsoup4 lxml")
-                self.logger.error("Missing dependencies: beautifulsoup4 or lxml.")
-                return None
+            file_ext = Path(file.name).suffix.lower()
+            self.logger.info(f"Attempting to parse file: {file.name} with extension: {file_ext}")
     
-            self.logger.info(f"🔧 Starting enhanced parsing for: {file.name}")
+            # Read file content
             file.seek(0)
-            content = file.read()
-    
-            # Handle various common encodings gracefully
-            if isinstance(content, bytes):
-                for encoding in ['utf-8', 'latin-1', 'cp1252', 'windows-1252']:
-                    try:
-                        content = content.decode(encoding)
-                        self.logger.debug(f"Decoded file content with {encoding}.")
-                        break
-                    except UnicodeDecodeError:
-                        continue
             
-            soup = BeautifulSoup(content, 'lxml')
-    
-            # ENHANCED patterns for Indian financial statements
-            statement_patterns = {
-                'ProfitLoss': [
-                    r'profit.*(?:loss|account)', r'income.*statement', r'statement.*income',
-                    r'p\s*&\s*l', r'profit.*loss.*account', r'statement.*profit.*loss',
-                    r'comprehensive.*income', r'revenue.*expenditure', r'profit.*account',
-                    # Indian specific patterns
-                    r'indas.*profit', r'standalone.*profit', r'profit.*loss.*ind'
-                ],
-                'BalanceSheet': [
-                    r'balance.*sheet', r'statement.*financial.*position', r'financial.*position',
-                    r'assets.*liabilities', r'balance.*sheet.*as.*at',
-                    # Indian specific patterns  
-                    r'indas.*balance', r'standalone.*balance', r'balance.*sheet.*ind'
-                ],
-                'CashFlow': [
-                    r'cash.*flow', r'statement.*cash.*flow', r'cash.*flow.*statement',
-                    r'funds.*flow', r'statement.*cash.*flows', r'cash.*flows',
-                    # Indian specific patterns
-                    r'indas.*cash', r'standalone.*cash', r'cash.*flow.*ind'
-                ]
-            }
-    
-            processed_statements = []
-            st.info(f"🔬 Analyzing structure of {file.name}...")
-    
-            # STRATEGY 1: Header-based detection (your original approach)
-            for statement_type, patterns in statement_patterns.items():
-                st.info(f"🔍 Looking for {statement_type} using header detection...")
-                
-                found_statement = False
-                
-                for pattern in patterns:
-                    if found_statement:
-                        break
-                        
-                    # Expanded search in more tag types
-                    header_tag = soup.find(lambda tag: tag.name in ['b', 'strong', 'td', 'th', 'p', 'h1', 'h2', 'h3', 'h4', 'div', 'span'] 
-                                        and re.search(pattern, tag.get_text(strip=True), re.IGNORECASE))
-                    
-                    if header_tag:
-                        self.logger.info(f"Found header for {statement_type}: {header_tag.get_text()[:50]}")
-                        
-                        # Look for table after header
-                        data_table_tag = header_tag.find_next('table')
-                        
-                        if data_table_tag and self._is_valid_data_table(data_table_tag):
-                            df = self._extract_and_process_table(data_table_tag, statement_type)
-                            if df is not None and not df.empty:
-                                processed_statements.append(df)
-                                st.success(f"✅ Strategy 1: Extracted {statement_type}")
-                                found_statement = True
-                                break
-    
-            # STRATEGY 2: Content-based detection (fallback)
-            if len(processed_statements) < 3:  # If we didn't find all 3 statements
-                st.warning("🔄 Trying content-based detection...")
-                
-                all_tables = soup.find_all('table')
-                st.info(f"Found {len(all_tables)} tables to analyze...")
-                
-                for statement_type in statement_patterns.keys():
-                    if any(statement_type in str(ps.index[0]) for ps in processed_statements):
-                        continue  # Skip if already found
-                    
-                    st.info(f"🔍 Content analysis for {statement_type}...")
-                    
-                    for i, table in enumerate(all_tables):
-                        if self._table_matches_statement_type(table, statement_type):
-                            df = self._extract_and_process_table(table, statement_type)
-                            if df is not None and not df.empty:
-                                processed_statements.append(df)
-                                st.success(f"✅ Strategy 2: Found {statement_type} in table {i+1}")
-                                break
-    
-            # STRATEGY 3: Liberal parsing (last resort)
-            if not processed_statements:
-                st.warning("🚨 Attempting liberal parsing of all tables...")
-                
-                all_tables = soup.find_all('table')
-                for i, table in enumerate(all_tables):
-                    if self._is_valid_data_table(table):
-                        # Try to guess statement type from table content
-                        table_text = table.get_text().lower()
-                        
-                        if any(word in table_text for word in ['revenue', 'profit', 'income', 'expense']):
-                            statement_type = 'ProfitLoss'
-                        elif any(word in table_text for word in ['assets', 'liabilities', 'equity']):
-                            statement_type = 'BalanceSheet'  
-                        elif any(word in table_text for word in ['cash', 'operating', 'investing', 'financing']):
-                            statement_type = 'CashFlow'
-                        else:
-                            statement_type = f'Unknown_{i}'
-                        
-                        df = self._extract_and_process_table(table, statement_type)
-                        if df is not None and not df.empty:
-                            processed_statements.append(df)
-                            st.info(f"✅ Strategy 3: Extracted {statement_type} from table {i+1}")
-    
-            if not processed_statements:
-                # Final debug attempt
-                self._debug_file_structure(soup, file.name)
-                st.error(f"❌ Could not extract any valid financial statements from {file.name}")
-                return None
-    
-            # Combine all successfully processed statements
-            final_df = pd.concat(processed_statements, axis=0, sort=False)
-            final_df = final_df.loc[~final_df.index.duplicated(keep='first')]
-            
-            st.success(f"🎉 SUCCESS! Parsed {len(processed_statements)} statements. Final data shape: {final_df.shape}")
-            self._validate_parsed_data(final_df)
-            return final_df
-    
-        except Exception as e:
-            self.logger.error(f"Enhanced parsing failed for {file.name}: {e}", exc_info=True)
-            st.error(f"💥 Critical parsing error: {str(e)}")
-            return None
-    
-    def _table_matches_statement_type(self, table_tag, statement_type: str) -> bool:
-        """Enhanced content-based statement detection"""
-        try:
-            table_text = table_tag.get_text().lower()
-            
-            # Enhanced keyword matching for Indian statements
-            type_keywords = {
-                'ProfitLoss': [
-                    'revenue', 'income', 'expense', 'profit', 'loss', 'tax', 'depreciation',
-                    'finance cost', 'other income', 'total revenue', 'total expenses',
-                    'profit before tax', 'profit after tax'
-                ],
-                'BalanceSheet': [
-                    'assets', 'liabilities', 'equity', 'capital', 'reserves', 'share capital',
-                    'current assets', 'fixed assets', 'current liabilities', 'borrowings',
-                    'trade receivables', 'trade payables', 'cash equivalents'
-                ],
-                'CashFlow': [
-                    'operating activities', 'investing activities', 'financing activities', 
-                    'cash flow', 'net cash', 'cash generated', 'cash used',
-                    'purchase of fixed assets', 'capital expenditure'
-                ]
-            }
-            
-            keywords = type_keywords.get(statement_type, [])
-            matches = sum(1 for keyword in keywords if keyword in table_text)
-            
-            # Require at least 3 keyword matches for confidence
-            return matches >= 3
-            
-        except:
-            return False
-    
-    def _is_valid_data_table(self, table_tag) -> bool:
-        """Enhanced validation for financial tables"""
-        try:
-            rows = table_tag.find_all('tr')
-            if len(rows) < 4:  # Reduced from 5 to 4 for more flexibility
-                return False
-            
-            # Check first row for column structure
-            first_row = table_tag.find('tr')
-            num_cols = len(first_row.find_all(['td', 'th'])) if first_row else 0
-            
-            if num_cols < 2:  # Need at least 2 columns
-                return False
-            
-            # Get table text for analysis
-            header_text = ' '.join(cell.get_text() for cell in table_tag.find_all(['th', 'td'])[:30])
-            
-            # Look for financial indicators (more flexible)
-            has_years = bool(re.search(r'(20\d{2}|19\d{2})', header_text))
-            has_financial_terms = any(term in header_text.lower() for term in [
-                'amount', 'rs', 'inr', 'lakhs', 'crores', 'thousands', 'millions',
-                'current year', 'previous year', 'fy', 'march', 'as at'
-            ])
-            has_numbers = bool(re.search(r'\d+[,.]?\d*', header_text))
-            
-            # More lenient validation
-            return has_years or has_financial_terms or (has_numbers and num_cols >= 3)
-            
-        except:
-            return False
-    
-    def _extract_and_process_table(self, table_tag, statement_type: str) -> Optional[pd.DataFrame]:
-        """Enhanced table extraction with better error handling"""
-        try:
-            # Try multiple parsing approaches
-            df = None
-            
-            # Approach 1: Direct pandas parsing
-            try:
-                df = pd.read_html(str(table_tag), header=0)[0]
-            except:
+            # For HTML-based files (including .xls from Capitaline/Moneycontrol)
+            if file_ext in ['.html', '.htm', '.xls']:
+                # Try to read all tables
                 try:
-                    df = pd.read_html(str(table_tag))[0]
-                except:
-                    return None
-            
-            if df is None or df.empty:
-                return None
-            
-            # Enhanced cleaning
-            df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
-            
-            if len(df) < 2:  # Need at least 2 rows
-                return None
-            
-            # Find the best index column (more sophisticated)
-            index_col = 0
-            best_score = 0
-            
-            for i, col in enumerate(df.columns):
-                # Score based on text content and non-null values
-                if df[col].dtype == 'object':
-                    text_ratio = df[col].apply(lambda x: isinstance(x, str) and len(str(x)) > 3).sum() / len(df)
-                    non_null_ratio = df[col].notna().sum() / len(df)
-                    score = text_ratio * non_null_ratio
+                    tables = pd.read_html(file, match='.+', header=None)
+                    self.logger.info(f"Found {len(tables)} tables in {file.name}")
                     
-                    if score > best_score:
-                        best_score = score
-                        index_col = i
+                    if not tables:
+                        raise ValueError("No tables found")
+                    
+                    # Process each table to identify statement type
+                    processed_dfs = []
+                    
+                    for i, table in enumerate(tables):
+                        self.logger.debug(f"Processing table {i+1} with shape {table.shape}")
+                        
+                        # Skip very small tables (likely headers/footers)
+                        if table.shape[0] < 5 or table.shape[1] < 2:
+                            continue
+                        
+                        # Try to identify the statement type
+                        statement_type = self._identify_statement_type_from_table(table)
+                        
+                        if statement_type:
+                            # Process the table based on its type
+                            processed_df = self._process_financial_table(table, statement_type)
+                            if processed_df is not None and not processed_df.empty:
+                                processed_dfs.append(processed_df)
+                                self.logger.info(f"Successfully processed {statement_type} with {len(processed_df)} rows")
+                    
+                    # Combine all processed tables
+                    if processed_dfs:
+                        combined_df = pd.concat(processed_dfs, axis=0)
+                        self.logger.info(f"Combined {len(processed_dfs)} tables into final DataFrame with {len(combined_df)} rows")
+                        return combined_df
+                    else:
+                        # Fallback to original method if table identification fails
+                        return self._parse_single_table_fallback(file)
+                        
+                except Exception as e:
+                    self.logger.warning(f"Multi-table parsing failed: {e}, trying fallback method")
+                    return self._parse_single_table_fallback(file)
             
-            # Set index
-            df = df.set_index(df.columns[index_col])
-            df.index = df.index.astype(str).str.strip()
-            df.index.name = 'Particulars'
-            
-            # Enhanced column filtering
-            valid_cols = []
-            for col in df.columns:
-                col_str = str(col)
-                
-                # Keep columns that look like years OR have mostly numeric data
-                has_year = bool(re.search(r'(20\d{2}|19\d{2})', col_str))
-                numeric_ratio = pd.to_numeric(df[col], errors='coerce').notna().sum() / len(df)
-                
-                if has_year or numeric_ratio > 0.5:  # 50% numeric threshold
-                    valid_cols.append(col)
-            
-            if not valid_cols:
+            # For other file types, use existing logic
+            elif file_ext == '.csv':
+                return self._parse_csv_file(file)
+            elif file_ext == '.xlsx':
+                return self._parse_excel_file(file)
+            else:
+                self.logger.error(f"Unsupported file type: {file_ext}")
                 return None
-            
-            df = df[valid_cols]
-            
-            # Enhanced numeric conversion
-            for col in df.columns:
-                df[col] = pd.to_numeric(
-                    df[col].astype(str)
-                    .str.replace(',', '')
-                    .str.replace('(', '-')
-                    .str.replace(')', '')
-                    .str.replace(r'^\s*-\s*$', '0', regex=True)
-                    .str.replace(r'[^\d.-]', '', regex=True),
-                    errors='coerce'
-                )
-            
-            # Add statement prefix
-            df.index = f"{statement_type}::" + df.index
-            
-            # Enhanced filtering
-            df = df.dropna(how='all')
-            
-            # Remove obvious non-data rows
-            mask = ~df.index.str.contains('|'.join([
-                'particulars', 'description', 'items', 'note', 'total', 'subtotal',
-                'amount in', 'rs in', 'figures in'
-            ]), case=False, na=False)
-            df = df[mask]
-            
-            return df if not df.empty else None
-            
+                
         except Exception as e:
-            self.logger.error(f"Enhanced table extraction failed for {statement_type}: {e}")
+            self.logger.error(f"Error parsing {file.name}: {e}")
             return None
-    
-    def _debug_file_structure(self, soup, filename: str):
-        """Debug helper to understand file structure"""
-        st.error(f"🐛 DEBUG: Analyzing structure of {filename}")
-        
-        # Show all tables found
-        tables = soup.find_all('table')
-        st.write(f"**Found {len(tables)} tables**")
-        
-        # Show potential headers
-        headers = soup.find_all(['b', 'strong', 'h1', 'h2', 'h3', 'h4'])
-        st.write(f"**Found {len(headers)} potential headers:**")
-        for i, header in enumerate(headers[:10]):
-            st.code(f"{i+1}: {header.get_text()[:100]}")
-        
-        # Show first few tables
-        st.write("**First 3 tables preview:**")
-        for i, table in enumerate(tables[:3]):
-            try:
-                df = pd.read_html(str(table))[0]
-                st.write(f"Table {i+1}: Shape {df.shape}")
-                st.dataframe(df.head(3))
-            except:
-                st.write(f"Table {i+1}: Could not parse")
-            st.write("---")
-        
-    def _validate_parsed_data(self, df: pd.DataFrame):
-        """Validates the quality and completeness of the final parsed DataFrame."""
-        issues = []
-        
-        # Check for statement presence
-        statements_found = {'ProfitLoss': False, 'BalanceSheet': False, 'CashFlow': False}
-        for idx in df.index:
-            if 'ProfitLoss::' in idx: statements_found['ProfitLoss'] = True
-            if 'BalanceSheet::' in idx: statements_found['BalanceSheet'] = True
-            if 'CashFlow::' in idx: statements_found['CashFlow'] = True
-        
-        for stmt, found in statements_found.items():
-            if not found:
-                issues.append(f"Could not find a complete {stmt} statement.")
-        
-        # Check for detailed cash flow items (the original problem)
-        if statements_found['CashFlow']:
-            if not any('purchase' in str(idx).lower() or 'fixed asset' in str(idx).lower() for idx in df.index):
-                issues.append("Cash Flow statement is missing detailed investing activities (like 'Purchase of Fixed Assets').")
-
-        if issues:
-            st.warning("⚠️ Data Quality Review:")
-            for issue in issues:
-                st.write(f"  • {issue}")
-        else:
-            st.success("✅ Data quality validation passed. All major statements found.")
     
     def _identify_statement_type_from_table(self, table: pd.DataFrame) -> Optional[str]:
         """
@@ -11766,14 +11477,8 @@ class FinancialAnalyticsPlatform:
                 
     #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
-        """
-        [DEFINITIVE IMPLEMENTATION] Enhanced mapping interface with intelligent CapEx status,
-        one-click proxy mapping, and permanent fix for UI bugs.
-        """
+        """Enhanced mapping interface with save/load functionality"""
         st.subheader("🎯 Penman-Nissim Mapping Configuration")
-        
-        # --- CRITICAL FIX: Initialize mappings at function start to avoid scope issues ---
-        current_mappings = st.session_state.get('temp_pn_mappings', {})
         
         # Initialize template manager
         if 'template_manager' not in st.session_state:
@@ -11786,149 +11491,83 @@ class FinancialAnalyticsPlatform:
         
         # Get source metrics
         source_metrics = [str(m) for m in data.index.tolist()]
-        
         # Add debug helper
         if st.checkbox("Show available metrics for debugging", key="show_debug_metrics"):
             self._debug_show_available_metrics(data)
         
-        # --- NEW: Intelligent CapEx Status & Action Card ---
-        st.markdown("---")
-        st.subheader("1. 🚨 Capital Expenditure (CapEx) Status")
-        
-        capex_mapped = 'Capital Expenditure' in current_mappings.values()
-        
-        if capex_mapped:
-            capex_source = [src for src, tgt in current_mappings.items() if tgt == 'Capital Expenditure'][0]
-            st.success(f"✅ **Mapped:** Capital Expenditure is correctly mapped to `{capex_source.split('::')[-1]}`.")
-        else:
-            st.error("❌ **Action Required:** Capital Expenditure is not mapped. This is critical for Free Cash Flow analysis.")
-            
-            # Intelligent Suggestion Logic
-            direct_capex_options = [idx for idx in source_metrics if any(kw in str(idx).lower() 
-                                   for kw in ['purchase of fixed asset', 'capital expenditure', 'purchase of property', 'capex'])]
-            investing_proxy_options = [idx for idx in source_metrics if 'investing activities' in str(idx).lower()]
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if direct_capex_options:
-                    option = direct_capex_options[0]
-                    st.info(f"💡 **Direct Match Found:** `{option.split('::')[-1]}`")
-                    if st.button(f"✅ Use '{option.split('::')[-1]}'", key="map_direct_capex"):
-                        current_mappings[option] = 'Capital Expenditure'
-                        st.session_state.temp_pn_mappings = current_mappings
-                        st.success("Direct mapping for CapEx applied!")
-                        st.rerun()
-            
-            with col2:
-                if investing_proxy_options:
-                    proxy_item = investing_proxy_options[0]
-                    st.warning(f"💡 **Proxy Available:** `{proxy_item.split('::')[-1]}`")
-                    if st.button(f"⚠️ Use as Proxy", key="use_capex_proxy"):
-                        current_mappings[proxy_item] = 'Capital Expenditure'
-                        st.session_state.temp_pn_mappings = current_mappings
-                        st.success("Proxy mapping for CapEx applied!")
-                        st.rerun()
-            
-            if not direct_capex_options and not investing_proxy_options:
-                st.error("❌ No suitable CapEx items found. Please check your Cash Flow Statement.")
-        
-        st.markdown("---")
-        
         # Template Selection UI
         st.markdown("### 📋 Mapping Templates")
+        
+        # --- BUG FIX STARTS HERE: Corrected state management for template selection ---
         
         templates = template_manager.get_all_templates()
         
         # Add quick templates to the main list for a simpler UI
         vst_template_name = "VST Industries (Quick Template)"
         template_options = ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name] + list(templates.keys())
-    
+
         # Use session state to preserve the dropdown selection across reruns
         if 'pn_active_template' not in st.session_state:
             st.session_state.pn_active_template = "🆕 Create New Mapping"
-    
+
         try:
             default_index = template_options.index(st.session_state.pn_active_template)
         except ValueError:
-            default_index = 0
-    
+            default_index = 0 # Default to "New Mapping" if not found
+
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             selected_template = st.selectbox(
                 "Select Mapping Template",
                 template_options,
                 index=default_index,
-                key="pn_template_selector",
+                key="pn_template_selector", # Use a static key
                 help="Choose a saved template or create a new mapping"
             )
-    
+
         # Check if the user has changed the selection
         if selected_template != st.session_state.pn_active_template:
             st.session_state.pn_active_template = selected_template
             
+            # This is the new logic: Explicitly load the template when the dropdown changes
             if selected_template == "🆕 Create New Mapping":
                 st.session_state.temp_pn_mappings = {}
             elif selected_template == "🤖 Auto-Map (Default)":
                 mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(source_metrics, pn_mapper.template)
                 st.session_state.temp_pn_mappings = mappings
             elif selected_template == vst_template_name:
-                # Enhanced VST Template with correct field names
-                vst_mappings = {
-                    'BalanceSheet::Total Assets': 'Total Assets', 
-                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
-                    'BalanceSheet::Total Current Assets': 'Current Assets', 
-                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables', 
-                    'BalanceSheet::Trade Receivables': 'Trade Receivables',
-                    'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment', 
-                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
-                    'BalanceSheet::Total Equity': 'Total Equity', 
-                    'BalanceSheet::Equity': 'Total Equity',
-                    'BalanceSheet::Share Capital': 'Share Capital', 
-                    'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities', 
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Trade Payables': 'Accounts Payable',
-                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt', 
-                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt', 
-                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue', 
-                    'ProfitLoss::Revenue From Operations': 'Revenue',
-                    'ProfitLoss::Profit Before Tax': 'Income Before Tax', 
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Current Tax': 'Tax Expense', 
-                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
-                    'ProfitLoss::Profit After Tax': 'Net Income', 
-                    'ProfitLoss::Finance Costs': 'Interest Expense',
-                    'ProfitLoss::Finance Cost': 'Interest Expense', 
-                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
-                    'ProfitLoss::Other Expenses': 'Operating Expenses', 
-                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Depreciation and Amortization': 'Depreciation',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold', 
-                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
-                    'ProfitLoss::Other Income': 'Interest Income',
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow', 
-                    'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure', 
-                    'CashFlow::Capital Expenditure': 'Capital Expenditure'
-                }
-                applied_mappings = {source: target for source, target in vst_mappings.items() if source in source_metrics}
-                st.session_state.temp_pn_mappings = applied_mappings
+                 vst_mappings = {
+                    'BalanceSheet::Total Assets': 'Total Assets', 'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                    'BalanceSheet::Total Current Assets': 'Current Assets', 'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables', 'BalanceSheet::Inventories': 'Inventory',
+                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment', 'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                    'BalanceSheet::Total Equity': 'Total Equity', 'BalanceSheet::Equity': 'Total Equity',
+                    'BalanceSheet::Share Capital': 'Share Capital', 'BalanceSheet::Other Equity': 'Retained Earnings',
+                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities', 'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt', 'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt', 'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue', 'ProfitLoss::Revenue From Operations': 'Revenue',
+                    'ProfitLoss::Profit Before Tax': 'Income Before Tax', 'ProfitLoss::Tax Expense': 'Tax Expense',
+                    'ProfitLoss::Current Tax': 'Tax Expense', 'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Profit After Tax': 'Net Income', 'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Finance Cost': 'Interest Expense', 'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                    'ProfitLoss::Other Expenses': 'Operating Expenses', 'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold', 'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow', 'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure', 'CashFlow::Capital Expenditure': 'Capital Expenditure'
+                 }
+                 applied_mappings = {source: target for source, target in vst_mappings.items() if source in source_metrics}
+                 st.session_state.temp_pn_mappings = applied_mappings
             else:
                 loaded_mappings = template_manager.load_template(selected_template)
                 st.session_state.temp_pn_mappings = {k: v for k, v in loaded_mappings.items() if k in source_metrics}
-    
-            st.rerun()
+
+            st.rerun() # Rerun to ensure UI updates with the newly loaded template
         
         with col2:
             if st.button("💾 Save Current", key="save_mapping_template", 
                          disabled=('temp_pn_mappings' not in st.session_state)):
+                # Show save dialog
                 st.session_state.show_save_dialog = True
         
         with col3:
@@ -11986,10 +11625,12 @@ class FinancialAnalyticsPlatform:
             st.session_state.last_template = selected_template
             
             if selected_template == "🆕 Create New Mapping":
+                # Start with empty mappings
                 st.session_state.temp_pn_mappings = {}
                 st.session_state.pn_unmapped = source_metrics
                 
             elif selected_template == "🤖 Auto-Map (Default)":
+                # Use auto-mapping
                 template_mappings, unmapped = PenmanNissimMappingTemplates.create_smart_mapping(
                     source_metrics, 
                     pn_mapper.template
@@ -11998,12 +11639,15 @@ class FinancialAnalyticsPlatform:
                 st.session_state.pn_unmapped = unmapped
                 
             else:
+                # Load saved template
                 loaded_mappings = template_manager.load_template(selected_template)
                 if loaded_mappings:
+                    # Filter mappings to only include current source metrics
                     valid_mappings = {k: v for k, v in loaded_mappings.items() if k in source_metrics}
                     st.session_state.temp_pn_mappings = valid_mappings
                     st.session_state.pn_unmapped = [m for m in source_metrics if m not in valid_mappings]
                     
+                    # Show template info
                     template_info = templates[selected_template]
                     st.info(f"""
                     **Template:** {selected_template}  
@@ -12016,7 +11660,6 @@ class FinancialAnalyticsPlatform:
                     st.session_state.temp_pn_mappings = {}
                     st.session_state.pn_unmapped = source_metrics
         
-        # Update current_mappings after potential template loading
         current_mappings = st.session_state.temp_pn_mappings
         unmapped = st.session_state.pn_unmapped
         
@@ -12052,6 +11695,7 @@ class FinancialAnalyticsPlatform:
         with col1:
             if st.button("🤖 Auto-Complete", key="pn_auto_complete", 
                          help="Auto-map remaining unmapped items"):
+                # Auto-complete missing mappings
                 remaining_mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(
                     unmapped, 
                     pn_mapper.template
@@ -12074,6 +11718,7 @@ class FinancialAnalyticsPlatform:
         with col4:
             if st.button("📤 Export", key="export_template", 
                          disabled=not current_mappings):
+                # Export current mappings
                 export_data = {
                     'name': f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
                     'mappings': current_mappings,
@@ -12101,6 +11746,7 @@ class FinancialAnalyticsPlatform:
                 try:
                     template_data = json.loads(uploaded_file.read())
                     if 'mappings' in template_data:
+                        # Apply the imported mappings
                         imported_mappings = template_data['mappings']
                         valid_mappings = {k: v for k, v in imported_mappings.items() if k in source_metrics}
                         st.session_state.temp_pn_mappings = valid_mappings
@@ -12131,12 +11777,14 @@ class FinancialAnalyticsPlatform:
             st.info("These mappings are **required** for basic Penman-Nissim analysis")
             
             for target in pn_mapper.required_mappings['essential']:
+                # Find current mapping
                 current_source = None
                 for source, mapped_target in current_mappings.items():
                     if mapped_target == target:
                         current_source = source
                         break
                 
+                # Find best candidates
                 candidates = []
                 target_patterns = pn_mapper.template.get(target, [target])
                 
@@ -12147,6 +11795,7 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
+                # Get options and index safely
                 options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
@@ -12157,28 +11806,34 @@ class FinancialAnalyticsPlatform:
                     help=f"Common patterns: {', '.join(target_patterns[:3])}"
                 )
                 
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target and src != selected:
                             del current_mappings[src]
                     current_mappings[selected] = target
                 else:
+                    # Remove mapping if user selects '(Not mapped)'
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target:
                             del current_mappings[src]
                 
+                # Update session state immediately
                 st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[1]:
             st.info("These mappings **improve accuracy** but aren't strictly required")
             
             for target in pn_mapper.required_mappings['important']:
+                # Find current mapping
                 current_source = None
                 for source, mapped_target in current_mappings.items():
                     if mapped_target == target:
                         current_source = source
                         break
                 
+                # Find best candidates
                 candidates = []
                 target_patterns = pn_mapper.template.get(target, [target])
                 
@@ -12189,6 +11844,7 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
+                # Get options and index safely
                 options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
@@ -12199,28 +11855,34 @@ class FinancialAnalyticsPlatform:
                     help=f"Common patterns: {', '.join(target_patterns[:3])}"
                 )
                 
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target and src != selected:
                             del current_mappings[src]
                     current_mappings[selected] = target
                 else:
+                    # Remove mapping if user selects '(Not mapped)'
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target:
                             del current_mappings[src]
                 
+                # Update session state immediately
                 st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[2]:
             st.info("These mappings provide **additional insights**")
             
             for target in pn_mapper.required_mappings['optional']:
+                # Find current mapping
                 current_source = None
                 for source, mapped_target in current_mappings.items():
                     if mapped_target == target:
                         current_source = source
                         break
                 
+                # Find best candidates
                 candidates = []
                 target_patterns = pn_mapper.template.get(target, [target])
                 
@@ -12231,8 +11893,10 @@ class FinancialAnalyticsPlatform:
                             candidates.append(source)
                             break
                 
+                # Limit candidates for optional mappings
                 candidates = candidates[:10]
                 
+                # Get options and index safely
                 options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
                 
                 selected = st.selectbox(
@@ -12242,26 +11906,32 @@ class FinancialAnalyticsPlatform:
                     key=f"pn_map_optional_{target}"
                 )
                 
+                # Update mappings immediately when changed
                 if selected != '(Not mapped)':
+                    # Remove any previous mapping for this target
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target and src != selected:
                             del current_mappings[src]
                     current_mappings[selected] = target
                 else:
+                    # Remove mapping if user selects '(Not mapped)'
                     for src, tgt in list(current_mappings.items()):
                         if tgt == target:
                             del current_mappings[src]
                 
+                # Update session state immediately
                 st.session_state.temp_pn_mappings = current_mappings
         
         with tabs[3]:
             st.info("Items that couldn't be automatically mapped")
             
+            # Show unmapped items that aren't already mapped
             truly_unmapped = [item for item in unmapped if item not in current_mappings]
             
             if truly_unmapped:
                 st.write(f"**{len(truly_unmapped)} unmapped items**")
                 
+                # Group by type
                 balance_sheet_items = [item for item in truly_unmapped if 'BalanceSheet::' in item]
                 pl_items = [item for item in truly_unmapped if 'ProfitLoss::' in item]
                 cf_items = [item for item in truly_unmapped if 'CashFlow::' in item]
@@ -12298,62 +11968,72 @@ class FinancialAnalyticsPlatform:
                 st.success("All items have been mapped!")
         
         # Quick Template Buttons
-        st.markdown("### ⚡ Quick Actions")
+        st.markdown("### ⚡ Quick Templates")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
+            # Replace the existing VST template code with this enhanced version
             if st.button("📋 Load VST Template", key="pn_vst_template_quick", 
                          help="Load pre-configured template for VST Industries"):
                 
+                # VST-specific mappings with CORRECT names from your data
                 vst_correct_mappings = {
+                    # Balance Sheet mappings (verified from your debug data)
                     'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
                     'BalanceSheet::Total Equity': 'Total Equity',
-                    'BalanceSheet::Equity': 'Total Equity',
+                    'BalanceSheet::Equity': 'Total Equity',  # Alternative name
                     'BalanceSheet::Total Current Assets': 'Current Assets',
                     'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
                     'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
                     'BalanceSheet::Trade Receivables': 'Trade Receivables',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables',
+                    'BalanceSheet::Trade receivables': 'Trade Receivables',  # Alternative case
                     'BalanceSheet::Inventories': 'Inventory',
                     'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
                     'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
                     'BalanceSheet::Share Capital': 'Share Capital',
                     'BalanceSheet::Other Equity': 'Retained Earnings',
                     'BalanceSheet::Trade Payables': 'Accounts Payable',
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
+                    'BalanceSheet::Trade payables': 'Accounts Payable',  # Alternative case
                     'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
                     'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
                     'BalanceSheet::Other Current Liabilities': 'Accrued Expenses',
                     'BalanceSheet::Other Non-Current Liabilities': 'Deferred Revenue',
+                    
+                    # P&L mappings (verified from your debug data)
                     'ProfitLoss::Revenue From Operations': 'Revenue',
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
+                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',  # Alternative
                     'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
                     'ProfitLoss::Profit Before Tax': 'Income Before Tax',
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Current Tax': 'Tax Expense',
+                    'ProfitLoss::Tax Expense': 'Tax Expense',  # Correct - NOT "Tax Expenses"
+                    'ProfitLoss::Current Tax': 'Tax Expense',  # Alternative
                     'ProfitLoss::Profit After Tax': 'Net Income',
-                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',  # Alternative
                     'ProfitLoss::Finance Cost': 'Interest Expense',
-                    'ProfitLoss::Finance Costs': 'Interest Expense',
+                    'ProfitLoss::Finance Costs': 'Interest Expense',  # Alternative
+                    'ProfitLoss::Interest': 'Interest Expense',  # Alternative
                     'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
                     'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
                     'ProfitLoss::Other Expenses': 'Operating Expenses',
                     'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Depreciation and Amortization': 'Depreciation',
                     'ProfitLoss::Other Income': 'Interest Income',
+                    
+                    # Cash Flow mappings (verified from your debug data)
                     'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
-                    'CashFlow::Capital Expenditure': 'Capital Expenditure',
+                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',  # Alternative
+                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',  # CORRECT - not "Purchased"
+                    'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',  # Handle typo
+                    'CashFlow::Purchase of Investments': 'Capital Expenditure',  # Alternative
+                    'CashFlow::Capital Expenditure': 'Capital Expenditure',  # Direct match
                 }
                 
+                # Apply only mappings that match current data
                 applied_mappings = {}
                 for source in source_metrics:
+                    # Try exact match first
                     if source in vst_correct_mappings:
                         applied_mappings[source] = vst_correct_mappings[source]
                     else:
+                        # Try to find in mappings by partial match
                         source_clean = source.split('::')[-1] if '::' in source else source
                         for vst_key, target in vst_correct_mappings.items():
                             vst_clean = vst_key.split('::')[-1] if '::' in vst_key else vst_key
@@ -12364,349 +12044,158 @@ class FinancialAnalyticsPlatform:
                 st.session_state.temp_pn_mappings = applied_mappings
                 st.success(f"Loaded VST Industries template with {len(applied_mappings)} mappings!")
                 
+                # Show what was mapped
                 with st.expander("View Applied Mappings"):
                     for source, target in sorted(applied_mappings.items(), key=lambda x: x[1]):
                         st.text(f"{target} ← {source}")
                 
                 st.rerun()
-    
-        with col2:
-            if st.button("🚨 Force Add CapEx", key="force_add_capex", type="primary"):
-                investing_items = [idx for idx in data.index if 'investing' in str(idx).lower()]
+
+        # Add this after the VST template button in _render_enhanced_penman_nissim_mapping:
+
+        if st.button("🚨 Force Add Capital Expenditure", key="force_add_capex", type="primary"):
+            """Emergency button to manually add Capital Expenditure mapping"""
+            
+            # Check if we have investing cash flow
+            investing_items = [idx for idx in data.index if 'investing' in str(idx).lower()]
+            
+            if investing_items:
+                # Use the Net Cash Used in Investing Activities as a proxy for CapEx
+                investing_item = investing_items[0]
                 
-                if investing_items:
-                    investing_item = investing_items[0]
-                    current_mappings[investing_item] = 'Capital Expenditure'
-                    st.session_state.temp_pn_mappings = current_mappings
-                    st.success(f"✅ Mapped '{investing_item}' to Capital Expenditure as a proxy")
-                    st.info("Note: This uses total investing cash flow as CapEx.")
-                    st.rerun()
-                else:
-                    st.error("No investing activities found in the data")
-    
-        with col3:
-            if st.button("🔧 Recover CF Items", key="recover_cf_items", type="secondary"):
-                with st.spinner("Searching for cash flow items..."):
-                    original_files = self.get_state('uploaded_files', [])
+                # Add to mappings
+                current_mappings = st.session_state.get('temp_pn_mappings', {})
+                current_mappings[investing_item] = 'Capital Expenditure'
+                st.session_state.temp_pn_mappings = current_mappings
+                
+                st.success(f"✅ Mapped '{investing_item}' to Capital Expenditure as a proxy")
+                st.info("Note: This uses total investing cash flow as CapEx. For more accurate analysis, please upload detailed cash flow statements.")
+                st.rerun()
+            else:
+                st.error("No investing activities found in the data")
+
+        # <<<--- START: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
+        if st.button("🔧 Recover Lost Cash Flow Items", key="recover_cf_items", type="secondary"):
+            """Emergency recovery for lost cash flow items"""
+            with st.spinner("Searching for cash flow items..."):
+                # Get the original unprocessed data if available
+                original_files = self.get_state('uploaded_files', [])
+                
+                if original_files:
+                    st.info("Re-processing files to recover cash flow items...")
                     
-                    if original_files:
-                        st.info("Re-processing files to recover cash flow items...")
+                    # Reprocess with cash flow preservation
+                    recovered_items = []
+                    
+                    for file in original_files:
+                        try:
+                            # Parse file again
+                            df = self._parse_single_file(file)
+                            if df is not None:
+                                # Look for cash flow items
+                                for idx in df.index:
+                                    idx_lower = str(idx).lower()
+                                    if any(kw in idx_lower for kw in ['cash', 'flow', 'capex', 'capital', 'purchase', 'fixed asset']):
+                                        # Check if this item exists in current data
+                                        prefixed_idx = f"CashFlow::{idx}"
+                                        if prefixed_idx not in data.index and idx not in data.index:
+                                            recovered_items.append((idx, df.loc[idx]))
+                                            
+                        except Exception as e:
+                            self.logger.error(f"Error recovering from {file.name}: {e}")
+                            continue
+                    
+                    if recovered_items:
+                        st.success(f"Found {len(recovered_items)} missing cash flow items!")
                         
-                        recovered_items = []
+                        # Show recovered items
+                        with st.expander("Recovered Cash Flow Items", expanded=True):
+                            for item, series in recovered_items[:10]:
+                                st.write(f"**{item}**")
+                                non_null = series.notna().sum()
+                                st.write(f"  Non-null values: {non_null}")
+                                if non_null > 0:
+                                    st.write(f"  Sample: {series.dropna().head(3).to_dict()}")
+                                st.write("---")
                         
-                        for file in original_files:
-                            try:
-                                df = self._parse_single_file(file)
-                                if df is not None:
-                                    for idx in df.index:
-                                        idx_lower = str(idx).lower()
-                                        if any(kw in idx_lower for kw in ['cash', 'flow', 'capex', 'capital', 'purchase', 'fixed asset']):
-                                            prefixed_idx = f"CashFlow::{idx}"
-                                            if prefixed_idx not in data.index and idx not in data.index:
-                                                recovered_items.append((idx, df.loc[idx]))
-                                                
-                            except Exception as e:
-                                self.logger.error(f"Error recovering from {file.name}: {e}")
-                                continue
-                        
-                        if recovered_items:
-                            st.success(f"Found {len(recovered_items)} missing cash flow items!")
+                        # Option to re-process with preservation
+                        if st.button("Re-process with Cash Flow Preservation", key="reprocess_with_cf"):
+                            # Clear existing data
+                            self.set_state('analysis_data', None)
+                            self.set_state('metric_mappings', None)
+                            self.set_state('pn_mappings', None)
                             
-                            with st.expander("Recovered Cash Flow Items", expanded=True):
-                                for item, series in recovered_items[:10]:
-                                    st.write(f"**{item}**")
-                                    non_null = series.notna().sum()
-                                    st.write(f"  Non-null values: {non_null}")
-                                    if non_null > 0:
-                                        st.write(f"  Sample: {series.dropna().head(3).to_dict()}")
-                                    st.write("---")
-                            
-                            if st.button("Re-process with CF Preservation", key="reprocess_with_cf"):
-                                self.set_state('analysis_data', None)
-                                self.set_state('metric_mappings', None)
-                                self.set_state('pn_mappings', None)
-                                self._process_uploaded_files(original_files)
-                                st.rerun()
-                        else:
-                            st.warning("No additional cash flow items found in source files")
+                            # Re-process files
+                            self._process_uploaded_files(original_files)
+                            st.rerun()
                     else:
-                        st.error("No uploaded files found for recovery")
+                        st.warning("No additional cash flow items found in source files")
+                else:
+                    st.error("No uploaded files found for recovery")
+        # <<<--- END: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
         
-        with col4:
+        with col2:
             if st.button("💼 Clear All", key="pn_clear_all"):
                 st.session_state.temp_pn_mappings = {}
                 st.session_state.pn_unmapped = source_metrics
                 st.success("Cleared all mappings!")
                 st.rerun()
         
-        # Advanced Debug Tools with Fixed Variable Scope
-        if st.checkbox("🔍 Show Advanced Debug Tools", key="show_advanced_debug"):
-            
-            if st.button("🔍 Auto-Detect Missing Mappings", key="auto_detect_mappings"):
-                with st.spinner("Analyzing data for missing mappings..."):
-                    # FIX: Use current_mappings which is properly defined
-                    temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings)
-                    suggestions = temp_analyzer.suggest_missing_mappings()
-                    
-                    if suggestions:
-                        st.success(f"Found suggestions for {len(suggestions)} missing metrics!")
-                        
-                        with st.expander("📋 Mapping Suggestions", expanded=True):
-                            for metric, candidates in suggestions.items():
-                                st.write(f"**{metric}:**")
-                                
-                                if candidates:
-                                    cols = st.columns(min(len(candidates), 3))
-                                    
-                                    for i, (candidate, confidence) in enumerate(candidates):
-                                        if i < 3:
-                                            with cols[i]:
-                                                confidence_color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.6 else "🟠"
-                                                st.write(f"{confidence_color} **{confidence:.0%}** confidence")
-                                                st.code(candidate.split('::')[-1] if '::' in candidate else candidate)
-                                                
-                                                if st.button(f"Use This", key=f"use_{metric}_{i}"):
-                                                    current_mappings[candidate] = metric
-                                                    st.session_state.temp_pn_mappings = current_mappings
-                                                    st.success(f"Added mapping: {metric}")
-                                                    st.rerun()
-                                else:
-                                    st.info("No good candidates found")
-                    else:
-                        st.info("All required mappings appear to be complete!")
-            
-            if st.checkbox("🔧 Show CapEx Detection Details", key="show_capex_details"):
-                with st.expander("Capital Expenditure Detection Analysis", expanded=True):
-                    # FIX: Use current_mappings which is properly defined
-                    temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings)
-                    capex_candidates = temp_analyzer.detect_capex_candidates()
-                    
-                    if capex_candidates:
-                        st.write("**Potential Capital Expenditure items found:**")
-                        
-                        capex_df = pd.DataFrame(capex_candidates, columns=['Item', 'Confidence'])
-                        capex_df['Confidence'] = capex_df['Confidence'].apply(lambda x: f"{x:.0%}")
-                        capex_df['Short Name'] = capex_df['Item'].apply(
-                            lambda x: x.split('::')[-1] if '::' in x else x
-                        )
-                        
-                        st.dataframe(
-                            capex_df[['Short Name', 'Confidence', 'Item']], 
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if capex_candidates and st.button("✅ Use Highest Confidence", key="use_best_capex"):
-                                best_candidate = capex_candidates[0][0]
-                                current_mappings[best_candidate] = 'Capital Expenditure'
-                                st.session_state.temp_pn_mappings = current_mappings
-                                st.success(f"Mapped Capital Expenditure to: {best_candidate}")
-                                st.rerun()
-                        
-                        with col2:
-                            if st.button("📋 Show All Cash Flow Items", key="show_all_cf"):
-                                cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
-                                st.write("**All Cash Flow items in your data:**")
-                                for item in cf_items:
-                                    st.code(item)
-                    else:
-                        st.warning("No Capital Expenditure candidates found in cash flow data.")
-                        
-                        cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
-                        if cf_items:
-                            st.write("**Available Cash Flow items:**")
-                            for item in cf_items[:10]:
-                                st.code(item)
-                            if len(cf_items) > 10:
-                                st.write(f"... and {len(cf_items) - 10} more items")
-                        else:
-                            st.error("No cash flow items found in the data!")
-            
-            if st.checkbox("🐛 Debug: Show My Cash Flow Data", key="debug_cashflow"):
-                st.write("**All items in your data that contain 'cash' or 'flow':**")
-                
-                cash_flow_items = []
-                for idx in data.index:
-                    idx_lower = str(idx).lower()
-                    if any(keyword in idx_lower for keyword in ['cash', 'flow', 'purchase', 'capex', 'expenditure']):
-                        cash_flow_items.append(idx)
-                
-                if cash_flow_items:
-                    for item in cash_flow_items:
-                        sample_data = data.loc[item].dropna()
-                        if len(sample_data) > 0:
-                            st.write(f"**{item}**")
-                            st.write(f"Sample values: {sample_data.head(3).to_dict()}")
-                            st.write("---")
+        with col3:
+            if st.button("🔍 Validate", key="pn_validate"):
+                final_validation = pn_mapper.validate_mappings(current_mappings)
+                if final_validation['is_valid']:
+                    st.success("✅ Mappings are valid and ready!")
                 else:
-                    st.error("No cash flow related items found!")
-                    
-                    st.write("**First 50 items in your data:**")
-                    for i, idx in enumerate(data.index[:50]):
-                        st.code(f"{i+1}. {idx}")
-    
-            if st.checkbox("🔍 Debug Data Transfer Issues", key="debug_data_transfer"):
-                st.subheader("Data Transfer Debugging")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.write("**Original Data Structure:**")
-                    st.write(f"Shape: {data.shape}")
-                    
-                    capex_items = [idx for idx in data.index if any(kw in str(idx).lower() 
-                                   for kw in ['capex', 'capital', 'purchase', 'fixed asset', 'expenditure'])]
-                    
-                    st.write(f"**Found {len(capex_items)} potential CapEx items:**")
-                    for item in capex_items[:10]:
-                        st.code(item)
-                        sample_data = data.loc[item].dropna()
-                        if len(sample_data) > 0:
-                            st.write(f"Sample values: {dict(list(sample_data.items())[:3])}")
-                        else:
-                            st.write("⚠️ No data found")
-                        st.write("---")
-                
-                with col2:
-                    st.write("**After Restructuring:**")
-                    
-                    if st.button("🔄 Test Restructuring", key="test_restructure"):
-                        with st.spinner("Testing data restructuring..."):
-                            try:
-                                # FIX: Use current_mappings which is properly defined
-                                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings)
-                                clean_data = temp_analyzer._df_clean
-                                
-                                st.write(f"Clean data shape: {clean_data.shape}")
-                                
-                                capex_in_clean = []
-                                for item in capex_items:
-                                    if item in clean_data.index:
-                                        series = clean_data.loc[item]
-                                        non_null_count = series.notna().sum()
-                                        capex_in_clean.append((item, non_null_count))
-                                
-                                st.write(f"**CapEx items preserved: {len(capex_in_clean)}/{len(capex_items)}**")
-                                
-                                for item, count in capex_in_clean[:5]:
-                                    st.write(f"✅ {item}: {count} values")
-                                    if count > 0:
-                                        sample_clean = clean_data.loc[item].dropna()
-                                        st.write(f"   Values: {dict(list(sample_clean.items())[:3])}")
-                                
-                                missing_items = [item for item in capex_items if item not in clean_data.index]
-                                if missing_items:
-                                    st.write(f"**❌ Missing items ({len(missing_items)}):**")
-                                    for item in missing_items[:3]:
-                                        st.code(item)
-                                
-                            except Exception as e:
-                                st.error(f"Restructuring test failed: {e}")
-                                st.code(traceback.format_exc())
-                
-                if st.button("🧪 Run Data Preservation Test", key="preservation_test"):
-                    with st.spinner("Running comprehensive data preservation test..."):
-                        
-                        if capex_items:
-                            test_item = capex_items[0]
-                            st.write(f"**Testing with: {test_item}**")
-                            
-                            original_series = data.loc[test_item]
-                            original_non_null = original_series.notna().sum()
-                            
-                            st.write(f"Original non-null values: {original_non_null}")
-                            st.write(f"Original data: {original_series.dropna().to_dict()}")
-                            
-                            try:
-                                # FIX: Use current_mappings which is properly defined
-                                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings)
-                                clean_data = temp_analyzer._df_clean
-                                
-                                if test_item in clean_data.index:
-                                    clean_series = clean_data.loc[test_item]
-                                    clean_non_null = clean_series.notna().sum()
-                                    
-                                    st.write(f"After restructuring non-null values: {clean_non_null}")
-                                    st.write(f"Clean data: {clean_series.dropna().to_dict()}")
-                                    
-                                    preservation_rate = (clean_non_null / original_non_null * 100) if original_non_null > 0 else 0
-                                    
-                                    if preservation_rate >= 90:
-                                        st.success(f"✅ Excellent preservation: {preservation_rate:.1f}%")
-                                    elif preservation_rate >= 70:
-                                        st.warning(f"⚠️ Good preservation: {preservation_rate:.1f}%")
-                                    else:
-                                        st.error(f"❌ Poor preservation: {preservation_rate:.1f}%")
-                                else:
-                                    st.error(f"❌ Item {test_item} completely lost during restructuring!")
-                                    
-                            except Exception as e:
-                                st.error(f"Test failed: {e}")
-                                st.code(traceback.format_exc())
-                        else:
-                            st.warning("No CapEx items found to test with")
-    
-                st.subheader("🚨 Emergency Data Recovery")
-                
-                if st.button("🔧 Force Preserve All CapEx Data", key="force_preserve_capex", type="primary"):
-                    with st.spinner("Forcing data preservation..."):
-                        
-                        capex_candidates = []
-                        for idx in data.index:
-                            idx_lower = str(idx).lower()
-                            if any(kw in idx_lower for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset', 'expenditure']):
-                                capex_candidates.append(idx)
-                        
-                        if capex_candidates:
-                            st.write(f"Found {len(capex_candidates)} CapEx candidates:")
-                            
-                            for candidate in capex_candidates:
-                                with st.expander(f"📊 {candidate}"):
-                                    series = data.loc[candidate]
-                                    non_null_data = series.dropna()
-                                    
-                                    if len(non_null_data) > 0:
-                                        st.write(f"**Data points:** {len(non_null_data)}")
-                                        st.write(f"**Values:** {non_null_data.to_dict()}")
-                                        
-                                        if st.button(f"Map as Capital Expenditure", key=f"map_capex_{candidate}"):
-                                            current_mappings[candidate] = 'Capital Expenditure'
-                                            st.session_state.temp_pn_mappings = current_mappings
-                                            st.success(f"✅ Mapped {candidate} to Capital Expenditure")
-                                            st.rerun()
-                                    else:
-                                        st.warning("No data found in this item")
-                        else:
-                            st.error("No CapEx candidates found!")
-                            
-                            cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
-                            if cf_items:
-                                st.write("**All Cash Flow items:**")
-                                for item in cf_items:
-                                    st.code(item)
+                    st.error("❌ Mappings need attention")
         
-        # Apply button with final validation
+        with col4:
+            if st.button("❓ Help", key="pn_help"):
+                with st.expander("Mapping Help", expanded=True):
+                    st.markdown("""
+                    **How to use this mapping interface:**
+                    
+                    1. **Select a Template**: Choose from saved templates or start fresh
+                    2. **Map Essential Items**: These are required for analysis
+                    3. **Map Important Items**: Improve accuracy
+                    4. **Review Optional Items**: Add for extra insights
+                    5. **Save Your Mapping**: Save for future use
+                    6. **Apply**: Apply mappings to proceed with analysis
+                    
+                    **Tips:**
+                    - Use Auto-Complete to quickly map remaining items
+                    - Save templates for specific data sources
+                    - Export/Import templates to share with others
+                    """)
+        
+        # Apply button with save reminder
         st.markdown("---")
         col1, col2, col3 = st.columns([2, 1, 2])
         
         with col2:
             if st.button("✅ Apply Mappings", type="primary", key="pn_apply_mappings", 
                          use_container_width=True):
+                # Final validation
                 final_validation = pn_mapper.validate_mappings(current_mappings)
                 
                 if final_validation['is_valid']:
                     self.set_state('pn_mappings', current_mappings)
                     
+                    # Ask if user wants to save as template
                     if selected_template in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)"]:
                         st.info("💡 Tip: Click '💾 Save Current' to save this mapping for future use!")
                     
                     # Clean up temp state
-                    for key in ['temp_pn_mappings', 'pn_unmapped', 'last_template', 'show_save_dialog', 'show_import_dialog']:
-                        if key in st.session_state:
-                            del st.session_state[key]
+                    if 'temp_pn_mappings' in st.session_state:
+                        del st.session_state.temp_pn_mappings
+                    if 'pn_unmapped' in st.session_state:
+                        del st.session_state.pn_unmapped
+                    if 'last_template' in st.session_state:
+                        del st.session_state.last_template
+                    if 'show_save_dialog' in st.session_state:
+                        del st.session_state.show_save_dialog
+                    if 'show_import_dialog' in st.session_state:
+                        del st.session_state.show_import_dialog
                     
                     st.success(f"✅ Applied {len(current_mappings)} mappings successfully!")
                     time.sleep(1)
@@ -12717,7 +12206,336 @@ class FinancialAnalyticsPlatform:
                         st.write("**Missing essential items:**")
                         for item in final_validation['missing_essential']:
                             st.write(f"• {item}")
+        # PASTE THIS CODE: Add this as a temporary debug section in your mapping interface
+        # PASTE THIS CODE: Add this to your _render_enhanced_penman_nissim_mapping method 
+        # (insert after the "Apply Mappings" button section)
         
+        # Auto-detection section
+        if st.button("🔍 Auto-Detect Missing Mappings", key="auto_detect_mappings"):
+            with st.spinner("Analyzing data for missing mappings..."):
+                # Create temporary analyzer to get suggestions
+                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings or {})
+                suggestions = temp_analyzer.suggest_missing_mappings()
+                
+                if suggestions:
+                    st.success(f"Found suggestions for {len(suggestions)} missing metrics!")
+                    
+                    with st.expander("📋 Mapping Suggestions", expanded=True):
+                        for metric, candidates in suggestions.items():
+                            st.write(f"**{metric}:**")
+                            
+                            if candidates:
+                                # Create columns for each suggestion
+                                cols = st.columns(min(len(candidates), 3))
+                                
+                                for i, (candidate, confidence) in enumerate(candidates):
+                                    if i < 3:  # Show max 3 suggestions
+                                        with cols[i]:
+                                            confidence_color = "🟢" if confidence > 0.8 else "🟡" if confidence > 0.6 else "🟠"
+                                            st.write(f"{confidence_color} **{confidence:.0%}** confidence")
+                                            st.code(candidate.split('::')[-1] if '::' in candidate else candidate)
+                                            
+                                            if st.button(f"Use This", key=f"use_{metric}_{i}"):
+                                                # Add to mappings
+                                                current_mappings[candidate] = metric
+                                                st.session_state.temp_pn_mappings = current_mappings
+                                                st.success(f"Added mapping: {metric}")
+                                                st.rerun()
+                            else:
+                                st.info("No good candidates found")
+                else:
+                    st.info("All required mappings appear to be complete!")
+        
+        # Show current CapEx detection results
+        if st.checkbox("🔧 Show CapEx Detection Details", key="show_capex_details"):
+            with st.expander("Capital Expenditure Detection Analysis", expanded=True):
+                temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings or {})
+                capex_candidates = temp_analyzer.detect_capex_candidates()
+                
+                if capex_candidates:
+                    st.write("**Potential Capital Expenditure items found:**")
+                    
+                    capex_df = pd.DataFrame(capex_candidates, columns=['Item', 'Confidence'])
+                    capex_df['Confidence'] = capex_df['Confidence'].apply(lambda x: f"{x:.0%}")
+                    capex_df['Short Name'] = capex_df['Item'].apply(
+                        lambda x: x.split('::')[-1] if '::' in x else x
+                    )
+                    
+                    st.dataframe(
+                        capex_df[['Short Name', 'Confidence', 'Item']], 
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # Quick mapping buttons
+                    st.write("**Quick Actions:**")
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        if capex_candidates and st.button("✅ Use Highest Confidence", key="use_best_capex"):
+                            best_candidate = capex_candidates[0][0]
+                            current_mappings[best_candidate] = 'Capital Expenditure'
+                            st.session_state.temp_pn_mappings = current_mappings
+                            st.success(f"Mapped Capital Expenditure to: {best_candidate}")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("📋 Show All Cash Flow Items", key="show_all_cf"):
+                            cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
+                            st.write("**All Cash Flow items in your data:**")
+                            for item in cf_items:
+                                st.code(item)
+                else:
+                    st.warning("No Capital Expenditure candidates found in cash flow data.")
+                    
+                    # Show what cash flow items are available
+                    cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
+                    if cf_items:
+                        st.write("**Available Cash Flow items:**")
+                        for item in cf_items[:10]:
+                            st.code(item)
+                        if len(cf_items) > 10:
+                            st.write(f"... and {len(cf_items) - 10} more items")
+                    else:
+                        st.error("No cash flow items found in the data!")
+        if st.checkbox("🐛 Debug: Show My Cash Flow Data", key="debug_cashflow"):
+            st.write("**All items in your data that contain 'cash' or 'flow':**")
+            
+            cash_flow_items = []
+            for idx in data.index:
+                idx_lower = str(idx).lower()
+                if any(keyword in idx_lower for keyword in ['cash', 'flow', 'purchase', 'capex', 'expenditure']):
+                    cash_flow_items.append(idx)
+            
+            if cash_flow_items:
+                for item in cash_flow_items:
+                    # Show the item and a sample of its data
+                    sample_data = data.loc[item].dropna()
+                    if len(sample_data) > 0:
+                        st.write(f"**{item}**")
+                        st.write(f"Sample values: {sample_data.head(3).to_dict()}")
+                        st.write("---")
+            else:
+                st.error("No cash flow related items found!")
+                
+                # Show ALL indices for debugging
+                st.write("**First 50 items in your data:**")
+                for i, idx in enumerate(data.index[:50]):
+                    st.code(f"{i+1}. {idx}")
+
+        # PASTE THIS CODE: Add this debugging section to your mapping interface
+
+        # In _render_enhanced_penman_nissim_mapping method, replace the debug section:
+
+        if st.checkbox("🔍 Debug Data Transfer Issues", key="debug_data_transfer"):
+            st.subheader("Data Transfer Debugging")
+            
+            # FIX: Get current mappings from session state, not from undefined variable
+            current_mappings_debug = st.session_state.get('temp_pn_mappings', {})
+            
+            # Show original vs restructured data comparison
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Original Data Structure:**")
+                st.write(f"Shape: {data.shape}")
+                
+                # Look for CapEx in original
+                capex_items = [idx for idx in data.index if any(kw in str(idx).lower() 
+                               for kw in ['capex', 'capital', 'purchase', 'fixed asset', 'expenditure'])]
+                
+                st.write(f"**Found {len(capex_items)} potential CapEx items:**")
+                for item in capex_items[:10]:
+                    st.code(item)
+                    sample_data = data.loc[item].dropna()
+                    if len(sample_data) > 0:
+                        st.write(f"Sample values: {dict(list(sample_data.items())[:3])}")
+                    else:
+                        st.write("⚠️ No data found")
+                    st.write("---")
+            
+            with col2:
+                st.write("**After Restructuring:**")
+                
+                if st.button("🔄 Test Restructuring", key="test_restructure"):
+                    with st.spinner("Testing data restructuring..."):
+                        try:
+                            # FIX: Use the current_mappings_debug variable
+                            temp_analyzer = EnhancedPenmanNissimAnalyzer(data, current_mappings_debug)
+                            clean_data = temp_analyzer._df_clean
+                            
+                            st.write(f"Clean data shape: {clean_data.shape}")
+                             # Check what happened to CapEx items
+                            capex_in_clean = []
+                            for item in capex_items:
+                                if item in clean_data.index:
+                                    series = clean_data.loc[item]
+                                    non_null_count = series.notna().sum()
+                                    capex_in_clean.append((item, non_null_count))
+                            
+                            st.write(f"**CapEx items preserved: {len(capex_in_clean)}/{len(capex_items)}**")
+                            
+                            for item, count in capex_in_clean[:5]:
+                                st.write(f"✅ {item}: {count} values")
+                                if count > 0:
+                                    sample_clean = clean_data.loc[item].dropna()
+                                    st.write(f"   Values: {dict(list(sample_clean.items())[:3])}")
+                            
+                            # Show missing items
+                            missing_items = [item for item in capex_items if item not in clean_data.index]
+                            if missing_items:
+                                st.write(f"**❌ Missing items ({len(missing_items)}):**")
+                                for item in missing_items[:3]:
+                                    st.code(item)
+                            
+                        except Exception as e:
+                            st.error(f"Restructuring test failed: {e}")
+                            st.code(traceback.format_exc())
+        
+            # Column structure analysis
+            st.subheader("Column Structure Analysis")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**Original Columns:**")
+                for i, col in enumerate(data.columns[:10]):
+                    st.code(f"{i+1}. {col}")
+                if len(data.columns) > 10:
+                    st.write(f"... and {len(data.columns) - 10} more columns")
+            
+            with col2:
+                st.write("**Year Pattern Analysis:**")
+                
+                # Analyze year patterns in columns
+                year_patterns = [
+                    (re.compile(r'(\d{6})'), 'YYYYMM (e.g., 202003)'),
+                    (re.compile(r'(\d{4})(?!\d)'), 'YYYY (e.g., 2020)'),
+                    (re.compile(r'FY\s*(\d{4})'), 'FY YYYY (e.g., FY 2020)'),
+                    (re.compile(r'(\d{4})-(\d{2})'), 'YYYY-YY (e.g., 2020-21)'),
+                ]
+                
+                pattern_matches = {}
+                for col in data.columns:
+                    col_str = str(col)
+                    for pattern, name in year_patterns:
+                        if pattern.search(col_str):
+                            if name not in pattern_matches:
+                                pattern_matches[name] = []
+                            pattern_matches[name].append(col)
+                            break
+                
+                for pattern_name, matches in pattern_matches.items():
+                    st.write(f"**{pattern_name}:** {len(matches)} columns")
+                    for match in matches[:3]:
+                        st.code(match)
+                    if len(matches) > 3:
+                        st.write(f"... and {len(matches) - 3} more")
+        
+            # Data preservation test
+            st.subheader("Data Preservation Test")
+            
+            if st.button("🧪 Run Full Data Preservation Test", key="preservation_test"):
+                with st.spinner("Running comprehensive data preservation test..."):
+                    
+                    # Test with a known CapEx item
+                    if capex_items:
+                        test_item = capex_items[0]
+                        st.write(f"**Testing with: {test_item}**")
+                        
+                        # Original data
+                        original_series = data.loc[test_item]
+                        original_non_null = original_series.notna().sum()
+                        
+                        st.write(f"Original non-null values: {original_non_null}")
+                        st.write(f"Original data: {original_series.dropna().to_dict()}")
+                        
+                        # After restructuring
+                        try:
+                            temp_analyzer = EnhancedPenmanNissimAnalyzer(data, mappings or {})
+                            clean_data = temp_analyzer._df_clean
+                            
+                            if test_item in clean_data.index:
+                                clean_series = clean_data.loc[test_item]
+                                clean_non_null = clean_series.notna().sum()
+                                
+                                st.write(f"After restructuring non-null values: {clean_non_null}")
+                                st.write(f"Clean data: {clean_series.dropna().to_dict()}")
+                                
+                                # Calculate preservation rate
+                                preservation_rate = (clean_non_null / original_non_null * 100) if original_non_null > 0 else 0
+                                
+                                if preservation_rate >= 90:
+                                    st.success(f"✅ Excellent preservation: {preservation_rate:.1f}%")
+                                elif preservation_rate >= 70:
+                                    st.warning(f"⚠️ Good preservation: {preservation_rate:.1f}%")
+                                else:
+                                    st.error(f"❌ Poor preservation: {preservation_rate:.1f}%")
+                                    
+                                    # Analyze what went wrong
+                                    st.write("**Debugging data loss:**")
+                                    
+                                    # Check column mapping
+                                    st.write("**Column Analysis:**")
+                                    for col in data.columns:
+                                        val = data.loc[test_item, col]
+                                        if pd.notna(val):
+                                            st.write(f"  {col}: {val}")
+                            else:
+                                st.error(f"❌ Item {test_item} completely lost during restructuring!")
+                                
+                        except Exception as e:
+                            st.error(f"Test failed: {e}")
+                            st.code(traceback.format_exc())
+                    else:
+                        st.warning("No CapEx items found to test with")
+            # PASTE THIS CODE: Add this emergency fix button to your mapping interface
+
+            st.subheader("🚨 Emergency Data Recovery")
+            
+            if st.button("🔧 Force Preserve All CapEx Data", key="force_preserve_capex", type="primary"):
+                with st.spinner("Forcing data preservation..."):
+                    
+                    # Find all potential CapEx items
+                    capex_candidates = []
+                    for idx in data.index:
+                        idx_lower = str(idx).lower()
+                        if any(kw in idx_lower for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset', 'expenditure']):
+                            capex_candidates.append(idx)
+                    
+                    if capex_candidates:
+                        st.write(f"Found {len(capex_candidates)} CapEx candidates:")
+                        
+                        # Show them with data
+                        for candidate in capex_candidates:
+                            with st.expander(f"📊 {candidate}"):
+                                series = data.loc[candidate]
+                                non_null_data = series.dropna()
+                                
+                                if len(non_null_data) > 0:
+                                    st.write(f"**Data points:** {len(non_null_data)}")
+                                    st.write(f"**Values:** {non_null_data.to_dict()}")
+                                    
+                                    # Quick mapping button
+                                    if st.button(f"Map as Capital Expenditure", key=f"map_capex_{candidate}"):
+                                        current_mappings = st.session_state.get('temp_pn_mappings', {})
+                                        current_mappings[candidate] = 'Capital Expenditure'
+                                        st.session_state.temp_pn_mappings = current_mappings
+                                        st.success(f"✅ Mapped {candidate} to Capital Expenditure")
+                                        st.rerun()
+                                else:
+                                    st.warning("No data found in this item")
+                    else:
+                        st.error("No CapEx candidates found!")
+                        
+                        # Show all cash flow items as backup
+                        cf_items = [idx for idx in data.index if 'cashflow::' in str(idx).lower()]
+                        if cf_items:
+                            st.write("**All Cash Flow items:**")
+                            for item in cf_items:
+                                st.code(item)
+        
+        # Return None to indicate mapping is not complete yet
         return None
                         
     def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:

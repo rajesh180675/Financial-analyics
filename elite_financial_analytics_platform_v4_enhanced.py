@@ -4662,82 +4662,129 @@ class EnhancedPenmanNissimAnalyzer:
         return ratios.T  # Transpose for better display
     
     def _calculate_free_cash_flow_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced free cash flow calculation"""
-        fcf = pd.DataFrame(index=self.df.columns)
+        """Enhanced free cash flow calculation with detailed logging and proper data handling"""
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-FCF-START] Starting Free Cash Flow Calculation")
+        self.logger.info("="*80)
+    
+        # CRITICAL FIX: Restructure data first to get clean year columns
+        df_clean = self._restructure_for_penman_nissim(df)
+        
+        fcf = pd.DataFrame(index=df_clean.columns) # Years as index
         metadata = {}
         
         try:
+            # --- Free Cash Flow to Firm (FCFF) ---
+            self.logger.info("\n[PN-FCF-FCFF] Calculating Free Cash Flow to Firm (FCFF)...")
+            
             # Get Operating Cash Flow
-            ocf = self._get_safe_series(df, 'Operating Cash Flow')
+            ocf = self._get_safe_series(df_clean, 'Operating Cash Flow')
+            self._log_metric_fetch('Operating Cash Flow', self._find_source_metric('Operating Cash Flow'), ocf, "FCF Component")
             fcf['Operating Cash Flow'] = ocf
             
             # Get Capital Expenditure
-            capex = self._get_safe_series(df, 'Capital Expenditure', default_zero=True)
+            capex = self._get_safe_series(df_clean, 'Capital Expenditure', default_zero=True)
             # Additional attempts to find CapEx with common variations
             if (capex == 0).all():
                 capex_alternatives = [
-                    'Purchase of Fixed Assets',
-                    'Purchased of Fixed Assets',  # Handle typo
-                    'Purchase of Investments',
-                    'Capital Expenditure',
-                    'Additions to Fixed Assets'
+                    'Purchase of Fixed Assets', 'Purchased of Fixed Assets',
+                    'Purchase of Investments', 'Additions to Fixed Assets'
                 ]
-                
                 for alt in capex_alternatives:
                     try:
-                        temp_capex = self._get_safe_series(df, alt, default_zero=True)
+                        temp_capex = self._get_safe_series(df_clean, alt, default_zero=True)
                         if (temp_capex != 0).any():
                             capex = temp_capex
-                            self.logger.info(f"Found CapEx using alternative name: {alt}")
+                            self.logger.info(f"[PN-FCF-CAPEX] Found CapEx using alternative name: {alt}")
                             break
                     except:
                         continue
             
             # Ensure CapEx is positive (it's an outflow)
             capex = capex.abs()
-            
+            self._log_metric_fetch('Capital Expenditure', self._find_source_metric('Capital Expenditure'), capex, "FCF Component (Absolute value taken)")
             fcf['Capital Expenditure'] = capex
             
             # Free Cash Flow to Firm
-            fcf['Free Cash Flow to Firm'] = ocf - capex
+            fcff = ocf - capex
+            fcf['Free Cash Flow to Firm'] = fcff
+            self._log_calculation("Free Cash Flow to Firm", "Operating Cash Flow - Capital Expenditure", {"OCF": ocf, "CapEx": capex}, fcff)
             
-            # Get Net Income and non-cash charges for alternative calculation
+            # --- Alternative FCFF Calculation (from Net Income) ---
+            self.logger.info("\n[PN-FCF-ALT] Performing alternative FCFF calculation for validation...")
             try:
-                net_income = self._get_safe_series(df, 'Net Income')
-                depreciation = self._get_safe_series(df, 'Depreciation', default_zero=True)
-                
+                net_income = self._get_safe_series(df_clean, 'Net Income')
+                depreciation = self._get_safe_series(df_clean, 'Depreciation', default_zero=True)
+                self._log_metric_fetch('Net Income', self._find_source_metric('Net Income'), net_income, "Alt FCF Component")
+                self._log_metric_fetch('Depreciation', self._find_source_metric('Depreciation'), depreciation, "Alt FCF Component")
+    
                 # Change in Working Capital (if available)
-                if 'Current Assets' in df.index and 'Current Liabilities' in df.index:
-                    current_assets = df.loc[self._find_source_metric('Current Assets')]
-                    current_liabilities = df.loc[self._find_source_metric('Current Liabilities')]
+                if self._find_source_metric('Current Assets') in df_clean.index and self._find_source_metric('Current Liabilities') in df_clean.index:
+                    current_assets = self._get_safe_series(df_clean, 'Current Assets')
+                    current_liabilities = self._get_safe_series(df_clean, 'Current Liabilities')
                     
                     working_capital = current_assets - current_liabilities
                     change_in_wc = working_capital.diff()
                     
-                    # Alternative FCF calculation
-                    fcf['FCF (from Net Income)'] = net_income + depreciation - change_in_wc - capex
+                    fcf['Working Capital'] = working_capital
                     fcf['Change in Working Capital'] = change_in_wc
-                
-                # Free Cash Flow to Equity
-                if 'Financial Liabilities' in self._reformulate_balance_sheet_enhanced(df).index:
-                    ref_bs = self._reformulate_balance_sheet_enhanced(df)
-                    debt_change = ref_bs.loc['Financial Liabilities'].diff()
-                    fcf['Free Cash Flow to Equity'] = fcf['Free Cash Flow to Firm'] + debt_change
-                
+                    self._log_calculation("Working Capital", "Current Assets - Current Liabilities", {"Current Assets": current_assets, "Current Liabilities": current_liabilities}, working_capital)
+                    
+                    # Alternative FCF calculation
+                    # FCFF = NI + Depr - ∆WC - CapEx + Int(1-tax)
+                    # For simplicity here we'll do NI + Depr - ∆WC - CapEx
+                    alt_fcff = net_income + depreciation - change_in_wc.fillna(0) - capex
+                    fcf['FCF (from Net Income)'] = alt_fcff
+                    self._log_calculation("FCF (from NI)", "NI + Depr - ∆WC - CapEx", {"NI": net_income, "Depr": depreciation, "∆WC": change_in_wc, "CapEx": capex}, alt_fcff)
+                else:
+                    self.logger.warning("[PN-FCF-ALT] Cannot calculate change in WC, skipping alternative FCF calculation.")
+    
             except Exception as e:
-                self.logger.warning(f"Alternative FCF calculations failed: {e}")
+                self.logger.warning(f"[PN-FCF-ALT] Alternative FCF calculations failed: {e}")
             
+            # --- Free Cash Flow to Equity (FCFE) ---
+            self.logger.info("\n[PN-FCF-FCFE] Calculating Free Cash Flow to Equity (FCFE)...")
+            try:
+                ref_bs = self._reformulate_balance_sheet_enhanced(df) # Pass original df, it will be cleaned inside
+                if 'Financial Liabilities' in ref_bs.index:
+                    debt = ref_bs.loc['Financial Liabilities']
+                    # Align years
+                    common_years = sorted(set(fcff.index) & set(debt.index))
+                    fcff_aligned = fcff[common_years]
+                    debt_aligned = debt[common_years]
+    
+                    debt_change = debt_aligned.diff().fillna(0)
+                    fcfe = fcff_aligned + debt_change
+                    fcf['Net Borrowing'] = debt_change
+                    fcf['Free Cash Flow to Equity'] = fcfe
+                    
+                    self._log_calculation("Free Cash Flow to Equity", "FCFF + Net Borrowing (∆Debt)", {"FCFF": fcff_aligned, "Net Borrowing": debt_change}, fcfe)
+                else:
+                    self.logger.warning("[PN-FCF-FCFE] Financial Liabilities not found, cannot calculate FCFE.")
+            except Exception as e:
+                self.logger.warning(f"[PN-FCF-FCFE] FCFE calculation failed: {e}")
+                
             # FCF Yield calculation
-            if 'Total Assets' in df.index:
-                total_assets = df.loc[self._find_source_metric('Total Assets')]
-                fcf_yield = (fcf['Free Cash Flow to Firm'] / total_assets.replace(0, np.nan)) * 100
+            self.logger.info("\n[PN-FCF-YIELD] Calculating FCF Yield...")
+            if self._find_source_metric('Total Assets') in df_clean.index:
+                total_assets = self._get_safe_series(df_clean, 'Total Assets')
+                # Align years
+                common_years_yield = sorted(set(fcff.index) & set(total_assets.index))
+                fcff_aligned = fcff[common_years_yield]
+                ta_aligned = total_assets[common_years_yield]
+                
+                fcf_yield = (fcff_aligned / ta_aligned.replace(0, np.nan)) * 100
                 fcf['FCF Yield %'] = fcf_yield
+                self._log_calculation("FCF Yield %", "(FCFF / Total Assets) * 100", {"FCFF": fcff_aligned, "Total Assets": ta_aligned}, fcf_yield)
             
         except Exception as e:
-            self.logger.error(f"FCF calculation failed: {e}")
+            self.logger.error(f"[PN-FCF-ERROR] FCF calculation failed: {e}", exc_info=True)
             return self._calculate_free_cash_flow_simple(df)
         
         self.calculation_metadata['free_cash_flow'] = metadata
+        self.logger.info(f"\n[PN-FCF-END] Free Cash Flow Calculation Complete. Found {len(fcf.index)} metrics.")
+        self.logger.info("="*80 + "\n")
+        
         return fcf.T
     
     def _calculate_value_drivers_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:

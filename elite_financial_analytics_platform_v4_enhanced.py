@@ -9041,25 +9041,25 @@ class FinancialAnalyticsPlatform:
         
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
         """
-        [DEFINITIVE PARSER V2] Handles complex multi-statement HTML files with robust
-        header detection, targeted table extraction, and built-in validation.
+        [ENHANCED PARSER V3] Robust parser for Indian financial statements with multiple fallback strategies
         """
         try:
             # Ensure dependencies are available
             try:
                 from bs4 import BeautifulSoup
+                import re
             except ImportError:
                 st.error("Missing required parsing library. Please run: pip install beautifulsoup4 lxml")
                 self.logger.error("Missing dependencies: beautifulsoup4 or lxml.")
                 return None
-
-            self.logger.info(f"🔧 Starting definitive parsing for: {file.name}")
+    
+            self.logger.info(f"🔧 Starting enhanced parsing for: {file.name}")
             file.seek(0)
             content = file.read()
-
+    
             # Handle various common encodings gracefully
             if isinstance(content, bytes):
-                for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                for encoding in ['utf-8', 'latin-1', 'cp1252', 'windows-1252']:
                     try:
                         content = content.decode(encoding)
                         self.logger.debug(f"Decoded file content with {encoding}.")
@@ -9068,126 +9068,306 @@ class FinancialAnalyticsPlatform:
                         continue
             
             soup = BeautifulSoup(content, 'lxml')
-
-            # Enhanced patterns to find the start of each financial statement
+    
+            # ENHANCED patterns for Indian financial statements
             statement_patterns = {
-                'ProfitLoss': ['profit.*loss', 'income.*statement', 'statement.*of.*income', 'revenue.*and.*expenditure'],
-                'BalanceSheet': ['balance.*sheet', 'statement.*of.*financial.*position', 'assets.*and.*liabilities'],
-                'CashFlow': ['cash.*flow', 'statement.*of.*cash.*flow', 'funds.*flow']
+                'ProfitLoss': [
+                    r'profit.*(?:loss|account)', r'income.*statement', r'statement.*income',
+                    r'p\s*&\s*l', r'profit.*loss.*account', r'statement.*profit.*loss',
+                    r'comprehensive.*income', r'revenue.*expenditure', r'profit.*account',
+                    # Indian specific patterns
+                    r'indas.*profit', r'standalone.*profit', r'profit.*loss.*ind'
+                ],
+                'BalanceSheet': [
+                    r'balance.*sheet', r'statement.*financial.*position', r'financial.*position',
+                    r'assets.*liabilities', r'balance.*sheet.*as.*at',
+                    # Indian specific patterns  
+                    r'indas.*balance', r'standalone.*balance', r'balance.*sheet.*ind'
+                ],
+                'CashFlow': [
+                    r'cash.*flow', r'statement.*cash.*flow', r'cash.*flow.*statement',
+                    r'funds.*flow', r'statement.*cash.*flows', r'cash.*flows',
+                    # Indian specific patterns
+                    r'indas.*cash', r'standalone.*cash', r'cash.*flow.*ind'
+                ]
             }
-
+    
             processed_statements = []
             st.info(f"🔬 Analyzing structure of {file.name}...")
-
+    
+            # STRATEGY 1: Header-based detection (your original approach)
             for statement_type, patterns in statement_patterns.items():
-                header_tag = None
-                # Find a tag (e.g., <b>, <td>, <th>) that contains the statement title
+                st.info(f"🔍 Looking for {statement_type} using header detection...")
+                
+                found_statement = False
+                
                 for pattern in patterns:
-                    # Use a function to check both the tag and its content
-                    header_tag = soup.find(lambda tag: tag.name in ['b', 'td', 'th', 'p', 'h2', 'h3'] and re.search(pattern, tag.get_text(strip=True), re.IGNORECASE))
-                    if header_tag:
+                    if found_statement:
                         break
+                        
+                    # Expanded search in more tag types
+                    header_tag = soup.find(lambda tag: tag.name in ['b', 'strong', 'td', 'th', 'p', 'h1', 'h2', 'h3', 'h4', 'div', 'span'] 
+                                        and re.search(pattern, tag.get_text(strip=True), re.IGNORECASE))
+                    
+                    if header_tag:
+                        self.logger.info(f"Found header for {statement_type}: {header_tag.get_text()[:50]}")
+                        
+                        # Look for table after header
+                        data_table_tag = header_tag.find_next('table')
+                        
+                        if data_table_tag and self._is_valid_data_table(data_table_tag):
+                            df = self._extract_and_process_table(data_table_tag, statement_type)
+                            if df is not None and not df.empty:
+                                processed_statements.append(df)
+                                st.success(f"✅ Strategy 1: Extracted {statement_type}")
+                                found_statement = True
+                                break
+    
+            # STRATEGY 2: Content-based detection (fallback)
+            if len(processed_statements) < 3:  # If we didn't find all 3 statements
+                st.warning("🔄 Trying content-based detection...")
                 
-                if not header_tag:
-                    self.logger.warning(f"Could not find a clear header for {statement_type}.")
-                    continue
-
-                # The actual data is usually in the *next* <table> tag after the header
-                data_table_tag = header_tag.find_next('table')
+                all_tables = soup.find_all('table')
+                st.info(f"Found {len(all_tables)} tables to analyze...")
                 
-                if data_table_tag and self._is_valid_data_table(data_table_tag):
-                    self.logger.info(f"Found and processing a valid table for {statement_type}.")
-                    df = self._extract_and_process_table(data_table_tag, statement_type)
-                    if df is not None and not df.empty:
-                        processed_statements.append(df)
-                        st.success(f"✅ Successfully extracted: {statement_type}")
-                else:
-                    self.logger.warning(f"Found header for {statement_type}, but no valid subsequent table.")
-
+                for statement_type in statement_patterns.keys():
+                    if any(statement_type in str(ps.index[0]) for ps in processed_statements):
+                        continue  # Skip if already found
+                    
+                    st.info(f"🔍 Content analysis for {statement_type}...")
+                    
+                    for i, table in enumerate(all_tables):
+                        if self._table_matches_statement_type(table, statement_type):
+                            df = self._extract_and_process_table(table, statement_type)
+                            if df is not None and not df.empty:
+                                processed_statements.append(df)
+                                st.success(f"✅ Strategy 2: Found {statement_type} in table {i+1}")
+                                break
+    
+            # STRATEGY 3: Liberal parsing (last resort)
             if not processed_statements:
-                st.error(f"❌ Could not extract any valid financial statements from {file.name}. The file format might be highly non-standard.")
+                st.warning("🚨 Attempting liberal parsing of all tables...")
+                
+                all_tables = soup.find_all('table')
+                for i, table in enumerate(all_tables):
+                    if self._is_valid_data_table(table):
+                        # Try to guess statement type from table content
+                        table_text = table.get_text().lower()
+                        
+                        if any(word in table_text for word in ['revenue', 'profit', 'income', 'expense']):
+                            statement_type = 'ProfitLoss'
+                        elif any(word in table_text for word in ['assets', 'liabilities', 'equity']):
+                            statement_type = 'BalanceSheet'  
+                        elif any(word in table_text for word in ['cash', 'operating', 'investing', 'financing']):
+                            statement_type = 'CashFlow'
+                        else:
+                            statement_type = f'Unknown_{i}'
+                        
+                        df = self._extract_and_process_table(table, statement_type)
+                        if df is not None and not df.empty:
+                            processed_statements.append(df)
+                            st.info(f"✅ Strategy 3: Extracted {statement_type} from table {i+1}")
+    
+            if not processed_statements:
+                # Final debug attempt
+                self._debug_file_structure(soup, file.name)
+                st.error(f"❌ Could not extract any valid financial statements from {file.name}")
                 return None
-
-            # Combine all successfully processed statements and deduplicate rows
+    
+            # Combine all successfully processed statements
             final_df = pd.concat(processed_statements, axis=0, sort=False)
             final_df = final_df.loc[~final_df.index.duplicated(keep='first')]
             
             st.success(f"🎉 SUCCESS! Parsed {len(processed_statements)} statements. Final data shape: {final_df.shape}")
-            self._validate_parsed_data(final_df) # Perform immediate quality check
+            self._validate_parsed_data(final_df)
             return final_df
-
+    
         except Exception as e:
-            self.logger.error(f"Definitive parsing failed for {file.name}: {e}", exc_info=True)
-            st.error(f"💥 A critical error occurred during parsing: {str(e)}")
+            self.logger.error(f"Enhanced parsing failed for {file.name}: {e}", exc_info=True)
+            st.error(f"💥 Critical parsing error: {str(e)}")
             return None
-
-    def _is_valid_data_table(self, table_tag) -> bool:
-        """Heuristically checks if an HTML table tag likely contains financial data."""
+    
+    def _table_matches_statement_type(self, table_tag, statement_type: str) -> bool:
+        """Enhanced content-based statement detection"""
         try:
-            # A valid financial table should have at least a few rows and columns
-            num_rows = len(table_tag.find_all('tr'))
-            # Estimate columns from the first row
+            table_text = table_tag.get_text().lower()
+            
+            # Enhanced keyword matching for Indian statements
+            type_keywords = {
+                'ProfitLoss': [
+                    'revenue', 'income', 'expense', 'profit', 'loss', 'tax', 'depreciation',
+                    'finance cost', 'other income', 'total revenue', 'total expenses',
+                    'profit before tax', 'profit after tax'
+                ],
+                'BalanceSheet': [
+                    'assets', 'liabilities', 'equity', 'capital', 'reserves', 'share capital',
+                    'current assets', 'fixed assets', 'current liabilities', 'borrowings',
+                    'trade receivables', 'trade payables', 'cash equivalents'
+                ],
+                'CashFlow': [
+                    'operating activities', 'investing activities', 'financing activities', 
+                    'cash flow', 'net cash', 'cash generated', 'cash used',
+                    'purchase of fixed assets', 'capital expenditure'
+                ]
+            }
+            
+            keywords = type_keywords.get(statement_type, [])
+            matches = sum(1 for keyword in keywords if keyword in table_text)
+            
+            # Require at least 3 keyword matches for confidence
+            return matches >= 3
+            
+        except:
+            return False
+    
+    def _is_valid_data_table(self, table_tag) -> bool:
+        """Enhanced validation for financial tables"""
+        try:
+            rows = table_tag.find_all('tr')
+            if len(rows) < 4:  # Reduced from 5 to 4 for more flexibility
+                return False
+            
+            # Check first row for column structure
             first_row = table_tag.find('tr')
             num_cols = len(first_row.find_all(['td', 'th'])) if first_row else 0
             
-            if num_rows > 5 and num_cols > 2:
-                # Check for year-like numbers in the first few rows
-                header_text = ' '.join(cell.get_text() for cell in table_tag.find_all(['th', 'td'])[:20])
-                if re.search(r'(20\d{2}|19\d{2})', header_text):
-                    return True
-            return False
+            if num_cols < 2:  # Need at least 2 columns
+                return False
+            
+            # Get table text for analysis
+            header_text = ' '.join(cell.get_text() for cell in table_tag.find_all(['th', 'td'])[:30])
+            
+            # Look for financial indicators (more flexible)
+            has_years = bool(re.search(r'(20\d{2}|19\d{2})', header_text))
+            has_financial_terms = any(term in header_text.lower() for term in [
+                'amount', 'rs', 'inr', 'lakhs', 'crores', 'thousands', 'millions',
+                'current year', 'previous year', 'fy', 'march', 'as at'
+            ])
+            has_numbers = bool(re.search(r'\d+[,.]?\d*', header_text))
+            
+            # More lenient validation
+            return has_years or has_financial_terms or (has_numbers and num_cols >= 3)
+            
         except:
             return False
-
+    
     def _extract_and_process_table(self, table_tag, statement_type: str) -> Optional[pd.DataFrame]:
-        """Extracts data from a single HTML table tag and processes it into a clean DataFrame."""
+        """Enhanced table extraction with better error handling"""
         try:
-            df = pd.read_html(str(table_tag), flavor='bs4')[0]
+            # Try multiple parsing approaches
+            df = None
             
-            # --- Advanced Cleaning & Structuring ---
+            # Approach 1: Direct pandas parsing
+            try:
+                df = pd.read_html(str(table_tag), header=0)[0]
+            except:
+                try:
+                    df = pd.read_html(str(table_tag))[0]
+                except:
+                    return None
+            
+            if df is None or df.empty:
+                return None
+            
+            # Enhanced cleaning
             df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
             
-            # Find the most likely text/index column
-            text_col_candidate = 0
-            max_strings = 0
+            if len(df) < 2:  # Need at least 2 rows
+                return None
+            
+            # Find the best index column (more sophisticated)
+            index_col = 0
+            best_score = 0
+            
             for i, col in enumerate(df.columns):
-                # The column with the most non-numeric, non-empty cells is likely the index
-                num_strings = df[col].apply(lambda x: isinstance(x, str) and pd.notna(x)).sum()
-                if num_strings > max_strings:
-                    max_strings = num_strings
-                    text_col_candidate = i
-
-            # Set the index and clean it
-            df = df.set_index(df.columns[text_col_candidate])
+                # Score based on text content and non-null values
+                if df[col].dtype == 'object':
+                    text_ratio = df[col].apply(lambda x: isinstance(x, str) and len(str(x)) > 3).sum() / len(df)
+                    non_null_ratio = df[col].notna().sum() / len(df)
+                    score = text_ratio * non_null_ratio
+                    
+                    if score > best_score:
+                        best_score = score
+                        index_col = i
+            
+            # Set index
+            df = df.set_index(df.columns[index_col])
             df.index = df.index.astype(str).str.strip()
             df.index.name = 'Particulars'
-
-            # Clean numeric data, handling parentheses and non-numeric characters
+            
+            # Enhanced column filtering
+            valid_cols = []
             for col in df.columns:
-                # Keep only numeric-like columns (likely years)
-                if not re.search(r'\d{4}', str(col)):
-                    df = df.drop(col, axis=1)
-                    continue
-
+                col_str = str(col)
+                
+                # Keep columns that look like years OR have mostly numeric data
+                has_year = bool(re.search(r'(20\d{2}|19\d{2})', col_str))
+                numeric_ratio = pd.to_numeric(df[col], errors='coerce').notna().sum() / len(df)
+                
+                if has_year or numeric_ratio > 0.5:  # 50% numeric threshold
+                    valid_cols.append(col)
+            
+            if not valid_cols:
+                return None
+            
+            df = df[valid_cols]
+            
+            # Enhanced numeric conversion
+            for col in df.columns:
                 df[col] = pd.to_numeric(
                     df[col].astype(str)
                     .str.replace(',', '')
-                    .str.replace(r'^\s*-\s*$', '0', regex=True) # Replace standalone '-' with 0
+                    .str.replace('(', '-')
+                    .str.replace(')', '')
+                    .str.replace(r'^\s*-\s*$', '0', regex=True)
                     .str.replace(r'[^\d.-]', '', regex=True),
                     errors='coerce'
                 )
-
-            # Add statement prefix and filter out empty/header-like rows
+            
+            # Add statement prefix
             df.index = f"{statement_type}::" + df.index
+            
+            # Enhanced filtering
             df = df.dropna(how='all')
-            df = df[~df.index.str.contains(df.index.name, na=False)] # Remove rows where index is same as header
-
+            
+            # Remove obvious non-data rows
+            mask = ~df.index.str.contains('|'.join([
+                'particulars', 'description', 'items', 'note', 'total', 'subtotal',
+                'amount in', 'rs in', 'figures in'
+            ]), case=False, na=False)
+            df = df[mask]
+            
             return df if not df.empty else None
             
         except Exception as e:
-            self.logger.error(f"Table extraction failed for {statement_type}: {e}")
+            self.logger.error(f"Enhanced table extraction failed for {statement_type}: {e}")
             return None
-
+    
+    def _debug_file_structure(self, soup, filename: str):
+        """Debug helper to understand file structure"""
+        st.error(f"🐛 DEBUG: Analyzing structure of {filename}")
+        
+        # Show all tables found
+        tables = soup.find_all('table')
+        st.write(f"**Found {len(tables)} tables**")
+        
+        # Show potential headers
+        headers = soup.find_all(['b', 'strong', 'h1', 'h2', 'h3', 'h4'])
+        st.write(f"**Found {len(headers)} potential headers:**")
+        for i, header in enumerate(headers[:10]):
+            st.code(f"{i+1}: {header.get_text()[:100]}")
+        
+        # Show first few tables
+        st.write("**First 3 tables preview:**")
+        for i, table in enumerate(tables[:3]):
+            try:
+                df = pd.read_html(str(table))[0]
+                st.write(f"Table {i+1}: Shape {df.shape}")
+                st.dataframe(df.head(3))
+            except:
+                st.write(f"Table {i+1}: Could not parse")
+            st.write("---")
+        
     def _validate_parsed_data(self, df: pd.DataFrame):
         """Validates the quality and completeness of the final parsed DataFrame."""
         issues = []

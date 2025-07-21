@@ -3680,33 +3680,49 @@ class EnhancedPenmanNissimAnalyzer:
                 non_zero_count = (self._df_clean[sample_col] != 0).sum()
                 self.logger.info(f"[PN-INIT] Sample column {sample_col} has {non_zero_count} non-zero values")
 
+    # PASTE THIS CODE: Replace the _restructure_for_penman_nissim_v5 method with this enhanced version
+    
     def _restructure_for_penman_nissim_v5(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Version 5: Ultimate restructuring with comprehensive year extraction and validation
+        Version 5: Ultimate restructuring with comprehensive debugging and data preservation
         """
         self.logger.info("\n" + "#"*80)
-        self.logger.info("[PN-RESTRUCTURE-V5] Starting ULTIMATE data restructuring")
+        self.logger.info("[PN-RESTRUCTURE-V5] Starting ULTIMATE data restructuring with debugging")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Input shape: {df.shape}")
         self.logger.info("#"*80)
-
-        # 1. Comprehensive year pattern matching
+    
+        # DEBUG: Log sample of original data
+        self.logger.info("[PN-DEBUG] Sample of original data structure:")
+        self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
+        self.logger.info(f"  Index sample: {list(df.index)[:10]}...")
+        
+        # Look for CapEx specifically in original data
+        capex_items = [idx for idx in df.index if any(kw in str(idx).lower() 
+                       for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset'])]
+        self.logger.info(f"[PN-DEBUG] Found {len(capex_items)} potential CapEx items in original data:")
+        for item in capex_items[:5]:
+            self.logger.info(f"  - {item}")
+    
+        # 1. Enhanced year pattern matching with debugging
         year_patterns = [
-            # Pattern, Name, Extractor function, Priority
             (re.compile(r'(\d{6})'), 'YYYYMM', lambda m: m.group(1), 1),
             (re.compile(r'(\d{4})(?!\d)'), 'YYYY', lambda m: m.group(1) + '03', 2),
             (re.compile(r'FY\s*(\d{4})'), 'FY YYYY', lambda m: m.group(1) + '03', 2),
             (re.compile(r'(\d{4})-(\d{2})'), 'YYYY-YY', lambda m: m.group(1) + '03', 3),
             (re.compile(r'Mar[- ](\d{2})'), 'Mar-YY', lambda m: '20' + m.group(1) + '03', 4),
             (re.compile(r'March[- ](\d{4})'), 'March YYYY', lambda m: m.group(1) + '03', 3),
-            (re.compile(r'(\d{2})-(\d{2})-(\d{4})'), 'DD-MM-YYYY', lambda m: m.group(3) + '03', 5),
         ]
         
-        # Extract all years with priority handling
+        # Extract years with detailed logging
         all_years = set()
         year_to_columns = defaultdict(list)
         column_metadata = {}
         
+        self.logger.info("[PN-DEBUG] Analyzing column structure:")
         for col in df.columns:
             col_str = str(col)
+            self.logger.debug(f"  Processing column: {col_str}")
+            
             best_match = None
             best_priority = 999
             
@@ -3719,7 +3735,9 @@ class EnhancedPenmanNissimAnalyzer:
                         if 2000 <= year_int <= 2099:
                             best_match = (normalized_year, pattern_name)
                             best_priority = priority
-                    except:
+                            self.logger.debug(f"    Matched pattern {pattern_name}: {normalized_year}")
+                    except Exception as e:
+                        self.logger.debug(f"    Pattern {pattern_name} failed: {e}")
                         continue
             
             if best_match:
@@ -3731,77 +3749,216 @@ class EnhancedPenmanNissimAnalyzer:
                     'pattern': pattern_name,
                     'priority': best_priority
                 }
+                self.logger.debug(f"    Final mapping: {col} -> {normalized_year}")
+            else:
+                self.logger.warning(f"    No year pattern found for column: {col}")
         
         final_columns = sorted(list(all_years))
         self.logger.info(f"[PN-RESTRUCTURE-V5] Extracted {len(final_columns)} unique years: {final_columns}")
         
-        # Log pattern distribution
-        pattern_counts = defaultdict(int)
-        for meta in column_metadata.values():
-            pattern_counts[meta['pattern']] += 1
-        self.logger.info(f"[PN-RESTRUCTURE-V5] Pattern distribution: {dict(pattern_counts)}")
-        
-        # 2. Create restructured DataFrame with validation
+        # 2. Create restructured DataFrame with comprehensive tracking
         restructured = pd.DataFrame(index=df.index, columns=final_columns, dtype=np.float64)
-        data_quality_stats = {
-            'total_cells': 0,
-            'filled_cells': 0,
-            'validation_failures': 0,
-            'sign_corrections': 0,
-            'outliers_fixed': 0
+        
+        # Track data transfer statistics
+        transfer_stats = {
+            'total_attempts': 0,
+            'successful_transfers': 0,
+            'failed_transfers': 0,
+            'zero_values': 0,
+            'null_values': 0,
+            'capex_transfers': 0
         }
         
-        # 3. Smart data extraction with comprehensive validation
+        # 3. Enhanced data extraction with preservation focus
+        self.logger.info("[PN-DEBUG] Starting data transfer process...")
+        
         for idx in df.index:
             idx_str = str(idx)
+            is_capex = any(kw in idx_str.lower() for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset'])
             
-            # Skip completely empty rows
-            if df.loc[idx].isna().all():
-                continue
+            if is_capex:
+                self.logger.info(f"[PN-CAPEX-TRANSFER] Processing CapEx item: {idx_str}")
             
             # Determine statement type
             statement_type = self._determine_statement_type_v2(idx_str)
             
             for year in final_columns:
-                data_quality_stats['total_cells'] += 1
+                transfer_stats['total_attempts'] += 1
                 
-                # Get potential source columns
+                # Get potential source columns for this year
                 source_columns = year_to_columns[year]
                 
-                # Prioritize columns based on statement type
+                # Prioritize columns
                 prioritized_columns = self._prioritize_columns_v2(
                     source_columns, statement_type, column_metadata
                 )
                 
-                # Extract value with validation
-                value = self._extract_best_value_v3(
-                    df.loc[idx], prioritized_columns, idx_str, year
-                )
+                # Extract value with enhanced preservation
+                original_values = []
+                for col in prioritized_columns:
+                    try:
+                        val = df.loc[idx, col]
+                        if pd.notna(val):
+                            original_values.append((col, val))
+                    except Exception as e:
+                        self.logger.debug(f"Error accessing {idx}[{col}]: {e}")
                 
-                if value is not None:
-                    # Apply comprehensive data quality rules
-                    cleaned_value, stats = self._apply_comprehensive_quality_rules(
-                        value, idx_str, year, statement_type
-                    )
+                if is_capex and original_values:
+                    self.logger.debug(f"[PN-CAPEX-TRANSFER] {idx_str} in {year}: found {len(original_values)} values: {original_values}")
+                
+                # Select best value with detailed logging
+                if original_values:
+                    # Use first non-zero value, or first value if all are zero
+                    selected_value = None
+                    selected_col = None
                     
-                    if cleaned_value is not None:
-                        restructured.loc[idx, year] = cleaned_value
-                        data_quality_stats['filled_cells'] += 1
-                        data_quality_stats['sign_corrections'] += stats.get('sign_corrected', 0)
-                        data_quality_stats['outliers_fixed'] += stats.get('outlier_fixed', 0)
+                    for col, val in original_values:
+                        try:
+                            # Parse the value
+                            if isinstance(val, str):
+                                # Clean string value
+                                val_clean = (val.replace(',', '')
+                                               .replace('(', '-')
+                                               .replace(')', '')
+                                               .replace('₹', '')
+                                               .replace('$', '')
+                                               .strip())
+                                
+                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil', '']:
+                                    continue
+                                
+                                numeric_val = float(val_clean)
+                            else:
+                                numeric_val = float(val)
+                            
+                            # Select first non-zero value, or first value if no non-zero found
+                            if selected_value is None or (numeric_val != 0 and selected_value == 0):
+                                selected_value = numeric_val
+                                selected_col = col
+                                
+                        except Exception as e:
+                            self.logger.debug(f"Failed to parse {val} from {col}: {e}")
+                            continue
+                    
+                    if selected_value is not None:
+                        # Apply data quality rules but preserve the value
+                        cleaned_value, stats = self._apply_comprehensive_quality_rules(
+                            selected_value, idx_str, year, statement_type
+                        )
+                        
+                        if cleaned_value is not None:
+                            restructured.loc[idx, year] = cleaned_value
+                            transfer_stats['successful_transfers'] += 1
+                            
+                            if is_capex:
+                                transfer_stats['capex_transfers'] += 1
+                                self.logger.info(f"[PN-CAPEX-TRANSFER] Successfully transferred {idx_str}[{year}] = {cleaned_value} from {selected_col}")
+                        else:
+                            transfer_stats['failed_transfers'] += 1
+                            if is_capex:
+                                self.logger.warning(f"[PN-CAPEX-TRANSFER] Failed quality check for {idx_str}[{year}] = {selected_value}")
                     else:
-                        data_quality_stats['validation_failures'] += 1
+                        transfer_stats['null_values'] += 1
+                else:
+                    transfer_stats['null_values'] += 1
+                    if is_capex:
+                        self.logger.warning(f"[PN-CAPEX-TRANSFER] No values found for {idx_str} in {year}")
         
-        # 4. Advanced post-processing
-        restructured = self._advanced_post_processing(restructured, data_quality_stats)
+        # 4. Post-processing with data preservation
+        self.logger.info("[PN-DEBUG] Starting post-processing...")
+        original_non_null = restructured.notna().sum().sum()
         
-        # 5. Final validation and quality report
-        self._comprehensive_validation(restructured, data_quality_stats)
+        restructured = self._conservative_post_processing(restructured, transfer_stats)
+        
+        final_non_null = restructured.notna().sum().sum()
+        self.logger.info(f"[PN-DEBUG] Post-processing: {original_non_null} -> {final_non_null} non-null values")
+        
+        # 5. Comprehensive validation and reporting
+        self._detailed_validation_report(restructured, transfer_stats, capex_items)
         
         self.logger.info(f"[PN-RESTRUCTURE-V5] Complete. Final shape: {restructured.shape}")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Transfer success rate: {transfer_stats['successful_transfers']}/{transfer_stats['total_attempts']} ({transfer_stats['successful_transfers']/transfer_stats['total_attempts']*100:.1f}%)")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] CapEx transfers: {transfer_stats['capex_transfers']}")
         self.logger.info("#"*80 + "\n")
         
         return restructured
+    
+    def _conservative_post_processing(self, df: pd.DataFrame, stats: Dict) -> pd.DataFrame:
+        """Conservative post-processing that preserves data"""
+        processed = df.copy()
+        
+        # Only do minimal processing to preserve data integrity
+        
+        # 1. Forward fill balance sheet items ONLY if very few missing values
+        bs_indices = [idx for idx in df.index if 'BalanceSheet::' in str(idx)]
+        for idx in bs_indices:
+            series = processed.loc[idx]
+            null_pct = series.isna().sum() / len(series)
+            
+            # Only forward fill if less than 30% missing and there's a clear pattern
+            if null_pct < 0.3 and series.notna().sum() >= 2:
+                # Check if missing values are at the beginning or end
+                first_valid = series.first_valid_index()
+                last_valid = series.last_valid_index()
+                
+                if first_valid and last_valid:
+                    # Only fill internal gaps
+                    filled_series = series.copy()
+                    filled_series.loc[first_valid:last_valid] = series.loc[first_valid:last_valid].fillna(method='ffill')
+                    
+                    # Only apply if we didn't fill too many values
+                    filled_count = filled_series.notna().sum() - series.notna().sum()
+                    if filled_count <= 2:  # Max 2 filled values
+                        processed.loc[idx] = filled_series
+                        self.logger.debug(f"Forward filled {filled_count} values for {idx}")
+        
+        return processed
+    
+    def _detailed_validation_report(self, df: pd.DataFrame, stats: Dict, original_capex_items: List):
+        """Generate detailed validation report with CapEx focus"""
+        self.logger.info("\n[PN-VALIDATION] Detailed Data Transfer Report:")
+        
+        # Overall statistics
+        total_cells = df.size
+        non_null_cells = df.notna().sum().sum()
+        coverage = (non_null_cells / total_cells) * 100 if total_cells > 0 else 0
+        
+        self.logger.info(f"  - Overall Coverage: {coverage:.1f}% ({non_null_cells}/{total_cells})")
+        self.logger.info(f"  - Successful Transfers: {stats['successful_transfers']}")
+        self.logger.info(f"  - Failed Transfers: {stats['failed_transfers']}")
+        self.logger.info(f"  - CapEx Transfers: {stats['capex_transfers']}")
+        
+        # CapEx specific validation
+        self.logger.info(f"\n[PN-CAPEX-VALIDATION] Capital Expenditure Analysis:")
+        self.logger.info(f"  - Original CapEx items found: {len(original_capex_items)}")
+        
+        capex_in_final = []
+        for item in original_capex_items:
+            if item in df.index:
+                series = df.loc[item]
+                non_null_count = series.notna().sum()
+                if non_null_count > 0:
+                    capex_in_final.append((item, non_null_count))
+                    self.logger.info(f"  ✓ {item}: {non_null_count} values transferred")
+                else:
+                    self.logger.warning(f"  ✗ {item}: No values transferred")
+            else:
+                self.logger.error(f"  ✗ {item}: Not found in final data")
+        
+        self.logger.info(f"  - CapEx items in final data: {len(capex_in_final)}/{len(original_capex_items)}")
+        
+        # Per-year coverage
+        year_coverage = df.notna().sum() / len(df) * 100
+        self.logger.info(f"\n[PN-VALIDATION] Coverage by year:")
+        for year, cov in year_coverage.items():
+            self.logger.info(f"    {year}: {cov:.1f}%")
+        
+        # Show sample of final data
+        if len(capex_in_final) > 0:
+            sample_capex = capex_in_final[0][0]
+            sample_data = df.loc[sample_capex].dropna()
+            self.logger.info(f"\n[PN-VALIDATION] Sample CapEx data ({sample_capex}):")
+            self.logger.info(f"    Values: {sample_data.to_dict()}")
 
     def _determine_statement_type_v2(self, idx_str: str) -> str:
         """Enhanced statement type detection with fuzzy matching"""
@@ -4961,8 +5118,10 @@ class EnhancedPenmanNissimAnalyzer:
             }
 
     # Helper methods
+    # PASTE THIS CODE: Replace the _get_safe_series method in the EnhancedPenmanNissimAnalyzer class
+
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Safely get a series with comprehensive logging and fallback options"""
+        """Enhanced safe series retrieval with comprehensive Capital Expenditure detection"""
         self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
         
         # First, try the mapped source
@@ -4973,114 +5132,264 @@ class EnhancedPenmanNissimAnalyzer:
             self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
             return series
         
-        # Log what we're looking for
-        self.logger.warning(f"[PN-FETCH-MISS] Direct mapping for '{target_metric}' not found (mapped to '{source_metric}')")
-        
-        # Define comprehensive search patterns
+        # Enhanced search patterns with ALL possible variations
         search_patterns = {
+            'Capital Expenditure': [
+                # Direct variations
+                'CashFlow::Capital Expenditure',
+                'CashFlow::Capital Expenditures', 
+                'CashFlow::CAPEX',
+                'CashFlow::Capex',
+                'CashFlow::CapEx',
+                
+                # Purchase variations (most common)
+                'CashFlow::Purchase of Fixed Assets',
+                'CashFlow::Purchased of Fixed Assets',  # Common typo
+                'CashFlow::Purchase of Property Plant and Equipment',
+                'CashFlow::Purchase of Property, Plant and Equipment',
+                'CashFlow::Purchases of Fixed Assets',
+                'CashFlow::Purchase of PPE',
+                'CashFlow::Purchase of Plant and Equipment',
+                'CashFlow::Purchase of Tangible Assets',
+                
+                # Investment variations
+                'CashFlow::Purchase of Investments',
+                'CashFlow::Investment in Fixed Assets',
+                'CashFlow::Investments in Fixed Assets',
+                'CashFlow::Investment in Property Plant and Equipment',
+                'CashFlow::Investment in PPE',
+                
+                # Addition variations
+                'CashFlow::Additions to Fixed Assets',
+                'CashFlow::Addition to Fixed Assets',
+                'CashFlow::Additions to Property Plant and Equipment',
+                'CashFlow::Additions to PPE',
+                'CashFlow::Net Additions to Fixed Assets',
+                
+                # Acquisition variations
+                'CashFlow::Acquisition of Fixed Assets',
+                'CashFlow::Acquisition of Property Plant and Equipment',
+                'CashFlow::Asset Acquisitions',
+                'CashFlow::Fixed Asset Acquisitions',
+                
+                # Payment variations
+                'CashFlow::Payments for Fixed Assets',
+                'CashFlow::Payment for Purchase of Fixed Assets',
+                'CashFlow::Payments for Property Plant and Equipment',
+                'CashFlow::Cash Payments for Fixed Assets',
+                
+                # Expenditure variations
+                'CashFlow::Expenditure on Fixed Assets',
+                'CashFlow::Capital Expenditure on Fixed Assets',
+                'CashFlow::Fixed Asset Expenditure',
+                'CashFlow::Plant and Equipment Expenditure',
+                
+                # Other common variations
+                'CashFlow::Fixed Assets Purchased',
+                'CashFlow::PPE Purchased',
+                'CashFlow::Tangible Assets Purchased',
+                'CashFlow::Equipment Purchases',
+                'CashFlow::Machinery and Equipment',
+                'CashFlow::Plant and Machinery',
+                
+                # Indian specific variations
+                'CashFlow::Purchase of Plant and Machinery',
+                'CashFlow::Addition to Plant and Machinery',
+                'CashFlow::Investment in Plant and Machinery',
+                
+                # Without CashFlow prefix (in case data doesn't have prefixes)
+                'Capital Expenditure',
+                'Capital Expenditures',
+                'CAPEX',
+                'Purchase of Fixed Assets',
+                'Purchased of Fixed Assets',
+                'Purchase of Property Plant and Equipment',
+                'Additions to Fixed Assets',
+                'Investment in Fixed Assets',
+            ],
+            
             'Depreciation': [
                 'ProfitLoss::Depreciation and Amortisation Expenses',
                 'ProfitLoss::Depreciation and Amortization Expenses',
-                'ProfitLoss::Depreciation',
-                'ProfitLoss::Depreciation & Amortization',
+                'ProfitLoss::Depreciation & Amortisation Expenses',
+                'ProfitLoss::Depreciation & Amortization Expenses',
                 'ProfitLoss::Depreciation and Amortisation',
-                'ProfitLoss::Depreciation & Amortisation'
+                'ProfitLoss::Depreciation and Amortization',
+                'ProfitLoss::Depreciation & Amortisation',
+                'ProfitLoss::Depreciation & Amortization',
+                'ProfitLoss::Depreciation',
+                'ProfitLoss::Amortisation',
+                'ProfitLoss::Amortization',
+                'ProfitLoss::Depreciation Expense',
+                'ProfitLoss::Depreciation Expenses',
+                'ProfitLoss::Depreciation and Impairment',
+                'Depreciation and Amortisation Expenses',
+                'Depreciation and Amortization Expenses',
+                'Depreciation',
             ],
-            'Capital Expenditure': [
-                'CashFlow::Purchase of Fixed Assets',
-                'CashFlow::Purchased of Fixed Assets',
-                'CashFlow::Purchase of Investments',
-                'CashFlow::Capital Expenditure',
-                'CashFlow::CAPEX',
-                'CashFlow::Additions to Fixed Assets',
-                'CashFlow::Purchase of Property Plant and Equipment'
+            
+            'Operating Cash Flow': [
+                'CashFlow::Net Cash from Operating Activities',
+                'CashFlow::Net CashFlow From Operating Activities',
+                'CashFlow::Net Cash Flow From Operating Activities',
+                'CashFlow::Operating Cash Flow',
+                'CashFlow::Cash from Operating Activities',
+                'CashFlow::Cash Flow from Operating Activities',
+                'CashFlow::Net Cash Generated from Operating Activities',
+                'CashFlow::Cash Generated from Operating Activities',
+                'CashFlow::Operating Activities',
+                'CashFlow::Cash from Operations',
+                'Net Cash from Operating Activities',
+                'Operating Cash Flow',
+                'Cash from Operating Activities',
             ],
+            
             'Revenue': [
                 'ProfitLoss::Revenue From Operations',
                 'ProfitLoss::Revenue From Operations(Net)',
+                'ProfitLoss::Revenue from Operations (Net)',
                 'ProfitLoss::Total Revenue',
                 'ProfitLoss::Net Sales',
-                'ProfitLoss::Sales'
+                'ProfitLoss::Sales',
+                'ProfitLoss::Revenue',
+                'ProfitLoss::Gross Revenue',
+                'ProfitLoss::Total Income',
+                'Revenue From Operations',
+                'Revenue',
+                'Sales',
+                'Total Revenue',
             ],
+            
             'Operating Income': [
                 'ProfitLoss::Profit Before Exceptional Items and Tax',
                 'ProfitLoss::Operating Profit',
                 'ProfitLoss::EBIT',
-                'ProfitLoss::Profit Before Interest and Tax'
+                'ProfitLoss::Profit Before Interest and Tax',
+                'ProfitLoss::Operating Income',
+                'ProfitLoss::Earnings Before Interest and Tax',
+                'ProfitLoss::Profit from Operations',
+                'Operating Profit',
+                'EBIT',
+                'Operating Income',
             ],
+            
             'Net Income': [
                 'ProfitLoss::Profit After Tax',
                 'ProfitLoss::Profit/Loss For The Period',
                 'ProfitLoss::Net Profit',
-                'ProfitLoss::PAT'
+                'ProfitLoss::PAT',
+                'ProfitLoss::Net Income',
+                'ProfitLoss::Profit for the Period',
+                'ProfitLoss::Net Profit After Tax',
+                'Profit After Tax',
+                'Net Profit',
+                'Net Income',
             ],
+            
             'Tax Expense': [
                 'ProfitLoss::Tax Expense',
-                'ProfitLoss::Tax Expenses',
+                'ProfitLoss::Tax Expenses', 
                 'ProfitLoss::Current Tax',
                 'ProfitLoss::Total Tax Expense',
-                'ProfitLoss::Income Tax'
+                'ProfitLoss::Income Tax',
+                'ProfitLoss::Provision for Tax',
+                'ProfitLoss::Tax Provision',
+                'Tax Expense',
+                'Current Tax',
+                'Income Tax',
             ],
+            
             'Interest Expense': [
                 'ProfitLoss::Finance Cost',
                 'ProfitLoss::Finance Costs',
                 'ProfitLoss::Interest',
                 'ProfitLoss::Interest Expense',
-                'ProfitLoss::Interest and Finance Charges'
+                'ProfitLoss::Interest and Finance Charges',
+                'ProfitLoss::Financial Expenses',
+                'ProfitLoss::Borrowing Costs',
+                'Finance Cost',
+                'Finance Costs',
+                'Interest Expense',
+                'Interest',
             ],
+            
             'Income Before Tax': [
                 'ProfitLoss::Profit Before Tax',
                 'ProfitLoss::PBT',
-                'ProfitLoss::Income Before Tax'
-            ],
-            'Operating Cash Flow': [
-                'CashFlow::Net Cash from Operating Activities',
-                'CashFlow::Net CashFlow From Operating Activities',
-                'CashFlow::Operating Cash Flow',
-                'CashFlow::Cash from Operating Activities',
-                'CashFlow::Net Cash Generated from Operating Activities'
+                'ProfitLoss::Income Before Tax',
+                'ProfitLoss::Earnings Before Tax',
+                'Profit Before Tax',
+                'PBT',
+                'Income Before Tax',
             ],
         }
         
-        # Try to find using search patterns
+        # Try exact matches from patterns
         if target_metric in search_patterns:
-            self.logger.info(f"[PN-FETCH-SEARCH] Searching patterns for '{target_metric}'")
-            for pattern in search_patterns[target_metric]:
+            self.logger.info(f"[PN-FETCH-SEARCH] Searching {len(search_patterns[target_metric])} patterns for '{target_metric}'")
+            
+            for i, pattern in enumerate(search_patterns[target_metric]):
                 if pattern in df.index:
-                    self.logger.info(f"[PN-FETCH-FOUND] Auto-discovered '{pattern}' for '{target_metric}'")
                     series = df.loc[pattern].fillna(0 if default_zero else np.nan)
-                    self._log_metric_fetch(target_metric, pattern, series, "Pattern search")
+                    self.logger.info(f"[PN-FETCH-FOUND] Pattern match #{i+1}: '{pattern}' for '{target_metric}'")
+                    self._log_metric_fetch(target_metric, pattern, series, f"Pattern search #{i+1}")
                     return series
         
-        # If still not found, do a case-insensitive search
+        # Enhanced fuzzy matching for Capital Expenditure specifically
+        if target_metric == 'Capital Expenditure':
+            self.logger.info("[PN-FETCH-CAPEX] Performing enhanced CapEx fuzzy search...")
+            
+            # Keywords that indicate capital expenditure
+            capex_keywords = [
+                'purchase', 'purchased', 'acquisition', 'addition', 'additions',
+                'investment', 'expenditure', 'capex', 'fixed asset', 'ppe',
+                'property plant', 'plant and equipment', 'machinery', 'equipment'
+            ]
+            
+            # Look for any index containing these keywords
+            for idx in df.index:
+                idx_lower = str(idx).lower()
+                
+                # Must be in cash flow section
+                if 'cashflow::' in idx_lower or 'cash flow' in idx_lower:
+                    # Check for capex keywords
+                    if any(keyword in idx_lower for keyword in capex_keywords):
+                        # Additional validation - should be an outflow (negative or positive that we'll make negative)
+                        series = df.loc[idx]
+                        if series.notna().any():
+                            self.logger.info(f"[PN-FETCH-CAPEX-FUZZY] Found potential CapEx: '{idx}'")
+                            
+                            # Ensure it's treated as an outflow (positive for subtraction)
+                            series = series.abs().fillna(0 if default_zero else np.nan)
+                            self._log_metric_fetch(target_metric, idx, series, "CapEx fuzzy match")
+                            return series
+        
+        # General fuzzy matching for other metrics
         target_lower = target_metric.lower()
-        self.logger.info(f"[PN-FETCH-FALLBACK] Trying case-insensitive search for '{target_metric}'")
+        best_match = None
+        best_score = 0
         
         for idx in df.index:
-            idx_lower = str(idx).lower()
+            idx_clean = str(idx).split('::')[-1].lower() if '::' in str(idx) else str(idx).lower()
             
-            # Remove common prefixes for comparison
-            idx_clean = idx_lower.replace('profitloss::', '').replace('balancesheet::', '').replace('cashflow::', '')
+            # Calculate similarity score
+            score = self._calculate_similarity(target_lower, idx_clean)
             
-            # Check for exact match after cleaning
-            if target_lower == idx_clean:
-                self.logger.info(f"[PN-FETCH-FOUND] Found exact match after cleaning: '{idx}' for '{target_metric}'")
-                series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive exact match")
-                return series
-            
-            # Check for partial match
-            if target_lower in idx_clean or idx_clean in target_lower:
-                self.logger.info(f"[PN-FETCH-FOUND] Found partial match: '{idx}' for '{target_metric}'")
-                series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                self._log_metric_fetch(target_metric, idx, series, "Case-insensitive partial match")
-                return series
+            if score > best_score and score > 0.7:  # 70% threshold
+                best_score = score
+                best_match = idx
+        
+        if best_match:
+            series = df.loc[best_match].fillna(0 if default_zero else np.nan)
+            self.logger.info(f"[PN-FETCH-FUZZY] Found '{target_metric}' via fuzzy match: {best_match} (score: {best_score:.2f})")
+            self._log_metric_fetch(target_metric, best_match, series, f"Fuzzy match (score: {best_score:.2f})")
+            return series
         
         # List of optional metrics that can default to zero
         optional_metrics = [
             'Depreciation', 'Investments', 'Short-term Investments',
             'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
-            'Total Liabilities'  # Can be calculated from Assets - Equity
+            'Total Liabilities', 'Capital Expenditure'  # Added CapEx as optional
         ]
         
         if default_zero or target_metric in optional_metrics:
@@ -5089,12 +5398,17 @@ class EnhancedPenmanNissimAnalyzer:
             self._log_metric_fetch(target_metric, "DEFAULT_ZEROS", series, "Default to zero")
             return series
         
-        # For required metrics, log available options and raise error
+        # For required metrics, show helpful suggestions
         self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
-        self.logger.info(f"[PN-FETCH-HELP] Available indices that might match:")
-        for idx in df.index:
-            if any(word in str(idx).lower() for word in target_lower.split()):
-                self.logger.info(f"  - {idx}")
+        
+        # Show available cash flow items for Capital Expenditure
+        if target_metric == 'Capital Expenditure':
+            self.logger.info("[PN-FETCH-HELP] Available Cash Flow items in your data:")
+            cashflow_items = [idx for idx in df.index if 'cashflow::' in str(idx).lower()]
+            for item in cashflow_items[:20]:  # Show first 20
+                self.logger.info(f"  - {item}")
+            if len(cashflow_items) > 20:
+                self.logger.info(f"  ... and {len(cashflow_items) - 20} more cash flow items")
         
         raise ValueError(f"Required metric '{target_metric}' not found")
 
@@ -5138,6 +5452,127 @@ class EnhancedPenmanNissimAnalyzer:
         non_null_cells = sum(self._df_clean.loc[metric].notna().sum() for metric in mapped_metrics)
         
         return non_null_cells / total_cells if total_cells > 0 else 0.0
+
+    # PASTE THIS CODE: Add this method to the EnhancedPenmanNissimAnalyzer class (continuation)
+    
+    def detect_capex_candidates(self) -> List[Tuple[str, float]]:
+        """Detect potential Capital Expenditure candidates with confidence scores"""
+        candidates = []
+        
+        # Keywords that strongly indicate CapEx
+        strong_indicators = ['capex', 'capital expenditure', 'purchase of fixed assets', 'purchase of ppe']
+        medium_indicators = ['purchase', 'acquisition', 'addition', 'investment in fixed']
+        weak_indicators = ['fixed asset', 'property plant', 'machinery', 'equipment']
+        
+        for idx in self._df_clean.index:
+            idx_str = str(idx)
+            idx_lower = idx_str.lower()
+            
+            # Must be cash flow related
+            if not ('cashflow::' in idx_lower or 'cash flow' in idx_lower):
+                continue
+            
+            confidence = 0.0
+            
+            # Check for strong indicators
+            for indicator in strong_indicators:
+                if indicator in idx_lower:
+                    confidence += 0.9
+                    break
+            
+            # Check for medium indicators
+            if confidence < 0.5:
+                for indicator in medium_indicators:
+                    if indicator in idx_lower:
+                        confidence += 0.6
+                        break
+            
+            # Check for weak indicators
+            if confidence < 0.3:
+                for indicator in weak_indicators:
+                    if indicator in idx_lower:
+                        confidence += 0.3
+                        break
+            
+            # Boost confidence if it's clearly an outflow
+            if confidence > 0:
+                series = self._df_clean.loc[idx]
+                if series.notna().any():
+                    # Check if values are typically positive (indicating outflows in cash flow)
+                    positive_ratio = (series > 0).sum() / series.notna().sum()
+                    if positive_ratio > 0.7:
+                        confidence += 0.2
+            
+            if confidence > 0.3:
+                candidates.append((idx_str, min(confidence, 1.0)))
+        
+        # Sort by confidence descending
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        
+        self.logger.info(f"[PN-CAPEX-DETECT] Found {len(candidates)} CapEx candidates:")
+        for idx, conf in candidates[:5]:  # Log top 5
+            self.logger.info(f"  - {idx} (confidence: {conf:.2f})")
+        
+        return candidates
+    
+    def suggest_missing_mappings(self) -> Dict[str, List[Tuple[str, float]]]:
+        """Suggest mappings for missing required metrics"""
+        suggestions = {}
+        
+        required_metrics = [
+            'Capital Expenditure', 'Depreciation', 'Operating Cash Flow',
+            'Interest Income', 'Cost of Goods Sold', 'Operating Expenses'
+        ]
+        
+        for metric in required_metrics:
+            # Check if already mapped
+            if self._find_source_metric(metric):
+                continue
+            
+            # Find candidates
+            if metric == 'Capital Expenditure':
+                candidates = self.detect_capex_candidates()
+            else:
+                candidates = self._find_metric_candidates(metric)
+            
+            if candidates:
+                suggestions[metric] = candidates[:3]  # Top 3 suggestions
+        
+        return suggestions
+    
+    def _find_metric_candidates(self, target_metric: str) -> List[Tuple[str, float]]:
+        """Find candidates for a specific metric"""
+        candidates = []
+        target_lower = target_metric.lower()
+        
+        # Define keywords for each metric type
+        metric_keywords = {
+            'depreciation': ['depreciation', 'amortisation', 'amortization'],
+            'operating cash flow': ['operating activities', 'cash from operating', 'operating cash'],
+            'interest income': ['interest income', 'other income', 'investment income'],
+            'cost of goods sold': ['cost of materials', 'cost of goods', 'cogs', 'cost of sales'],
+            'operating expenses': ['operating expenses', 'other expenses', 'employee benefit']
+        }
+        
+        keywords = metric_keywords.get(target_lower, target_lower.split())
+        
+        for idx in self._df_clean.index:
+            idx_lower = str(idx).lower()
+            
+            confidence = 0.0
+            for keyword in keywords:
+                if keyword in idx_lower:
+                    confidence += 0.7
+            
+            # Boost for exact matches
+            if target_lower in idx_lower:
+                confidence += 0.3
+            
+            if confidence > 0.4:
+                candidates.append((str(idx), min(confidence, 1.0)))
+        
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates
        
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
@@ -11387,6 +11822,33 @@ class FinancialAnalyticsPlatform:
                         st.write("**Missing essential items:**")
                         for item in final_validation['missing_essential']:
                             st.write(f"• {item}")
+        # PASTE THIS CODE: Add this as a temporary debug section in your mapping interface
+
+        if st.checkbox("🐛 Debug: Show My Cash Flow Data", key="debug_cashflow"):
+            st.write("**All items in your data that contain 'cash' or 'flow':**")
+            
+            cash_flow_items = []
+            for idx in data.index:
+                idx_lower = str(idx).lower()
+                if any(keyword in idx_lower for keyword in ['cash', 'flow', 'purchase', 'capex', 'expenditure']):
+                    cash_flow_items.append(idx)
+            
+            if cash_flow_items:
+                for item in cash_flow_items:
+                    # Show the item and a sample of its data
+                    sample_data = data.loc[item].dropna()
+                    if len(sample_data) > 0:
+                        st.write(f"**{item}**")
+                        st.write(f"Sample values: {sample_data.head(3).to_dict()}")
+                        st.write("---")
+            else:
+                st.error("No cash flow related items found!")
+                
+                # Show ALL indices for debugging
+                st.write("**First 50 items in your data:**")
+                for i, idx in enumerate(data.index[:50]):
+                    st.code(f"{i+1}. {idx}")
+
         
         # Return None to indicate mapping is not complete yet
         return None

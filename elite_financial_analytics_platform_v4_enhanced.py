@@ -3834,7 +3834,7 @@ class EnhancedPenmanNissimAnalyzer:
             'calculation_metadata': self.calculation_metadata
             }
         
-   def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced balance sheet reformulation with detailed logging"""
         self.logger.info("\n" + "="*80)
         self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation")

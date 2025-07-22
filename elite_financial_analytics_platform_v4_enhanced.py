@@ -4698,8 +4698,14 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Interest Income'] = interest_income # Keep your original variable
             reformulated['Net Financial Income Before Tax'] = net_financial_income_before_tax
             
+            # (Corrected code)
+            # Tax effect on financial items
             reformulated['Tax on Financial Income'] = net_financial_income_before_tax * tax_rate
             reformulated['Net Financial Income After Tax'] = net_financial_income_before_tax * (1 - tax_rate)
+            
+            # --- NEW FIX: Explicitly create the 'Net Financial Expense' key ---
+            # This is the key the NBC calculation is looking for.
+            reformulated['Net Financial Expense After Tax'] = reformulated['Net Financial Income After Tax'] * -1
             
             # --- NEW FIX FOR "EXCEPTIONAL ITEMS" (continued) ---
             # Calculate the after-tax value of exceptional items
@@ -4828,25 +4834,29 @@ class EnhancedPenmanNissimAnalyzer:
                     debt_to_equity = total_debt / avg_ce.replace(0, np.nan)
                     ratios['Debt to Equity'] = debt_to_equity
             
-            # Net Borrowing Cost (NBC)
-            self.logger.info("\n[PN-RATIOS-NBC] Calculating Net Borrowing Cost...")
-            
-            if 'Net Financial Expense After Tax' in ref_is.index and 'Net Financial Assets' in ref_bs.index:
-                nfe_after_tax = ref_is.loc['Net Financial Expense After Tax']
-                nfa = ref_bs.loc['Net Financial Assets']
-                
-                avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
-                
-                # NBC calculation (when company has net debt, i.e., negative NFA)
-                nbc = pd.Series(index=ref_bs.columns, dtype=float)
-                
-                for year in ref_bs.columns:
-                    if avg_nfa[year] < 0:  # Net debt position
-                        nbc[year] = (nfe_after_tax[year] / -avg_nfa[year]) * 100
-                    else:
-                        nbc[year] = 0  # No borrowing cost if net cash position
-                
-                ratios['Net Borrowing Cost (NBC) %'] = nbc
+                  # Net Borrowing Cost (NBC) - Corrected and more robust code
+                self.logger.info("\n[PN-RATIOS-NBC] Calculating Net Borrowing Cost...")
+        
+                if 'Net Financial Expense After Tax' in ref_is.index and 'Net Financial Assets' in ref_bs.index:
+                    nfe_after_tax = ref_is.loc['Net Financial Expense After Tax']
+                    nfa = ref_bs.loc['Net Financial Assets']
+                    
+                    avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
+                    
+                    # NBC = NFE / Avg Net Financial Obligations (where NFO = -NFA)
+                    # The formula is NFE / -Avg NFA
+                    avg_net_financial_obligations = -avg_nfa
+                    
+                    # Calculate NBC, replacing division by zero or near-zero with NaN
+                    nbc = (nfe_after_tax / avg_net_financial_obligations.replace(0, np.nan)) * 100
+                    
+                    # If a company has net cash (NFO is negative), the borrowing cost is irrelevant.
+                    # We set these values to 0 for simplicity in the Spread calculation.
+                    nbc = nbc.where(avg_net_financial_obligations > 0, 0).fillna(0)
+        
+                    ratios['Net Borrowing Cost (NBC) %'] = nbc
+                else:
+                    self.logger.warning("Could not calculate NBC. Required keys ('Net Financial Expense After Tax' or 'Net Financial Assets') are missing.")
                 
                 # Alternative: Gross borrowing rate
                 if 'Interest Expense' in ref_is.index and 'Total Debt' in ref_bs.index:
@@ -4857,25 +4867,35 @@ class EnhancedPenmanNissimAnalyzer:
                     gross_rate = (interest_expense / avg_debt.replace(0, np.nan)) * 100
                     ratios['Gross Borrowing Rate %'] = gross_rate
             
-            # Spread (RNOA - NBC)
-            self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
-            
-            if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
-                spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - ratios.loc['Net Borrowing Cost (NBC) %']
-                ratios['Spread %'] = spread
-                ratios['Leverage Spread %'] = spread  # Alternative name
-            
-            # ROE and its decomposition
-            self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
-            
-            if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
-                net_income = ref_is.loc['Net Income (Reported)']
-                ce = ref_bs.loc['Common Equity']
-                avg_ce = ce.rolling(window=2, min_periods=1).mean()
-                
-                roe = (net_income / avg_ce.replace(0, np.nan)) * 100
-                ratios['Return on Equity (ROE) %'] = roe
-                
+                # Spread (RNOA - NBC)
+                self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
+                if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
+                    spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - ratios.loc['Net Borrowing Cost (NBC) %']
+                    ratios['Spread %'] = spread
+                    ratios['Leverage Spread %'] = spread
+                    
+                    if 'Return on Net Operating Assets (RNOA) %' in ratios.index and 'Net Borrowing Cost (NBC) %' in ratios.index:
+                        spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - ratios.loc['Net Borrowing Cost (NBC) %']
+                        ratios['Spread %'] = spread
+                        ratios['Leverage Spread %'] = spread  # Alternative name
+                        
+                # ROE and its decomposition
+                self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
+                if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
+                    net_income = ref_is.loc['Net Income (Reported)']
+                    ce = ref_bs.loc['Common Equity']
+                    avg_ce = ce.rolling(window=2, min_periods=1).mean()
+                    roe = (net_income / avg_ce.replace(0, np.nan)) * 100
+                    ratios['Return on Equity (ROE) %'] = roe
+                    
+                    if all(x in ratios.index for x in ['Return on Net Operating Assets (RNOA) %', 'Financial Leverage (FLEV)', 'Spread %']):
+                        rnoa = ratios.loc['Return on Net Operating Assets (RNOA) %']
+                        flev = ratios.loc['Financial Leverage (FLEV)']
+                        spread = ratios.loc['Spread %']
+                        calculated_roe = rnoa + (flev * spread)
+                        ratios['ROE (Calculated) %'] = calculated_roe
+                        metadata['roe_decomposition_diff'] = (roe - calculated_roe).abs().max()
+                        
                 # ROE = RNOA + (FLEV × Spread)
                 if all(x in ratios.index for x in ['Return on Net Operating Assets (RNOA) %', 
                                                    'Financial Leverage (FLEV)', 'Spread %']):

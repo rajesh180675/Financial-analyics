@@ -9458,13 +9458,14 @@ class FinancialAnalyticsPlatform:
             if not tables:
                 self.logger.error("Fallback failed: No tables found in the file.")
                 return None
-
+    
             # Heuristic: The main data table is usually the largest one.
             df = max(tables, key=len)
             self.logger.info(f"Fallback selected the largest table with shape: {df.shape}")
-
-            # --- Data Cleaning and Structuring (from your original logic) ---
-
+    
+            # --- ADD DEBUG 1: Log initial columns ---
+            self.logger.info(f"[DEBUG] Initial columns before any processing: {list(df.columns)}")
+    
             # 1. Handle and collapse MultiIndex columns if they exist
             if isinstance(df.columns, pd.MultiIndex):
                 self.logger.debug("Collapsing MultiIndex columns in fallback.")
@@ -9474,19 +9475,37 @@ class FinancialAnalyticsPlatform:
             
             # 2. General column name cleanup
             df.columns = [str(col).strip().replace('  ', ' ') for col in df.columns]
-            df = df.loc[:, ~df.columns.str.contains('^Unnamed', na=False)]
-
-            # 3. Intelligently find and set the index column
+    
+            # --- ADD DEBUG 2: Log columns after cleanup ---
+            self.logger.info(f"[DEBUG] Columns after cleanup: {list(df.columns)}")
+    
+            # 3. Modified: Drop unnamed columns, but preserve those that look like years
+            columns_to_keep = []
+            for col in df.columns:
+                col_str = str(col)
+                # Keep if it's NOT unnamed OR if it contains a year pattern (4-digit or 6-digit)
+                if not col_str.startswith('Unnamed') or re.search(r'(20\d{2}|19\d{2}|20\d{4}|19\d{4})', col_str):
+                    columns_to_keep.append(col)
+                else:
+                    self.logger.info(f"[DEBUG] Dropping unnamed non-year column: {col}")
+    
+            df = df[columns_to_keep]
+    
+            # --- ADD DEBUG 3: Log columns after dropping unnamed ---
+            self.logger.info(f"[DEBUG] Columns after dropping unnamed (preserving years): {list(df.columns)}")
+            self.logger.info(f"[DEBUG] Number of columns after drop: {len(df.columns)}")
+    
+            # 4. Intelligently find and set the index column
             # This is often the first column containing descriptive text.
             potential_index_cols = ['Particulars', 'Description', 'Items', 'Metric']
             index_col_found = False
-
+    
             for col_name in potential_index_cols:
                 # Find columns that contain the potential index name
                 matching_cols = [c for c in df.columns if col_name.lower() in str(c).lower()]
                 if matching_cols:
                     df = df.set_index(matching_cols[0])
-                    df.index.name = "Particulars" # Standardize index name
+                    df.index.name = "Particulars"  # Standardize index name
                     index_col_found = True
                     self.logger.debug(f"Set index to column: {matching_cols[0]}")
                     break
@@ -9497,21 +9516,37 @@ class FinancialAnalyticsPlatform:
                     self.logger.debug("Using the first column as the index as a last resort.")
                     df = df.set_index(df.columns[0])
                     df.index.name = "Particulars"
-
-            # 4. Remove rows and columns that are entirely empty
+    
+            # --- ADD DEBUG 4: Log after setting index ---
+            self.logger.info(f"[DEBUG] Columns after setting index: {list(df.columns)}")
+    
+            # 5. Remove rows and columns that are entirely empty
+            before_shape = df.shape
             df = df.dropna(how='all').dropna(axis=1, how='all')
-
+            after_shape = df.shape
+    
+            # --- ADD DEBUG 5: Log after dropna ---
+            self.logger.info(f"[DEBUG] Shape before dropna: {before_shape}")
+            self.logger.info(f"[DEBUG] Shape after dropna: {after_shape}")
+            self.logger.info(f"[DEBUG] Columns after dropna: {list(df.columns)}")
+    
             if df.empty:
                 self.logger.error("Fallback failed: DataFrame is empty after cleaning.")
                 return None
-
+    
+            # --- ADD FINAL CHECK: Verify expected number of year columns ---
+            year_columns = [col for col in df.columns if re.search(r'(20\d{2}|19\d{2}|20\d{4}|19\d{4})', str(col))]
+            self.logger.info(f"[DEBUG] Detected year columns: {year_columns}")
+            if len(year_columns) < 10:  # Assuming you expect 10 years
+                self.logger.warning(f"[DEBUG] Expected at least 10 year columns, but found {len(year_columns)}. Possible data loss!")
+    
             self.logger.info(f"Fallback parsing successful. Final shape: {df.shape}")
             return df
-
+    
         except Exception as e:
             self.logger.error(f"Error during single-table fallback parsing: {e}", exc_info=True)
             return None
-
+        
     def _validate_and_repair_parsed_data(self, df: pd.DataFrame, file_or_content: Union[UploadedFile, io.BytesIO]) -> pd.DataFrame:
         """
         [ROBUST IMPLEMENTATION] Validates the initial parsed DataFrame for common catastrophic

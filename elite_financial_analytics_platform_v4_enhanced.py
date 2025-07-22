@@ -3654,22 +3654,17 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger = LoggerFactory.get_logger('PenmanNissim')
         self.validation_results = {}
         self.calculation_metadata = {}
-        self.calculation_cache = {}
+        self.calculation_cache = {}  # Cache for expensive calculations
         
         # CRITICAL: Restructure data ONCE and store it
         self._df_clean = None
         self._ensure_clean_data()
         
-        # NEW: Validate the restructuring immediately
-        if not self.validate_restructured_data():
-            self.logger.error("Data restructuring validation failed!")
-            # You might want to raise an exception here or handle the error
-        
         # Store reformulated statements for reuse
         self._cached_bs = None
         self._cached_is = None
         
-        self.core_analyzer = None
+        self.core_analyzer = None  # Don't use core analyzer due to NotImplemented error
         self._validate_input_data()
 
     def _ensure_clean_data(self):
@@ -3689,307 +3684,204 @@ class EnhancedPenmanNissimAnalyzer:
     
     def _restructure_for_penman_nissim_v5(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Version 5: COMPLETE FIX - Ensures correct column extraction by statement type
+        Version 5: Ultimate restructuring with comprehensive debugging and data preservation
         """
         self.logger.info("\n" + "#"*80)
-        self.logger.info("[PN-RESTRUCTURE-V5-FIXED] Starting corrected data restructuring")
-        self.logger.info(f"[PN-RESTRUCTURE-V5-FIXED] Input shape: {df.shape}")
+        self.logger.info("[PN-RESTRUCTURE-V5] Starting ULTIMATE data restructuring with debugging")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Input shape: {df.shape}")
         self.logger.info("#"*80)
+    
+        # DEBUG: Log sample of original data
+        self.logger.info("[PN-DEBUG] Sample of original data structure:")
+        self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
+        self.logger.info(f"  Index sample: {list(df.index)[:10]}...")
         
-        # Log the actual column structure for debugging
-        self.logger.info("[PN-DEBUG] Column structure analysis:")
-        for i, col in enumerate(df.columns):
-            if i < 3 or i in [8, 9, 17, 18, 26]:  # Show boundaries
-                self.logger.info(f"  Column {i}: {str(col)[:100]}...")
+        # Look for CapEx specifically in original data
+        capex_items = [idx for idx in df.index if any(kw in str(idx).lower() 
+                       for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset'])]
+        self.logger.info(f"[PN-DEBUG] Found {len(capex_items)} potential CapEx items in original data:")
+        for item in capex_items[:5]:
+            self.logger.info(f"  - {item}")
+    
+        # 1. Enhanced year pattern matching with debugging
+        year_patterns = [
+            (re.compile(r'(\d{6})'), 'YYYYMM', lambda m: m.group(1), 1),
+            (re.compile(r'(\d{4})(?!\d)'), 'YYYY', lambda m: m.group(1) + '03', 2),
+            (re.compile(r'FY\s*(\d{4})'), 'FY YYYY', lambda m: m.group(1) + '03', 2),
+            (re.compile(r'(\d{4})-(\d{2})'), 'YYYY-YY', lambda m: m.group(1) + '03', 3),
+            (re.compile(r'Mar[- ](\d{2})'), 'Mar-YY', lambda m: '20' + m.group(1) + '03', 4),
+            (re.compile(r'March[- ](\d{4})'), 'March YYYY', lambda m: m.group(1) + '03', 3),
+        ]
         
-        # CRITICAL: Your data has 27 columns structured as:
-        # Columns 0-8 (indices 0:9): Profit & Loss
-        # Columns 9-17 (indices 9:18): Balance Sheet  
-        # Columns 18-26 (indices 18:27): Cash Flow
+        # Extract years with detailed logging
+        all_years = set()
+        year_to_columns = defaultdict(list)
+        column_metadata = {}
         
-        # Extract years from the first 9 columns (P&L section)
-        years = []
-        for i in range(9):
-            col_str = str(df.columns[i])
-            # Look for year pattern (201603, 201703, etc.)
-            year_match = re.search(r'(\d{6})', col_str)
-            if year_match:
-                years.append(year_match.group(1))
+        self.logger.info("[PN-DEBUG] Analyzing column structure:")
+        for col in df.columns:
+            col_str = str(col)
+            self.logger.debug(f"  Processing column: {col_str}")
+            
+            best_match = None
+            best_priority = 999
+            
+            for pattern, pattern_name, extractor, priority in year_patterns:
+                match = pattern.search(col_str)
+                if match and priority < best_priority:
+                    try:
+                        normalized_year = extractor(match)
+                        year_int = int(normalized_year[:4])
+                        if 2000 <= year_int <= 2099:
+                            best_match = (normalized_year, pattern_name)
+                            best_priority = priority
+                            self.logger.debug(f"    Matched pattern {pattern_name}: {normalized_year}")
+                    except Exception as e:
+                        self.logger.debug(f"    Pattern {pattern_name} failed: {e}")
+                        continue
+            
+            if best_match:
+                normalized_year, pattern_name = best_match
+                all_years.add(normalized_year)
+                year_to_columns[normalized_year].append(col)
+                column_metadata[col] = {
+                    'year': normalized_year,
+                    'pattern': pattern_name,
+                    'priority': best_priority
+                }
+                self.logger.debug(f"    Final mapping: {col} -> {normalized_year}")
             else:
-                # Try alternative patterns
-                year_match = re.search(r'(\d{4})(?!\d)', col_str)
-                if year_match:
-                    years.append(year_match.group(1) + '03')
+                self.logger.warning(f"    No year pattern found for column: {col}")
         
-        self.logger.info(f"[PN-RESTRUCTURE-V5-FIXED] Extracted years: {years}")
+        final_columns = sorted(list(all_years))
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Extracted {len(final_columns)} unique years: {final_columns}")
         
-        # Create the restructured DataFrame
-        restructured = pd.DataFrame(index=df.index, columns=years, dtype=np.float64)
+        # 2. Create restructured DataFrame with comprehensive tracking
+        restructured = pd.DataFrame(index=df.index, columns=final_columns, dtype=np.float64)
         
-        # Statistics tracking
-        stats = {
-            'total_rows': len(df),
-            'pl_items': 0,
-            'bs_items': 0,
-            'cf_items': 0,
-            'errors': 0,
-            'interest_expense_found': False,
-            'capex_items_found': []
+        # Track data transfer statistics
+        transfer_stats = {
+            'total_attempts': 0,
+            'successful_transfers': 0,
+            'failed_transfers': 0,
+            'zero_values': 0,
+            'null_values': 0,
+            'capex_transfers': 0
         }
         
-        # Process each row with STRICT column extraction
+        # 3. Enhanced data extraction with preservation focus
+        self.logger.info("[PN-DEBUG] Starting data transfer process...")
+        
         for idx in df.index:
             idx_str = str(idx)
+            is_capex = any(kw in idx_str.lower() for kw in ['capex', 'capital expenditure', 'purchase', 'fixed asset'])
             
-            # CRITICAL LOGIC: Determine columns based on prefix
-            col_start = None
-            col_end = None
-            statement_type = None
+            if is_capex:
+                self.logger.info(f"[PN-CAPEX-TRANSFER] Processing CapEx item: {idx_str}")
             
-            # Check prefix to determine statement type
-            if idx_str.startswith('ProfitLoss::'):
-                col_start, col_end = 0, 9
-                statement_type = 'ProfitLoss'
-                stats['pl_items'] += 1
-            elif idx_str.startswith('BalanceSheet::'):
-                col_start, col_end = 9, 18
-                statement_type = 'BalanceSheet'
-                stats['bs_items'] += 1
-            elif idx_str.startswith('CashFlow::'):
-                col_start, col_end = 18, 27
-                statement_type = 'CashFlow'
-                stats['cf_items'] += 1
-            else:
-                # No clear prefix - need to infer
-                self.logger.warning(f"[PN-RESTRUCTURE] No prefix for '{idx}', inferring type...")
-                
-                # Infer based on keywords
-                idx_lower = idx_str.lower()
-                if any(kw in idx_lower for kw in ['revenue', 'expense', 'profit', 'loss', 'income', 'cost', 'tax']):
-                    col_start, col_end = 0, 9
-                    statement_type = 'ProfitLoss'
-                    stats['pl_items'] += 1
-                elif any(kw in idx_lower for kw in ['asset', 'liability', 'equity', 'capital', 'debt']):
-                    col_start, col_end = 9, 18
-                    statement_type = 'BalanceSheet'
-                    stats['bs_items'] += 1
-                elif any(kw in idx_lower for kw in ['cash flow', 'cash from', 'operating activities']):
-                    col_start, col_end = 18, 27
-                    statement_type = 'CashFlow'
-                    stats['cf_items'] += 1
-                else:
-                    self.logger.error(f"[PN-RESTRUCTURE] Cannot determine type for '{idx}'")
-                    stats['errors'] += 1
-                    continue
+            # Determine statement type
+            statement_type = self._determine_statement_type_v2(idx_str)
             
-            # Extract values from the CORRECT columns
-            try:
-                raw_values = df.loc[idx].iloc[col_start:col_end].values
+            for year in final_columns:
+                transfer_stats['total_attempts'] += 1
                 
-                # Special logging for critical items
-                if 'finance cost' in idx_lower or 'interest expense' in idx_lower:
-                    stats['interest_expense_found'] = True
-                    self.logger.info(f"[PN-CRITICAL] Interest Expense item: {idx}")
-                    self.logger.info(f"  Extracting from {statement_type} columns [{col_start}:{col_end}]")
-                    self.logger.info(f"  Raw values: {raw_values}")
+                # Get potential source columns for this year
+                source_columns = year_to_columns[year]
                 
-                if 'purchases of stock' in idx_lower:
-                    self.logger.warning(f"[PN-CHECK] Purchases of Stock-in-Trade: {idx}")
-                    self.logger.warning(f"  Statement type: {statement_type}")
-                    self.logger.warning(f"  Column range: [{col_start}:{col_end}]")
-                    self.logger.warning(f"  Raw values: {raw_values}")
+                # Prioritize columns
+                prioritized_columns = self._prioritize_columns_v2(
+                    source_columns, statement_type, column_metadata
+                )
                 
-                if any(kw in idx_lower for kw in ['capex', 'capital expenditure', 'purchase of fixed']):
-                    stats['capex_items_found'].append(idx)
-                
-                # Convert to numeric values
-                numeric_values = []
-                for i, val in enumerate(raw_values):
+                # Extract value with enhanced preservation
+                original_values = []
+                for col in prioritized_columns:
                     try:
-                        if pd.isna(val) or str(val).strip() in ['-', '--', 'NA', 'N/A', '', 'nil', 'Nil']:
-                            numeric_values.append(np.nan)
-                        else:
-                            # Clean the value
-                            if isinstance(val, str):
-                                cleaned = (val.replace(',', '')
-                                             .replace('(', '-')
-                                             .replace(')', '')
-                                             .replace('₹', '')
-                                             .replace('$', '')
-                                             .replace('Rs', '')
-                                             .replace('rs', '')
-                                             .strip())
-                                numeric_values.append(float(cleaned))
-                            else:
-                                numeric_values.append(float(val))
+                        val = df.loc[idx, col]
+                        if pd.notna(val):
+                            original_values.append((col, val))
                     except Exception as e:
-                        self.logger.debug(f"Could not convert value {val} at position {i}: {e}")
-                        numeric_values.append(np.nan)
+                        self.logger.debug(f"Error accessing {idx}[{col}]: {e}")
                 
-                # VALIDATION: Check for the problematic Balance Sheet values in P&L items
-                if statement_type == 'ProfitLoss' and len(numeric_values) > 0:
-                    # These are the Balance Sheet values that should NOT appear in P&L
-                    problematic_bs_values = [214.68, 220.83, 229.3, 213.71, 199.75, 206.01, 205.42, 590.49, 315.24]
+                if is_capex and original_values:
+                    self.logger.debug(f"[PN-CAPEX-TRANSFER] {idx_str} in {year}: found {len(original_values)} values: {original_values}")
+                
+                # Select best value with detailed logging
+                if original_values:
+                    # Use first non-zero value, or first value if all are zero
+                    selected_value = None
+                    selected_col = None
                     
-                    for val in numeric_values:
-                        if pd.notna(val) and any(abs(val - prob) < 0.01 for prob in problematic_bs_values):
-                            self.logger.error(f"[PN-ERROR] P&L item '{idx}' contains Balance Sheet value {val}!")
-                            self.logger.error(f"  This indicates WRONG COLUMN EXTRACTION!")
-                            # Don't use these values - they're wrong
-                            numeric_values = [np.nan] * len(numeric_values)
-                            break
-                
-                # Store the values
-                restructured.loc[idx] = numeric_values
-                
-            except Exception as e:
-                self.logger.error(f"[PN-ERROR] Failed to process {idx}: {e}")
-                stats['errors'] += 1
+                    for col, val in original_values:
+                        try:
+                            # Parse the value
+                            if isinstance(val, str):
+                                # Clean string value
+                                val_clean = (val.replace(',', '')
+                                               .replace('(', '-')
+                                               .replace(')', '')
+                                               .replace('₹', '')
+                                               .replace('$', '')
+                                               .strip())
+                                
+                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil', '']:
+                                    continue
+                                
+                                numeric_val = float(val_clean)
+                            else:
+                                numeric_val = float(val)
+                            
+                            # Select first non-zero value, or first value if no non-zero found
+                            if selected_value is None or (numeric_val != 0 and selected_value == 0):
+                                selected_value = numeric_val
+                                selected_col = col
+                                
+                        except Exception as e:
+                            self.logger.debug(f"Failed to parse {val} from {col}: {e}")
+                            continue
+                    
+                    if selected_value is not None:
+                        # Apply data quality rules but preserve the value
+                        cleaned_value, stats = self._apply_comprehensive_quality_rules(
+                            selected_value, idx_str, year, statement_type
+                        )
+                        
+                        if cleaned_value is not None:
+                            restructured.loc[idx, year] = cleaned_value
+                            transfer_stats['successful_transfers'] += 1
+                            
+                            if is_capex:
+                                transfer_stats['capex_transfers'] += 1
+                                self.logger.info(f"[PN-CAPEX-TRANSFER] Successfully transferred {idx_str}[{year}] = {cleaned_value} from {selected_col}")
+                        else:
+                            transfer_stats['failed_transfers'] += 1
+                            if is_capex:
+                                self.logger.warning(f"[PN-CAPEX-TRANSFER] Failed quality check for {idx_str}[{year}] = {selected_value}")
+                    else:
+                        transfer_stats['null_values'] += 1
+                else:
+                    transfer_stats['null_values'] += 1
+                    if is_capex:
+                        self.logger.warning(f"[PN-CAPEX-TRANSFER] No values found for {idx_str} in {year}")
         
-        # Remove completely empty rows
-        before_drop = len(restructured)
-        restructured = restructured.dropna(how='all')
-        after_drop = len(restructured)
+        # 4. Post-processing with data preservation
+        self.logger.info("[PN-DEBUG] Starting post-processing...")
+        original_non_null = restructured.notna().sum().sum()
         
-        # Final validation and statistics
-        self.logger.info("\n[PN-RESTRUCTURE-V5-FIXED] Restructuring complete:")
-        self.logger.info(f"  Total rows processed: {stats['total_rows']}")
-        self.logger.info(f"  P&L items: {stats['pl_items']}")
-        self.logger.info(f"  Balance Sheet items: {stats['bs_items']}")
-        self.logger.info(f"  Cash Flow items: {stats['cf_items']}")
-        self.logger.info(f"  Errors: {stats['errors']}")
-        self.logger.info(f"  Empty rows removed: {before_drop - after_drop}")
-        self.logger.info(f"  Interest Expense found: {stats['interest_expense_found']}")
-        self.logger.info(f"  CapEx items found: {len(stats['capex_items_found'])}")
+        restructured = self._conservative_post_processing(restructured, transfer_stats)
         
-        # Specific validation for Interest Expense
-        if stats['interest_expense_found']:
-            for idx in restructured.index:
-                if 'finance cost' in str(idx).lower():
-                    values = restructured.loc[idx]
-                    self.logger.info(f"[PN-VALIDATE] Final Interest Expense values: {values.to_dict()}")
-                    # Should be zeros or small values, not 214.68, etc.
-                    if (values > 100).any():
-                        self.logger.error("[PN-VALIDATE] Interest Expense values seem too high!")
+        final_non_null = restructured.notna().sum().sum()
+        self.logger.info(f"[PN-DEBUG] Post-processing: {original_non_null} -> {final_non_null} non-null values")
         
-        self.logger.info(f"[PN-RESTRUCTURE-V5-FIXED] Final shape: {restructured.shape}")
+        # 5. Comprehensive validation and reporting
+        self._detailed_validation_report(restructured, transfer_stats, capex_items)
+        
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Complete. Final shape: {restructured.shape}")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] Transfer success rate: {transfer_stats['successful_transfers']}/{transfer_stats['total_attempts']} ({transfer_stats['successful_transfers']/transfer_stats['total_attempts']*100:.1f}%)")
+        self.logger.info(f"[PN-RESTRUCTURE-V5] CapEx transfers: {transfer_stats['capex_transfers']}")
         self.logger.info("#"*80 + "\n")
         
         return restructured
-
-    def validate_restructured_data(self):
-        """Validate that restructuring worked correctly"""
-        self.logger.info("\n[PN-VALIDATE-RESTRUCTURE] Validating restructured data...")
-        
-        issues = []
-        
-        # Check 1: P&L items should not have Balance Sheet values
-        problematic_bs_values = [214.68, 220.83, 229.3, 213.71, 199.75, 206.01, 205.42, 590.49, 315.24]
-        
-        for idx in self._df_clean.index:
-            if 'ProfitLoss::' in str(idx):
-                values = self._df_clean.loc[idx].dropna().values
-                for val in values:
-                    if any(abs(val - prob) < 0.01 for prob in problematic_bs_values):
-                        issues.append(f"P&L item '{idx}' contains Balance Sheet value {val}")
-                        break
-        
-        # Check 2: Interest Expense should be reasonable
-        interest_items = [idx for idx in self._df_clean.index if 'finance cost' in str(idx).lower()]
-        for idx in interest_items:
-            values = self._df_clean.loc[idx].dropna()
-            if len(values) > 0 and values.max() > 100:
-                issues.append(f"Interest Expense '{idx}' has unreasonably high values: max={values.max()}")
-        
-        # Check 3: Total Assets/Liabilities/Equity should be in Balance Sheet section
-        for metric in ['Total Assets', 'Total Liabilities', 'Total Equity']:
-            source = self._find_source_metric(metric)
-            if source and 'BalanceSheet::' not in source:
-                issues.append(f"{metric} is mapped to non-Balance Sheet item: {source}")
-        
-        # Report results
-        if issues:
-            self.logger.error(f"[PN-VALIDATE-RESTRUCTURE] Found {len(issues)} issues:")
-            for issue in issues:
-                self.logger.error(f"  - {issue}")
-            return False
-        else:
-            self.logger.info("[PN-VALIDATE-RESTRUCTURE] All validations passed ✓")
-            return True
-        
-    def validate_column_extraction(self):
-        """Validate that metrics are extracted from correct columns"""
-        self.logger.info("\n[PN-VALIDATE-COLUMNS] Checking column extraction...")
-        
-        # Known problematic values that appear in wrong places
-        problematic_values = [214.68, 220.83, 229.3, 213.71, 199.75]
-        
-        for idx in self._df_clean.index:
-            if idx.startswith('ProfitLoss::'):
-                values = self._df_clean.loc[idx].values
-                
-                # Check if P&L item has these Balance Sheet values
-                for prob_val in problematic_values:
-                    if any(abs(v - prob_val) < 0.01 for v in values if pd.notna(v)):
-                        self.logger.error(f"[VALIDATE] {idx} contains Balance Sheet value {prob_val}!")
-                        self.logger.error(f"  This P&L item is using wrong columns!")
-                        break
-                    
-    def _infer_statement_type(self, idx_str: str) -> str:
-        """Infer statement type when no clear prefix exists"""
-        idx_lower = idx_str.lower()
-        
-        # P&L keywords
-        if any(kw in idx_lower for kw in ['revenue', 'expense', 'profit', 'loss', 'income', 'cost', 'ebit']):
-            return 'ProfitLoss'
-        
-        # Balance Sheet keywords
-        elif any(kw in idx_lower for kw in ['asset', 'liability', 'equity', 'capital', 'debt', 'receivable', 'payable']):
-            return 'BalanceSheet'
-        
-        # Cash Flow keywords
-        elif any(kw in idx_lower for kw in ['cash flow', 'cash from', 'cash used', 'operating activities']):
-            return 'CashFlow'
-        
-        return 'Unknown'
-
-    def _validate_restructured_data(self) -> bool:
-        """
-        Validate that data restructuring worked correctly
-        """
-        self.logger.info("\n[PN-VALIDATE] Validating restructured data...")
-        
-        valid = True
-        
-        # 1. Check Interest Expense
-        for idx in self._df_clean.index:
-            if 'finance cost' in str(idx).lower():
-                values = self._df_clean.loc[idx]
-                self.logger.info(f"[PN-VALIDATE] Interest Expense values: {values.to_dict()}")
-                # Should be zeros or small values
-                if (values > 100).any():
-                    self.logger.error(f"[PN-VALIDATE] Interest Expense too high in {idx}")
-                    valid = False
-        
-        # 2. Check Total Assets and Equity are from BS section
-        bs_items = ['Total Assets', 'Total Equity']
-        for item in bs_items:
-            source = self._find_source_metric(item)
-            if source and not source.startswith('BalanceSheet::'):
-                self.logger.error(f"[PN-VALIDATE] {item} mapped to non-BS item: {source}")
-                valid = False
-        
-        # 3. Check P&L items don't have BS values
-        problematic_values = [214.68, 220.83, 229.3, 213.71, 199.75]
-        for idx in self._df_clean.index:
-            if idx.startswith('ProfitLoss::'):
-                values = self._df_clean.loc[idx]
-                for val in values:
-                    if pd.notna(val) and any(abs(val - prob) < 0.01 for prob in problematic_values):
-                        self.logger.error(f"[PN-VALIDATE] P&L item {idx} has BS value {val}")
-                        valid = False
-        
-        return valid
     
     def _conservative_post_processing(self, df: pd.DataFrame, stats: Dict) -> pd.DataFrame:
         """Conservative post-processing that preserves data"""
@@ -4500,16 +4392,16 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.debug(f"{'*'*60}\n")
 
     def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced balance sheet reformulation - FIXED with proper liability handling"""
+        """Enhanced balance sheet reformulation - ALWAYS uses cached clean data"""
         # Use cached result if available
         if self._cached_bs is not None:
             return self._cached_bs
         
-        # ALWAYS use clean data
+        # ALWAYS use clean data, ignore parameter
         df = self._df_clean
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V5 FIXED)")
+        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V5)")
         self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
@@ -4525,18 +4417,17 @@ class EnhancedPenmanNissimAnalyzer:
             self._log_metric_fetch('Total Equity', self._find_source_metric('Total Equity'), 
                                   total_equity, "Core BS Item")
             
-            # CRITICAL FIX: Total Liabilities with proper fallback
-            total_liabilities = self._get_safe_series(df, 'Total Liabilities')
-            
-            # Validate liabilities
-            if (total_liabilities == 0).all():
-                self.logger.warning("[PN-BS] Total Liabilities is zero, calculating from Assets - Equity")
-                total_liabilities = total_assets - total_equity
-                metadata['liabilities_source'] = 'calculated'
-            else:
+            # Total Liabilities - try to find explicit first
+            total_liabilities = None
+            try:
+                total_liabilities = self._get_safe_series(df, 'Total Liabilities')
+                self.logger.info("[PN-BS] Found explicit Total Liabilities")
                 metadata['liabilities_source'] = 'explicit'
-            
-            self.logger.info(f"[PN-BS] Total Liabilities: {total_liabilities.to_dict()}")
+            except:
+                # Calculate from accounting equation
+                total_liabilities = total_assets - total_equity
+                self.logger.info("[PN-BS] Calculated Total Liabilities = Assets - Equity")
+                metadata['liabilities_source'] = 'calculated'
             
             # Current items
             current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
@@ -4545,38 +4436,76 @@ class EnhancedPenmanNissimAnalyzer:
             # Cash and investments
             cash = self._get_safe_series(df, 'Cash and Cash Equivalents', default_zero=True)
             if (cash == 0).all():
+                # Try alternative name
                 cash = self._get_safe_series(df, 'Cash', default_zero=True)
             
             investments = self._get_safe_series(df, 'Investments', default_zero=True)
             if (investments == 0).all():
                 investments = self._get_safe_series(df, 'Short-term Investments', default_zero=True)
             
-            # Debt identification - FIXED
-            short_term_debt = self._get_safe_series(df, 'Short-term Debt', default_zero=True)
-            long_term_debt = self._get_safe_series(df, 'Long-term Debt', default_zero=True)
+            # CRITICAL: Proper debt identification
+            short_term_debt = pd.Series(0, index=df.columns)
+            long_term_debt = pd.Series(0, index=df.columns)
+            
+            # Explicit debt items only
+            debt_found = False
+            
+            # Short-term debt
+            st_debt_items = [
+                'Short-term Debt', 'Short Term Borrowings', 'Current Borrowings',
+                'Short-term Borrowings', 'Current Debt', 'Short Term Debt'
+            ]
+            
+            for item in st_debt_items:
+                try:
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        short_term_debt = debt_series
+                        metadata['short_term_debt_source'] = item
+                        self.logger.info(f"[PN-BS] Found short-term debt from: {item}")
+                        debt_found = True
+                        break
+                except:
+                    continue
+            
+            # Long-term debt
+            lt_debt_items = [
+                'Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings',
+                'Long-term Borrowings', 'Non-current Debt', 'Long Term Debt'
+            ]
+            
+            for item in lt_debt_items:
+                try:
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        long_term_debt = debt_series
+                        metadata['long_term_debt_source'] = item
+                        self.logger.info(f"[PN-BS] Found long-term debt from: {item}")
+                        debt_found = True
+                        break
+                except:
+                    continue
             
             # Total debt calculation
             total_debt = short_term_debt + long_term_debt
             
+            if not debt_found:
+                self.logger.warning("[PN-BS] No explicit debt found - company may be debt-free")
+                metadata['debt_status'] = 'debt_free'
+            
             # Financial items classification
             financial_assets = cash + investments
-            financial_liabilities = total_debt
+            financial_liabilities = total_debt  # Only actual debt
             
             # Net financial position
             net_financial_assets = financial_assets - financial_liabilities
             
-            # CRITICAL FIX: Operating items calculation
+            # Operating items (residual approach)
             operating_assets = total_assets - financial_assets
+            operating_liabilities = total_liabilities - financial_liabilities
             
-            # Operating liabilities - use current liabilities minus short-term debt as proxy
-            operating_liabilities = current_liabilities - short_term_debt
-            
-            # If operating liabilities is negative or zero, use a different approach
-            if (operating_liabilities <= 0).any():
-                self.logger.warning("[PN-BS] Operating liabilities calculation issue, using alternative method")
-                # Alternative: Total liabilities minus financial liabilities
-                operating_liabilities = total_liabilities - financial_liabilities
-                operating_liabilities = operating_liabilities.clip(lower=0)
+            # Ensure non-negative operating liabilities
+            operating_liabilities = operating_liabilities.clip(lower=0)
             
             # Net Operating Assets (NOA) - key metric
             net_operating_assets = operating_assets - operating_liabilities
@@ -4631,18 +4560,16 @@ class EnhancedPenmanNissimAnalyzer:
         return self._cached_bs
 
     def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Enhanced income statement reformulation with FIXED interest expense handling
-        """
+        """Enhanced income statement reformulation - ALWAYS uses cached clean data"""
         # Use cached result if available
         if self._cached_is is not None:
             return self._cached_is
         
-        # ALWAYS use clean data
+        # ALWAYS use clean data, ignore parameter
         df = self._df_clean
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation (V5 FIXED)")
+        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation (V5)")
         self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
@@ -4686,7 +4613,7 @@ class EnhancedPenmanNissimAnalyzer:
             
             reformulated['Operating Income Before Tax'] = operating_income
             
-            # CRITICAL FIX: Tax calculation
+            # Tax calculation - CRITICAL
             try:
                 tax_expense = self._get_safe_series(df, 'Tax Expense')
                 income_before_tax = self._get_safe_series(df, 'Income Before Tax')
@@ -4699,9 +4626,9 @@ class EnhancedPenmanNissimAnalyzer:
                         # Standard calculation
                         rate = tax_expense[year] / income_before_tax[year]
                         # Sanity check - corporate tax rates typically 15-40%
-                        tax_rate[year] = max(0.15, min(0.40, rate))
+                        tax_rate[year] = max(0.0, min(0.40, rate))
                     else:
-                        # Default rate if can't calculate
+                        # Default rate
                         tax_rate[year] = 0.25
                 
                 reformulated['Tax Rate'] = tax_rate
@@ -4726,24 +4653,8 @@ class EnhancedPenmanNissimAnalyzer:
                 reformulated['Operating Income After Tax'] = operating_income * (1 - tax_rate)
                 metadata['tax_calculation'] = 'default'
             
-            # CRITICAL FIX: Financial items
-            # Interest Expense should be from ProfitLoss::Finance Cost ONLY
+            # Financial items
             interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
-            
-            # Validate interest expense
-            if (interest_expense > 100).any():
-                self.logger.error(f"[PN-IS] Interest expense too high: {interest_expense.to_dict()}")
-                self.logger.info("[PN-IS] Attempting to find correct Finance Cost...")
-                
-                # Try to find the correct Finance Cost
-                for idx in df.index:
-                    if 'Finance Cost' in idx and 'ProfitLoss::' in idx:
-                        temp_series = df.loc[idx]
-                        if (temp_series <= 100).all():  # Reasonable values
-                            interest_expense = temp_series
-                            self.logger.info(f"[PN-IS] Found correct Finance Cost at {idx}")
-                            break
-            
             interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             
             # Net Financial Expense
@@ -4760,7 +4671,7 @@ class EnhancedPenmanNissimAnalyzer:
             # Net Income reconciliation
             net_income = self._get_safe_series(df, 'Net Income')
             calculated_net_income = (reformulated['Operating Income After Tax'] - 
-                                   reformulated['Net Financial Expense After Tax'])
+                                    reformulated['Net Financial Expense After Tax'])
             
             reformulated['Net Income (Reported)'] = net_income
             reformulated['Net Income (Calculated)'] = calculated_net_income
@@ -4769,19 +4680,18 @@ class EnhancedPenmanNissimAnalyzer:
             income_diff = (net_income - calculated_net_income).abs().max()
             metadata['income_reconciliation_diff'] = income_diff
             
-            if income_diff > 1:  # More than 1 unit difference
-                self.logger.warning(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
-                self.logger.warning(f"[PN-IS-CHECK] Reported vs Calculated:")
+            if income_diff > 0.01:  # More than 1 cent difference
+                self.logger.info(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
+                self.logger.info(f"[PN-IS-CHECK] Reported vs Calculated:")
                 for year in df.columns:
                     if pd.notna(net_income[year]):
-                        self.logger.warning(f"  {year}: {net_income[year]:,.2f} vs {calculated_net_income[year]:,.2f}")
+                        self.logger.debug(f"  {year}: {net_income[year]:,.2f} vs {calculated_net_income[year]:,.2f}")
             
             # Summary
             self.logger.info("\n[PN-IS-SUMMARY] Income Statement Reformulation Summary:")
             self.logger.info(f"  Revenue: {revenue.sum():,.0f}")
             self.logger.info(f"  Operating Income: {operating_income.sum():,.0f}")
             self.logger.info(f"  NOPAT: {reformulated['Operating Income After Tax'].sum():,.0f}")
-            self.logger.info(f"  Interest Expense: {interest_expense.sum():,.0f}")
             self.logger.info(f"  Net Income: {net_income.sum():,.0f}")
             
         except Exception as e:
@@ -4797,7 +4707,6 @@ class EnhancedPenmanNissimAnalyzer:
         self._cached_is = reformulated.T
         return self._cached_is
 
-    
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced ratio calculations - uses cached reformulated statements"""
         self.logger.info("\n" + "="*80)
@@ -5201,20 +5110,220 @@ class EnhancedPenmanNissimAnalyzer:
     # PASTE THIS CODE: Replace the _get_safe_series method in the EnhancedPenmanNissimAnalyzer class
 
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """
-        DEFINITIVE FIX: Combines original extensive patterns with targeted fixes
-        """
-        self.logger.info(f"\n[PN-FETCH] Searching for: '{target_metric}'")
+        """Enhanced safe series retrieval with comprehensive Capital Expenditure detection"""
+        self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
         
-        # 1. Try direct mapping first (if available)
+        # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
         if source_metric and source_metric in df.index:
-            self.logger.info(f"[PN-FETCH] Found '{target_metric}' via direct mapping to '{source_metric}'")
-            return df.loc[source_metric].fillna(0 if default_zero else np.nan)
-    
-        # 2. Handle special cases with calculation fallbacks FIRST
-    
-        # CRITICAL FIX: Total Liabilities
+            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
+            self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
+            self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
+            return series
+        
+        # Enhanced search patterns with ALL possible variations
+        search_patterns = {
+            'Capital Expenditure': [
+                # Direct variations
+                'CashFlow::Capital Expenditure',
+                'CashFlow::Capital Expenditures', 
+                'CashFlow::CAPEX',
+                'CashFlow::Capex',
+                'CashFlow::CapEx',
+                
+                # Purchase variations (most common)
+                'CashFlow::Purchase of Fixed Assets',
+                'CashFlow::Purchased of Fixed Assets',  # Common typo
+                'CashFlow::Purchase of Property Plant and Equipment',
+                'CashFlow::Purchase of Property, Plant and Equipment',
+                'CashFlow::Purchases of Fixed Assets',
+                'CashFlow::Purchase of PPE',
+                'CashFlow::Purchase of Plant and Equipment',
+                'CashFlow::Purchase of Tangible Assets',
+                
+                # Investment variations
+                'CashFlow::Purchase of Investments',
+                'CashFlow::Investment in Fixed Assets',
+                'CashFlow::Investments in Fixed Assets',
+                'CashFlow::Investment in Property Plant and Equipment',
+                'CashFlow::Investment in PPE',
+                
+                # Addition variations
+                'CashFlow::Additions to Fixed Assets',
+                'CashFlow::Addition to Fixed Assets',
+                'CashFlow::Additions to Property Plant and Equipment',
+                'CashFlow::Additions to PPE',
+                'CashFlow::Net Additions to Fixed Assets',
+                
+                # Acquisition variations
+                'CashFlow::Acquisition of Fixed Assets',
+                'CashFlow::Acquisition of Property Plant and Equipment',
+                'CashFlow::Asset Acquisitions',
+                'CashFlow::Fixed Asset Acquisitions',
+                
+                # Payment variations
+                'CashFlow::Payments for Fixed Assets',
+                'CashFlow::Payment for Purchase of Fixed Assets',
+                'CashFlow::Payments for Property Plant and Equipment',
+                'CashFlow::Cash Payments for Fixed Assets',
+                
+                # Expenditure variations
+                'CashFlow::Expenditure on Fixed Assets',
+                'CashFlow::Capital Expenditure on Fixed Assets',
+                'CashFlow::Fixed Asset Expenditure',
+                'CashFlow::Plant and Equipment Expenditure',
+                
+                # Other common variations
+                'CashFlow::Fixed Assets Purchased',
+                'CashFlow::PPE Purchased',
+                'CashFlow::Tangible Assets Purchased',
+                'CashFlow::Equipment Purchases',
+                'CashFlow::Machinery and Equipment',
+                'CashFlow::Plant and Machinery',
+                
+                # Indian specific variations
+                'CashFlow::Purchase of Plant and Machinery',
+                'CashFlow::Addition to Plant and Machinery',
+                'CashFlow::Investment in Plant and Machinery',
+                
+                # Without CashFlow prefix (in case data doesn't have prefixes)
+                'Capital Expenditure',
+                'Capital Expenditures',
+                'CAPEX',
+                'Purchase of Fixed Assets',
+                'Purchased of Fixed Assets',
+                'Purchase of Property Plant and Equipment',
+                'Additions to Fixed Assets',
+                'Investment in Fixed Assets',
+            ],
+            
+            'Depreciation': [
+                'ProfitLoss::Depreciation and Amortisation Expenses',
+                'ProfitLoss::Depreciation and Amortization Expenses',
+                'ProfitLoss::Depreciation & Amortisation Expenses',
+                'ProfitLoss::Depreciation & Amortization Expenses',
+                'ProfitLoss::Depreciation and Amortisation',
+                'ProfitLoss::Depreciation and Amortization',
+                'ProfitLoss::Depreciation & Amortisation',
+                'ProfitLoss::Depreciation & Amortization',
+                'ProfitLoss::Depreciation',
+                'ProfitLoss::Amortisation',
+                'ProfitLoss::Amortization',
+                'ProfitLoss::Depreciation Expense',
+                'ProfitLoss::Depreciation Expenses',
+                'ProfitLoss::Depreciation and Impairment',
+                'Depreciation and Amortisation Expenses',
+                'Depreciation and Amortization Expenses',
+                'Depreciation',
+            ],
+            
+            'Operating Cash Flow': [
+                'CashFlow::Net Cash from Operating Activities',
+                'CashFlow::Net CashFlow From Operating Activities',
+                'CashFlow::Net Cash Flow From Operating Activities',
+                'CashFlow::Operating Cash Flow',
+                'CashFlow::Cash from Operating Activities',
+                'CashFlow::Cash Flow from Operating Activities',
+                'CashFlow::Net Cash Generated from Operating Activities',
+                'CashFlow::Cash Generated from Operating Activities',
+                'CashFlow::Operating Activities',
+                'CashFlow::Cash from Operations',
+                'Net Cash from Operating Activities',
+                'Operating Cash Flow',
+                'Cash from Operating Activities',
+            ],
+            
+            'Revenue': [
+                'ProfitLoss::Revenue From Operations',
+                'ProfitLoss::Revenue From Operations(Net)',
+                'ProfitLoss::Revenue from Operations (Net)',
+                'ProfitLoss::Total Revenue',
+                'ProfitLoss::Net Sales',
+                'ProfitLoss::Sales',
+                'ProfitLoss::Revenue',
+                'ProfitLoss::Gross Revenue',
+                'ProfitLoss::Total Income',
+                'Revenue From Operations',
+                'Revenue',
+                'Sales',
+                'Total Revenue',
+            ],
+            
+            'Operating Income': [
+                'ProfitLoss::Profit Before Exceptional Items and Tax',
+                'ProfitLoss::Operating Profit',
+                'ProfitLoss::EBIT',
+                'ProfitLoss::Profit Before Interest and Tax',
+                'ProfitLoss::Operating Income',
+                'ProfitLoss::Earnings Before Interest and Tax',
+                'ProfitLoss::Profit from Operations',
+                'Operating Profit',
+                'EBIT',
+                'Operating Income',
+            ],
+            
+            'Net Income': [
+                'ProfitLoss::Profit After Tax',
+                'ProfitLoss::Profit/Loss For The Period',
+                'ProfitLoss::Net Profit',
+                'ProfitLoss::PAT',
+                'ProfitLoss::Net Income',
+                'ProfitLoss::Profit for the Period',
+                'ProfitLoss::Net Profit After Tax',
+                'Profit After Tax',
+                'Net Profit',
+                'Net Income',
+            ],
+            
+            'Tax Expense': [
+                'ProfitLoss::Tax Expense',
+                'ProfitLoss::Tax Expenses', 
+                'ProfitLoss::Current Tax',
+                'ProfitLoss::Total Tax Expense',
+                'ProfitLoss::Income Tax',
+                'ProfitLoss::Provision for Tax',
+                'ProfitLoss::Tax Provision',
+                'Tax Expense',
+                'Current Tax',
+                'Income Tax',
+            ],
+            
+            'Interest Expense': [
+                'ProfitLoss::Finance Cost',
+                'ProfitLoss::Finance Costs',
+                'ProfitLoss::Interest',
+                'ProfitLoss::Interest Expense',
+                'ProfitLoss::Interest and Finance Charges',
+                'ProfitLoss::Financial Expenses',
+                'ProfitLoss::Borrowing Costs',
+                'Finance Cost',
+                'Finance Costs',
+                'Interest Expense',
+                'Interest',
+            ],
+            
+            'Income Before Tax': [
+                'ProfitLoss::Profit Before Tax',
+                'ProfitLoss::PBT',
+                'ProfitLoss::Income Before Tax',
+                'ProfitLoss::Earnings Before Tax',
+                'Profit Before Tax',
+                'PBT',
+                'Income Before Tax',
+            ],
+        }
+        
+        # Try exact matches from patterns
+        if target_metric in search_patterns:
+            self.logger.info(f"[PN-FETCH-SEARCH] Searching {len(search_patterns[target_metric])} patterns for '{target_metric}'")
+            
+            for i, pattern in enumerate(search_patterns[target_metric]):
+                if pattern in df.index:
+                    series = df.loc[pattern].fillna(0 if default_zero else np.nan)
+                    self.logger.info(f"[PN-FETCH-FOUND] Pattern match #{i+1}: '{pattern}' for '{target_metric}'")
+                    self._log_metric_fetch(target_metric, pattern, series, f"Pattern search #{i+1}")
+                    return series
+            # CRITICAL FIX: Total Liabilities
         if target_metric == "Total Liabilities":
             try:
                 # First, try to find it with patterns
@@ -5235,83 +5344,83 @@ class EnhancedPenmanNissimAnalyzer:
                 self.logger.error(f"Failed to find or calculate Total Liabilities: {e}")
                 if default_zero: return pd.Series(0, index=df.columns)
                 raise ValueError(f"Could not find or calculate '{target_metric}'")
-    
-        # 3. Use your original extensive search patterns for all other metrics
-    
-        search_patterns = {
-            # ... (your original search patterns for all metrics)
-            'Total Assets': [
-                'BalanceSheet::Total Assets',
-                'BalanceSheet::TOTAL ASSETS',
-                'BalanceSheet::Total Equity and Liabilities' # Indian format
-            ],
-            'Capital Expenditure': [
-                'CashFlow::Purchase of Fixed Assets',
-                'CashFlow::Purchased of Fixed Assets',
-                'CashFlow::Purchase of Property Plant and Equipment',
-                'CashFlow::Capital Expenditure',
-                'CashFlow::Additions to Fixed Assets',
-                # ... all other CapEx patterns
-            ],
-            'Interest Expense': [
-                'ProfitLoss::Finance Cost',
-                'ProfitLoss::Finance Costs',
-                'ProfitLoss::Interest Expense',
-                'ProfitLoss::Interest',
-                # ... all other Interest Expense patterns
-            ],
-            # ... all other metrics from your original code
-        }
-    
-        # Your original search logic
-        if target_metric in search_patterns:
-            for pattern in search_patterns[target_metric]:
-                if pattern in df.index:
-                    series = df.loc[pattern].fillna(0 if default_zero else np.nan)
-                    self.logger.info(f"[PN-FETCH] Found '{target_metric}' via exact pattern match: '{pattern}'")
-                    
-                    # VALIDATION: Check for wrong section values
-                    if target_metric == 'Interest Expense' and (series > 100).any():
-                        self.logger.error(f"  - Discarding '{pattern}' for Interest Expense, values too high.")
-                        continue
-    
-                    return series
-    
-        # Your original fuzzy matching logic
+        # Enhanced fuzzy matching for Capital Expenditure specifically
+        if target_metric == 'Capital Expenditure':
+            self.logger.info("[PN-FETCH-CAPEX] Performing enhanced CapEx fuzzy search...")
+            
+            # Keywords that indicate capital expenditure
+            capex_keywords = [
+                'purchase', 'purchased', 'acquisition', 'addition', 'additions',
+                'investment', 'expenditure', 'capex', 'fixed asset', 'ppe',
+                'property plant', 'plant and equipment', 'machinery', 'equipment'
+            ]
+            
+            # Look for any index containing these keywords
+            for idx in df.index:
+                idx_lower = str(idx).lower()
+                
+                # Must be in cash flow section
+                if 'cashflow::' in idx_lower or 'cash flow' in idx_lower:
+                    # Check for capex keywords
+                    if any(keyword in idx_lower for keyword in capex_keywords):
+                        # Additional validation - should be an outflow (negative or positive that we'll make negative)
+                        series = df.loc[idx]
+                        if series.notna().any():
+                            self.logger.info(f"[PN-FETCH-CAPEX-FUZZY] Found potential CapEx: '{idx}'")
+                            
+                            # Ensure it's treated as an outflow (positive for subtraction)
+                            series = series.abs().fillna(0 if default_zero else np.nan)
+                            self._log_metric_fetch(target_metric, idx, series, "CapEx fuzzy match")
+                            return series
+        
+        # General fuzzy matching for other metrics
         target_lower = target_metric.lower()
         best_match = None
         best_score = 0
         
         for idx in df.index:
-            # Section alignment check
-            if target_metric == 'Capital Expenditure' and not idx.startswith('CashFlow::'):
-                continue
-            if target_metric == 'Interest Expense' and not idx.startswith('ProfitLoss::'):
-                continue
-                
-            idx_clean = str(idx).split('::')[-1].lower()
+            idx_clean = str(idx).split('::')[-1].lower() if '::' in str(idx) else str(idx).lower()
+            
+            # Calculate similarity score
             score = self._calculate_similarity(target_lower, idx_clean)
             
-            if score > best_score and score > 0.8:  # Use a higher threshold for fuzzy
+            if score > best_score and score > 0.7:  # 70% threshold
                 best_score = score
                 best_match = idx
         
         if best_match:
             series = df.loc[best_match].fillna(0 if default_zero else np.nan)
-            self.logger.info(f"[PN-FETCH] Found '{target_metric}' via fuzzy match: '{best_match}' (score: {best_score:.2f})")
+            self.logger.info(f"[PN-FETCH-FUZZY] Found '{target_metric}' via fuzzy match: {best_match} (score: {best_score:.2f})")
+            self._log_metric_fetch(target_metric, best_match, series, f"Fuzzy match (score: {best_score:.2f})")
             return series
-    
-        # 4. If all else fails, handle the error
-        self.logger.error(f"[PN-FETCH-CRITICAL] Could not find '{target_metric}' after all attempts.")
         
-        # Provide helpful debug info
-        available_rows = [row for row in df.index if target_metric.split(' ')[0].lower() in str(row).lower()]
-        if available_rows:
-            self.logger.error(f"  - Possible related rows in data: {available_rows[:5]}")
-        else:
-            self.logger.error("  - No similar rows found in the data.")
-            
+        # List of optional metrics that can default to zero
+        optional_metrics = [
+            'Depreciation', 'Investments', 'Short-term Investments',
+            'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
+            'Total Liabilities', 'Capital Expenditure'  # Added CapEx as optional
+        ]
+        
+        if default_zero or target_metric in optional_metrics:
+            self.logger.info(f"[PN-FETCH-DEFAULT] Optional metric '{target_metric}' not found, using zeros")
+            series = pd.Series(0, index=df.columns)
+            self._log_metric_fetch(target_metric, "DEFAULT_ZEROS", series, "Default to zero")
+            return series
+        
+        # For required metrics, show helpful suggestions
+        self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
+        
+        # Show available cash flow items for Capital Expenditure
+        if target_metric == 'Capital Expenditure':
+            self.logger.info("[PN-FETCH-HELP] Available Cash Flow items in your data:")
+            cashflow_items = [idx for idx in df.index if 'cashflow::' in str(idx).lower()]
+            for item in cashflow_items[:20]:  # Show first 20
+                self.logger.info(f"  - {item}")
+            if len(cashflow_items) > 20:
+                self.logger.info(f"  ... and {len(cashflow_items) - 20} more cash flow items")
+        
         raise ValueError(f"Required metric '{target_metric}' not found")
+
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         """Calculate similarity between two strings"""
         if not str1 or not str2:
@@ -5356,24 +5465,20 @@ class EnhancedPenmanNissimAnalyzer:
     # PASTE THIS CODE: Add this method to the EnhancedPenmanNissimAnalyzer class (continuation)
     
     def detect_capex_candidates(self) -> List[Tuple[str, float]]:
-        """Detect potential Capital Expenditure candidates with confidence scores - FIXED"""
+        """Detect potential Capital Expenditure candidates with confidence scores"""
         candidates = []
         
-        # Keywords that strongly indicate CapEx - ONLY in Cash Flow
-        strong_indicators = ['capital expenditure', 'purchase of fixed assets', 'purchase of ppe']
-        medium_indicators = ['purchase of property', 'acquisition of fixed', 'addition to fixed']
+        # Keywords that strongly indicate CapEx
+        strong_indicators = ['capex', 'capital expenditure', 'purchase of fixed assets', 'purchase of ppe']
+        medium_indicators = ['purchase', 'acquisition', 'addition', 'investment in fixed']
         weak_indicators = ['fixed asset', 'property plant', 'machinery', 'equipment']
         
         for idx in self._df_clean.index:
             idx_str = str(idx)
             idx_lower = idx_str.lower()
             
-            # CRITICAL: Must be cash flow related
+            # Must be cash flow related
             if not ('cashflow::' in idx_lower or 'cash flow' in idx_lower):
-                continue
-            
-            # EXCLUDE non-CapEx items
-            if any(exclude in idx_lower for exclude in ['stock-in-trade', 'inventory', 'working capital']):
                 continue
             
             confidence = 0.0
@@ -5530,146 +5635,6 @@ class EnhancedPenmanNissimAnalyzer:
             debug_info['issues'].append("Item not found in clean data")
         
         return debug_info
-
-    def check_data_quality(self) -> Dict[str, Any]:
-        """
-        Comprehensive data quality check
-        """
-        self.logger.info("\n[PN-QUALITY] Running data quality checks...")
-        
-        quality_report = {
-            'status': 'pass',
-            'issues': [],
-            'warnings': [],
-            'metrics': {}
-        }
-        
-        # Check 1: Interest Expense validation
-        interest_expense = self._get_safe_series(self._df_clean, 'Interest Expense')
-        if (interest_expense > 100).any():
-            quality_report['issues'].append({
-                'type': 'critical',
-                'message': f"Interest Expense values too high: {interest_expense.to_dict()}",
-                'fix': "Check Interest Expense mapping and column extraction"
-            })
-            quality_report['status'] = 'fail'
-        
-        # Check 2: Balance Sheet equation
-        try:
-            assets = self._get_safe_series(self._df_clean, 'Total Assets')
-            equity = self._get_safe_series(self._df_clean, 'Total Equity')
-            liabilities = self._get_safe_series(self._df_clean, 'Total Liabilities')
-            
-            max_diff = (assets - (liabilities + equity)).abs().max()
-            if max_diff > 1:
-                quality_report['issues'].append({
-                    'type': 'critical',
-                    'message': f"Balance Sheet equation off by {max_diff:,.2f}",
-                    'fix': "Check Total Liabilities calculation"
-                })
-                quality_report['status'] = 'fail'
-        except Exception as e:
-            quality_report['issues'].append({
-                'type': 'critical',
-                'message': f"Could not verify Balance Sheet equation: {e}",
-                'fix': "Check Balance Sheet metrics availability"
-            })
-            quality_report['status'] = 'fail'
-        
-        # Check 3: Data completeness
-        for key_metric in ['Revenue', 'Operating Income', 'Net Income', 'Total Assets', 'Total Equity']:
-            series = self._get_safe_series(self._df_clean, key_metric, default_zero=True)
-            non_null = series.notna().sum()
-            total = len(series)
-            completeness = (non_null / total) * 100 if total > 0 else 0
-            
-            quality_report['metrics'][key_metric] = {
-                'completeness': completeness,
-                'non_null_count': non_null,
-                'total_count': total
-            }
-            
-            if completeness < 80:
-                quality_report['warnings'].append({
-                    'type': 'data_completeness',
-                    'message': f"{key_metric} is only {completeness:.1f}% complete",
-                    'fix': "Check data availability for this metric"
-                })
-        
-        # Check 4: Column extraction validation
-        problematic_values = [214.68, 220.83, 229.3, 213.71, 199.75]
-        for idx in self._df_clean.index:
-            if idx.startswith('ProfitLoss::'):
-                values = self._df_clean.loc[idx]
-                for val in values:
-                    if pd.notna(val) and any(abs(val - prob) < 0.01 for prob in problematic_values):
-                        quality_report['issues'].append({
-                            'type': 'critical',
-                            'message': f"P&L item {idx} contains Balance Sheet value {val}",
-                            'fix': "Check column extraction in restructuring"
-                        })
-                        quality_report['status'] = 'fail'
-        
-        # Log results
-        if quality_report['status'] == 'fail':
-            self.logger.error("[PN-QUALITY] Data quality checks failed!")
-            for issue in quality_report['issues']:
-                self.logger.error(f"  {issue['type']}: {issue['message']}")
-                self.logger.error(f"    Fix: {issue['fix']}")
-        else:
-            self.logger.info("[PN-QUALITY] All data quality checks passed")
-        
-        return quality_report
-
-    def validate_data_extraction(self):
-        """Validate that data extraction is working correctly"""
-        self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-VALIDATE-EXTRACTION] Validating data extraction")
-        self.logger.info("="*80)
-        
-        # Check key metrics
-        validations = {
-            'Total Assets': {'min': 100, 'max': 1000000},
-            'Total Equity': {'min': 10, 'max': 1000000},
-            'Revenue': {'min': 10, 'max': 1000000},
-            'Interest Expense': {'min': 0, 'max': 100},  # Should be small relative to revenue
-        }
-        
-        for metric, bounds in validations.items():
-            try:
-                series = self._get_safe_series(self._df_clean, metric, default_zero=True)
-                values = series.dropna()
-                
-                if len(values) > 0:
-                    min_val = values.min()
-                    max_val = values.max()
-                    
-                    if min_val < bounds['min'] or max_val > bounds['max']:
-                        self.logger.warning(f"[VALIDATE] {metric} out of expected range: min={min_val}, max={max_val}")
-                    else:
-                        self.logger.info(f"[VALIDATE] {metric} OK: min={min_val:.2f}, max={max_val:.2f}")
-                else:
-                    self.logger.error(f"[VALIDATE] {metric} has no values!")
-                    
-            except Exception as e:
-                self.logger.error(f"[VALIDATE] Error checking {metric}: {e}")
-        
-        # Check that Total Liabilities = Total Assets - Total Equity
-        try:
-            assets = self._get_safe_series(self._df_clean, 'Total Assets')
-            equity = self._get_safe_series(self._df_clean, 'Total Equity')
-            liabilities = self._get_safe_series(self._df_clean, 'Total Liabilities')
-            
-            calculated_liab = assets - equity
-            diff = (liabilities - calculated_liab).abs().max()
-            
-            if diff < 1:
-                self.logger.info("[VALIDATE] Balance sheet equation OK")
-            else:
-                self.logger.warning(f"[VALIDATE] Balance sheet equation mismatch: max diff = {diff}")
-                
-        except Exception as e:
-            self.logger.error(f"[VALIDATE] Error checking balance sheet equation: {e}")
        
 # --- 21. Manual Mapping Interface ---
 class ManualMappingInterface:
@@ -12107,43 +12072,7 @@ class FinancialAnalyticsPlatform:
                 st.rerun()
 
         # Add this after the VST template button in _render_enhanced_penman_nissim_mapping:
-        if st.button("🧪 Test Column Extraction Fix"):
-            st.write("Testing column extraction...")
-            
-            # Show raw data structure
-            st.write("**Raw Data Structure:**")
-            st.write(f"- Total columns: {len(data.columns)}")
-            st.write(f"- P&L columns (0-8): {list(data.columns[0:9])}")
-            st.write(f"- BS columns (9-17): {list(data.columns[9:18])}")
-            st.write(f"- CF columns (18-26): {list(data.columns[18:27])}")
-            
-            # Test specific items
-            test_items = [
-                'ProfitLoss::Finance Cost',
-                'ProfitLoss::Purchases of Stock-in-Trade',
-                'BalanceSheet::Total Assets',
-                'CashFlow::Purchase of Fixed Assets'
-            ]
-            
-            st.write("\n**Testing Key Items:**")
-            for item in test_items:
-                if item in data.index:
-                    row_data = data.loc[item]
-                    
-                    # Show values by section
-                    pl_values = row_data.iloc[0:9].values
-                    bs_values = row_data.iloc[9:18].values
-                    cf_values = row_data.iloc[18:27].values
-                    
-                    st.write(f"\n`{item}`:")
-                    st.write(f"- P&L values: {pl_values}")
-                    st.write(f"- BS values: {bs_values}")
-                    st.write(f"- CF values: {cf_values}")
-                    
-                    # Highlight if wrong section has the problematic values
-                    if 'ProfitLoss::' in item and 214.68 in bs_values:
-                        st.error(f"❌ {item} has Balance Sheet values in P&L item!")
-                    
+
         if st.button("🚨 Force Add Capital Expenditure", key="force_add_capex", type="primary"):
             """Emergency button to manually add Capital Expenditure mapping"""
             
@@ -12223,56 +12152,7 @@ class FinancialAnalyticsPlatform:
                         st.warning("No additional cash flow items found in source files")
                 else:
                     st.error("No uploaded files found for recovery")
-                    
         # <<<--- END: PASTE THE NEW RECOVERY BUTTON CODE HERE ---<<<
-        if st.button("🧪 Test Data Quality"):
-            st.write("Running comprehensive data quality checks...")
-            
-            analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
-            quality_report = analyzer.check_data_quality()
-            
-            if quality_report['status'] == 'pass':
-                st.success("✅ All data quality checks passed!")
-                
-                # Show metrics
-                st.write("**Data Completeness:**")
-                for metric, stats in quality_report['metrics'].items():
-                    st.metric(
-                        metric,
-                        f"{stats['completeness']:.1f}%",
-                        f"{stats['non_null_count']}/{stats['total_count']}"
-                    )
-            else:
-                st.error("❌ Data quality checks failed!")
-                
-                if quality_report['issues']:
-                    st.write("**Critical Issues:**")
-                    for issue in quality_report['issues']:
-                        st.error(f"- {issue['message']}")
-                        st.info(f"  Fix: {issue['fix']}")
-                
-                if quality_report['warnings']:
-                    st.write("**Warnings:**")
-                    for warning in quality_report['warnings']:
-                        st.warning(f"- {warning['message']}")
-            
-            # Show sample data
-            st.write("\n**Sample Data Check:**")
-            
-            # Check Interest Expense
-            interest_expense = analyzer._get_safe_series(analyzer._df_clean, 'Interest Expense')
-            st.write("Interest Expense values:")
-            st.write(interest_expense.to_dict())
-            
-            # Check Balance Sheet equation
-            assets = analyzer._get_safe_series(analyzer._df_clean, 'Total Assets')
-            equity = analyzer._get_safe_series(analyzer._df_clean, 'Total Equity')
-            liabilities = analyzer._get_safe_series(analyzer._df_clean, 'Total Liabilities')
-            
-            st.write("\nBalance Sheet Components:")
-            st.write(f"Total Assets: {assets.to_dict()}")
-            st.write(f"Total Equity: {equity.to_dict()}")
-            st.write(f"Total Liabilities: {liabilities.to_dict()}")
         
         with col2:
             if st.button("💼 Clear All", key="pn_clear_all"):

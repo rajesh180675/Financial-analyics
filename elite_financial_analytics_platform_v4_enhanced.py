@@ -3669,9 +3669,9 @@ class EnhancedPenmanNissimAnalyzer:
 
     @staticmethod
     def safe_format(self, value, format_spec='.1f', default='N/A'):  # CHANGED: Default format_spec without leading ':'
-    if isinstance(value, (int, float)) and not np.isnan(value):
-        return f"{value:{format_spec}}"  # Correct: {value:{format_spec}} → e.g., {15.3:.1f} = '15.3'
-    return default
+        if isinstance(value, (int, float)) and not np.isnan(value):
+            return f"{value:{format_spec}}"  # Correct: {value:{format_spec}} → e.g., {15.3:.1f} = '15.3'
+        return default
 
     def _ensure_clean_data(self):
         """Ensure we have clean restructured data (only restructure once)"""

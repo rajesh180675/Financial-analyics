@@ -3667,8 +3667,8 @@ class EnhancedPenmanNissimAnalyzer:
         self.core_analyzer = None  # Don't use core analyzer due to NotImplemented error
         self._validate_input_data()
 
-     # ADD THE HELPER METHOD HERE (new addition)
-    def safe_format(self, value, format_spec=':.1f', default='N/A'):
+     @staticmethod
+    def safe_format(value, format_spec=':.1f', default='N/A'):
         if isinstance(value, (int, float)) and not np.isnan(value):
             return f"{value{format_spec}}"
         return default
@@ -5131,25 +5131,16 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info("\n[PN-DRIVERS-SUMMARY] Value Drivers Summary:")
             
             cagr_value = metadata.get('revenue_cagr', 'N/A')
-            if isinstance(cagr_value, (int, float)) and not np.isnan(cagr_value):
-                self.logger.info(f"  Revenue CAGR: {cagr_value:.1f}%")
-            else:
-                self.logger.info(f"  Revenue CAGR: {cagr_value}")
+            self.logger.info(f"  Revenue CAGR: {self.safe_format(cagr_value, ':.1f', 'N/A')}%")
             
             # Safe formatting for other metrics (example)
             if 'NOPAT Margin %' in drivers.columns:
                 latest_nopat = drivers['NOPAT Margin %'].iloc[-1]
-                if isinstance(latest_nopat, (int, float)) and not np.isnan(latest_nopat):
-                    self.logger.info(f"  Latest NOPAT Margin: {latest_nopat:.1f}%")
-                else:
-                    self.logger.info(f"  Latest NOPAT Margin: N/A")
+                self.logger.info(f"  Latest NOPAT Margin: {self.safe_format(latest_nopat, ':.1f', 'N/A')}%")
             
             if 'Asset Turnover' in drivers.columns:
                 latest_at = drivers['Asset Turnover'].iloc[-1]
-                if isinstance(latest_at, (int, float)) and not np.isnan(latest_at):
-                    self.logger.info(f"  Latest Asset Turnover: {latest_at:.2f}")
-                else:
-                    self.logger.info(f"  Latest Asset Turnover: N/A")
+                self.logger.info(f"  Latest Asset Turnover: {self.safe_format(latest_at, ':.2f', 'N/A')}")
             
         except Exception as e:
             self.logger.error(f"[PN-DRIVERS-ERROR] Value drivers calculation failed: {e}", exc_info=True)

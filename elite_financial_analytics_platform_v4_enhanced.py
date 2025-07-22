@@ -3785,14 +3785,8 @@ class EnhancedPenmanNissimAnalyzer:
             for year in final_columns:
                 transfer_stats['total_attempts'] += 1
                 
-                # CRITICAL FIX: Only use source columns matching the statement type
-                source_columns = [col for col in year_to_columns[year] 
-                                  if statement_type.lower() in str(col).lower()]
-                
-                if not source_columns:
-                    self.logger.debug(f"No matching columns for {idx_str} in {year} (statement: {statement_type})")
-                    transfer_stats['null_values'] += 1
-                    continue
+                # Get potential source columns for this year AND matching statement
+                source_columns = [col for col in year_to_columns[year] if statement_type.lower() in str(col).lower()]
                 
                 # Prioritize columns
                 prioritized_columns = self._prioritize_columns_v2(
@@ -3820,19 +3814,24 @@ class EnhancedPenmanNissimAnalyzer:
                     
                     for col, val in original_values:
                         try:
-                            # Parse the value
+                            # FIXED: Enhanced parsing to handle strings and convert to numeric
                             if isinstance(val, str):
                                 val_clean = (val.replace(',', '')
                                                .replace('(', '-')
                                                .replace(')', '')
                                                .replace('₹', '')
                                                .replace('$', '')
+                                               .replace('%', '')  # Remove % if present
                                                .strip())
                                 
-                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil']:
-                                    continue
-                                
-                                numeric_val = float(val_clean)
+                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil', '']:
+                                    numeric_val = np.nan
+                                else:
+                                    try:
+                                        numeric_val = float(val_clean)
+                                    except ValueError:
+                                        self.logger.warning(f"Non-numeric value '{val_clean}' in {col} for {idx} - skipping")
+                                        continue
                             else:
                                 numeric_val = float(val)
                             
@@ -3845,7 +3844,7 @@ class EnhancedPenmanNissimAnalyzer:
                             self.logger.debug(f"Failed to parse {val} from {col}: {e}")
                             continue
                     
-                    if selected_value is not None:
+                    if selected_value is not None and not np.isnan(selected_value):
                         # Apply data quality rules but preserve the value
                         cleaned_value, stats = self._apply_comprehensive_quality_rules(
                             selected_value, idx_str, year, statement_type

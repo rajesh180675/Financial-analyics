@@ -4439,6 +4439,9 @@ class EnhancedPenmanNissimAnalyzer:
                 self.logger.info("[PN-BS] Calculated Total Liabilities = Assets - Equity")
                 metadata['liabilities_source'] = 'calculated'
             
+            # Handle NaN in liabilities
+            total_liabilities = total_liabilities.fillna(0)
+            
             # Current items
             current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
             current_liabilities = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
@@ -4538,23 +4541,24 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Short-term Debt'] = short_term_debt
             reformulated['Long-term Debt'] = long_term_debt
             
-            # Validation check
+            # Validation check - handle NaN
             check = net_operating_assets + net_financial_assets - common_equity
+            check = check.fillna(0)  # NEW: Fill NaN for check
             metadata['balance_check'] = check.abs().max()
-            metadata['balance_check_pct'] = (check.abs() / common_equity.abs()).max() * 100 if (common_equity != 0).any() else 0
+            metadata['balance_check_pct'] = (check.abs() / common_equity.abs().replace(0, np.nan)).max() * 100 if (common_equity != 0).any() else 0
             
             self.logger.info(f"[PN-BS] Balance check: NOA + NFA - CE = {check.to_dict()}")
             self.logger.info(f"[PN-BS] Maximum absolute difference: {metadata['balance_check']:.2f}")
             self.logger.info(f"[PN-BS] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
             
-            # Summary statistics
+            # Summary statistics - handle NaN
             self.logger.info("\n[PN-BS-SUMMARY] Balance Sheet Reformulation Summary:")
-            self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}")
-            self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}")
-            self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}")
-            self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}")
-            self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}")
-            self.logger.info(f"  Total Debt: {total_debt.sum():,.0f}")
+            self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}" if not total_assets.isna().all() else "N/A")
+            self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}" if not total_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}" if not total_equity.isna().all() else "N/A")
+            self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}" if not net_operating_assets.isna().all() else "N/A")
+            self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}" if not net_financial_assets.isna().all() else "N/A")
+            self.logger.info(f"  Total Debt: {total_debt.sum():,.0f}" if not total_debt.isna().all() else "N/A")
             
         except Exception as e:
             self.logger.error(f"[PN-BS-ERROR] Balance sheet reformulation failed: {e}", exc_info=True)

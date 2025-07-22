@@ -3779,17 +3779,20 @@ class EnhancedPenmanNissimAnalyzer:
             if is_capex:
                 self.logger.info(f"[PN-CAPEX-TRANSFER] Processing CapEx item: {idx_str}")
             
-            # Determine statement type from prefix
+            # Determine statement type
             statement_type = self._determine_statement_type_v2(idx_str)
-            
-            # CRITICAL FIX: Only use source columns that match the statement type
-            matching_columns = [col for col in df.columns if statement_type.lower() in str(col).lower()]
             
             for year in final_columns:
                 transfer_stats['total_attempts'] += 1
                 
-                # Get potential source columns for this year AND matching statement
-                source_columns = [col for col in year_to_columns[year] if col in matching_columns]
+                # CRITICAL FIX: Only use source columns matching the statement type
+                source_columns = [col for col in year_to_columns[year] 
+                                  if statement_type.lower() in str(col).lower()]
+                
+                if not source_columns:
+                    self.logger.debug(f"No matching columns for {idx_str} in {year} (statement: {statement_type})")
+                    transfer_stats['null_values'] += 1
+                    continue
                 
                 # Prioritize columns
                 prioritized_columns = self._prioritize_columns_v2(
@@ -9679,61 +9682,86 @@ class FinancialAnalyticsPlatform:
         self.logger.info(f"First few rows:\n{df.head()}")
 
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
-        """Merge dataframes by aligning years and preserving statement types"""
-        merged_df = pd.DataFrame()
+        """Merge dataframes by aligning years and preserving ALL statement types and rows"""
+        # Step 1: Collect all unique indices (rows/metrics) from all DFs
+        all_indices = set()
+        statement_dfs = {}  # Store DFs by statement type
         
         for df in dataframes:
             df_copy = df.copy()
             statement_type = self._detect_statement_type(df_copy)
             
-            # Normalize column names to just years
-            normalized_columns = {}
-            for col in df_copy.columns:
-                # Extract year from column name (using your YEAR_REGEX or similar)
-                match = YEAR_REGEX.search(str(col))
-                if match:
-                    year = match.group(1)
-                    if year.startswith('FY'):
-                        year = year.replace('FY ', '20')  # e.g., FY 20 -> 2020
-                    elif len(year) == 4:
-                        year = year  # Already YYYY
-                    # Add more patterns if needed
-                    normalized_columns[col] = year
-                else:
-                    normalized_columns[col] = col  # Keep non-year columns
+            # Add statement prefix to index if not already present
+            prefixed_index = []
+            for idx in df_copy.index:
+                idx_str = str(idx).strip()
+                if '::' not in idx_str:
+                    idx_str = f"{statement_type}::{idx_str}"
+                prefixed_index.append(idx_str)
             
-            df_copy = df_copy.rename(columns=normalized_columns)
+            df_copy.index = prefixed_index
             
-            # Add statement prefix to index (rows/metrics)
-            df_copy.index = [f"{statement_type}::{str(idx).strip()}" for idx in df_copy.index]
+            # Collect unique indices
+            all_indices.update(df_copy.index)
             
-            # Merge with existing DF (align on years/columns)
-            if merged_df.empty:
-                merged_df = df_copy
-            else:
-                # Combine, preferring non-NaN values from new DF for overlaps
-                for col in df_copy.columns:
-                    if col in merged_df.columns:
-                        # For overlapping columns, combine with priority to new data if non-NaN
-                        merged_df[col] = df_copy[col].combine_first(merged_df[col])  # New over old
-                    else:
-                        # New column, add it
-                        merged_df[col] = df_copy[col]
+            # Store the DF
+            if statement_type not in statement_dfs:
+                statement_dfs[statement_type] = []
+            statement_dfs[statement_type].append(df_copy)
         
-        # After merging, clean up
-        merged_df = merged_df.dropna(how='all', axis=1)  # Remove empty years/columns
-        merged_df = merged_df.sort_index(axis=1)  # Sort years chronologically
+        # Step 2: Create master DF with all unique rows and no columns yet
+        merged_df = pd.DataFrame(index=sorted(all_indices))
+        
+        # Step 3: For each statement type, merge its DFs and add to master
+        for statement_type, stmt_dfs in statement_dfs.items():
+            # Merge multiple DFs of same type (if any)
+            stmt_merged = pd.DataFrame(index=merged_df.index)
+            
+            for df in stmt_dfs:
+                # Normalize columns to just years
+                normalized_columns = {}
+                for col in df.columns:
+                    match = YEAR_REGEX.search(str(col))
+                    if match:
+                        year = match.group(1)
+                        if year.startswith('FY'):
+                            year = year.replace('FY ', '20')  # e.g., FY 20 -> 2020
+                        normalized_columns[col] = year
+                    else:
+                        normalized_columns[col] = col
+                
+                df = df.rename(columns=normalized_columns)
+                
+                # Update stmt_merged with values from this DF (only for its rows)
+                for idx in df.index:
+                    if idx in stmt_merged.index:
+                        for year in df.columns:
+                            if year not in stmt_merged.columns:
+                                stmt_merged[year] = np.nan  # Add new year column if missing
+                            if pd.notna(df.loc[idx, year]):
+                                stmt_merged.loc[idx, year] = df.loc[idx, year]
+        
+            # Now add to overall merged_df
+            for col in stmt_merged.columns:
+                if col not in merged_df.columns:
+                    merged_df[col] = np.nan
+                merged_df[col] = stmt_merged[col].combine_first(merged_df[col])
+        
+        # Step 4: Clean up
+        merged_df = merged_df.dropna(how='all', axis=1)  # Remove empty columns
+        merged_df = merged_df.sort_index(axis=1)  # Sort years
+        
+        # Fill NaNs with 0 for numeric consistency (optional, adjust as needed)
+        merged_df = merged_df.fillna(0)
         
         # Log for debugging
         self.logger.info(f"Merged DataFrame shape: {merged_df.shape}")
         self.logger.info(f"Merged columns (years): {merged_df.columns.tolist()}")
         
-        # Verify no cross-statement pollution
-        pl_rows = [idx for idx in merged_df.index if 'ProfitLoss::' in idx]
-        if pl_rows:
-            sample_pl_row = merged_df.loc[pl_rows[0]]
-            non_zero_count = (sample_pl_row != 0).sum()
-            self.logger.info(f"Sample P&L row non-zeros: {non_zero_count} (should match year count)")
+        # Verify preservation by statement type
+        for stmt_type in statement_dfs:
+            type_rows = [idx for idx in merged_df.index if idx.startswith(f"{stmt_type}::")]
+            self.logger.info(f"Preserved {len(type_rows)} rows for {stmt_type}")
         
         return merged_df
 

@@ -9614,15 +9614,29 @@ class FinancialAnalyticsPlatform:
             return df
         
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean and prepare dataframe for analysis"""
+        """Clean and prepare dataframe for analysis with robust column preservation"""
         try:
             cleaned_df = self._standardize_dataframe(df)
-
-            unnamed_cols = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
-            if unnamed_cols:
-                cleaned_df = cleaned_df.drop(columns=unnamed_cols)
-                self.logger.info(f"Removed {len(unnamed_cols)} unnamed columns")
+    
+            # --- MODIFIED: Intelligent 'Unnamed' column removal ---
+            # 1. Identify all columns that might be unnamed
+            unnamed_cols_to_check = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
+            cols_to_drop = []
+    
+            if unnamed_cols_to_check:
+                # 2. Loop through candidates and decide which ones to drop
+                for col in unnamed_cols_to_check:
+                    # Only drop the column if it's "Unnamed" AND it does NOT contain a year pattern.
+                    # This protects columns like 'Unnamed: 10_level_0 >> 202503' from being dropped.
+                    if not re.search(r'(20\d{4}|19\d{4}|20\d{2}|19\d{2})', str(col)):
+                        cols_to_drop.append(col)
+                
+                # 3. Drop only the columns that are truly unnamed and not year-related
+                if cols_to_drop:
+                    cleaned_df = cleaned_df.drop(columns=cols_to_drop)
+                    self.logger.info(f"Removed {len(cols_to_drop)} truly unnamed columns")
             
+            # --- Original robust numeric conversion logic (retained) ---
             for col in cleaned_df.columns:
                 try:
                     cleaned_df[col] = cleaned_df[col].replace({
@@ -9631,7 +9645,11 @@ class FinancialAnalyticsPlatform:
                         'NA': np.nan,
                         'None': np.nan
                     })
-                    cleaned_df[col] = pd.to_numeric(cleaned_df[col], errors='coerce')
+                    # This conversion is more robust for financial data
+                    cleaned_df[col] = pd.to_numeric(
+                        cleaned_df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''),
+                        errors='coerce'
+                    )
                 except Exception as e:
                     self.logger.warning(f"Could not convert column {col} to numeric: {e}")
             

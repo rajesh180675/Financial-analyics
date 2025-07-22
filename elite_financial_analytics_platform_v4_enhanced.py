@@ -3690,7 +3690,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info("[PN-RESTRUCTURE-V5] Starting ULTIMATE data restructuring with debugging")
         self.logger.info(f"[PN-RESTRUCTURE-V5] Input shape: {df.shape}")
         self.logger.info("#"*80)
-    
+        
         # DEBUG: Log sample of original data
         self.logger.info("[PN-DEBUG] Sample of original data structure:")
         self.logger.info(f"  Columns: {list(df.columns)[:5]}...")
@@ -3702,7 +3702,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info(f"[PN-DEBUG] Found {len(capex_items)} potential CapEx items in original data:")
         for item in capex_items[:5]:
             self.logger.info(f"  - {item}")
-    
+        
         # 1. Enhanced year pattern matching with debugging
         year_patterns = [
             (re.compile(r'(\d{6})'), 'YYYYMM', lambda m: m.group(1), 1),
@@ -3779,14 +3779,17 @@ class EnhancedPenmanNissimAnalyzer:
             if is_capex:
                 self.logger.info(f"[PN-CAPEX-TRANSFER] Processing CapEx item: {idx_str}")
             
-            # Determine statement type
+            # Determine statement type from prefix
             statement_type = self._determine_statement_type_v2(idx_str)
+            
+            # CRITICAL FIX: Only use source columns that match the statement type
+            matching_columns = [col for col in df.columns if statement_type.lower() in str(col).lower()]
             
             for year in final_columns:
                 transfer_stats['total_attempts'] += 1
                 
-                # Get potential source columns for this year
-                source_columns = year_to_columns[year]
+                # Get potential source columns for this year AND matching statement
+                source_columns = [col for col in year_to_columns[year] if col in matching_columns]
                 
                 # Prioritize columns
                 prioritized_columns = self._prioritize_columns_v2(
@@ -3816,7 +3819,6 @@ class EnhancedPenmanNissimAnalyzer:
                         try:
                             # Parse the value
                             if isinstance(val, str):
-                                # Clean string value
                                 val_clean = (val.replace(',', '')
                                                .replace('(', '-')
                                                .replace(')', '')
@@ -3824,7 +3826,7 @@ class EnhancedPenmanNissimAnalyzer:
                                                .replace('$', '')
                                                .strip())
                                 
-                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil', '']:
+                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil']:
                                     continue
                                 
                                 numeric_val = float(val_clean)
@@ -4612,40 +4614,29 @@ class EnhancedPenmanNissimAnalyzer:
             
             reformulated['Operating Income Before Tax'] = operating_income
             
-            # 3. TAX CALCULATION - FIXED
+            # 3. TAX CALCULATION - ENHANCED FIX
             try:
                 # Get tax expense and income before tax
                 tax_expense = self._get_safe_series(df, 'Tax Expense')
                 income_before_tax = self._get_safe_series(df, 'Income Before Tax')
                 
-                # CRITICAL FIX: Check if Operating Income and Income Before Tax are the same
-                # This happens when there's no interest expense before tax
+                # CRITICAL FIX: If Operating Income == Income Before Tax, use it directly
                 if (operating_income.values == income_before_tax.values).all():
-                    self.logger.info("[PN-IS-V2] Operating Income equals Income Before Tax (no interest before tax)")
+                    self.logger.info("[PN-IS-V2] Operating Income equals Income Before Tax - no pre-tax adjustments")
+                    tax_rate = tax_expense / operating_income.replace(0, np.nan)
+                else:
+                    tax_rate = tax_expense / income_before_tax.replace(0, np.nan)
                 
-                # Calculate effective tax rate
-                tax_rate = pd.Series(index=df.columns, dtype=float)
+                # Fill NaN with median valid rate
+                valid_rates = tax_rate[(tax_rate > 0) & (tax_rate < 1)]
+                if not valid_rates.empty:
+                    median_rate = valid_rates.median()
+                    tax_rate = tax_rate.fillna(median_rate)
+                else:
+                    tax_rate = tax_rate.fillna(0.25)
                 
-                for year in df.columns:
-                    if pd.notna(income_before_tax[year]) and income_before_tax[year] > 0:
-                        # CRITICAL: Use the actual tax expense, not current tax
-                        # Current tax might be different from total tax expense
-                        rate = tax_expense[year] / income_before_tax[year]
-                        
-                        # Sanity check - corporate tax rates typically 15-40%
-                        if 0.10 <= rate <= 0.50:  # Allow 10-50% range
-                            tax_rate[year] = rate
-                        else:
-                            self.logger.warning(f"[PN-IS-V2] Unusual tax rate {rate:.2%} in {year}, using actual reported tax")
-                            # Use the actual tax paid on operating income
-                            if operating_income[year] > 0:
-                                # Back-calculate from net income
-                                tax_rate[year] = 0.25  # Default for now
-                            else:
-                                tax_rate[year] = 0.0
-                    else:
-                        # Default rate
-                        tax_rate[year] = 0.25
+                # Clip to reasonable range
+                tax_rate = tax_rate.clip(0.1, 0.5)
                 
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
@@ -4655,14 +4646,21 @@ class EnhancedPenmanNissimAnalyzer:
                 
             except Exception as e:
                 self.logger.error(f"[PN-IS-V2] Tax calculation failed: {e}")
-                # Use default 25% tax rate
                 tax_rate = 0.25
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
                 reformulated['Operating Income After Tax'] = operating_income * (1 - tax_rate)
             
-            # 4. FINANCIAL ITEMS
+            # 4. FINANCIAL ITEMS - WITH ZERO HANDLING
             interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
+            
+            # NEW: Force zero if all values are small or zero (adjust threshold if needed)
+            if (abs(interest_expense) < 1).all():  # If all absolute values <1 (accounting noise)
+                interest_expense = pd.Series(0, index=df.columns)
+                self.logger.info("[PN-IS-V2] Forced Interest Expense to zero as per data")
+            else:
+                self.logger.warning("[PN-IS-V2] Non-zero Interest Expense found - verify mapping if unexpected")
+            
             interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             
             # If interest income not found, try Other Income
@@ -4670,8 +4668,7 @@ class EnhancedPenmanNissimAnalyzer:
                 try:
                     other_income = self._get_safe_series(df, 'Other Income', default_zero=True)
                     if (other_income != 0).any():
-                        # Don't assume 50% - use the full other income as interest income
-                        interest_income = other_income
+                        interest_income = other_income  # Use full amount, or adjust as needed
                         metadata['interest_income_source'] = 'Other Income (full amount)'
                 except:
                     pass
@@ -4687,7 +4684,7 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Tax Benefit on Financial Expense'] = net_financial_expense * reformulated['Tax Rate']
             reformulated['Net Financial Expense After Tax'] = net_financial_expense * (1 - reformulated['Tax Rate'])
             
-            # 5. NET INCOME RECONCILIATION
+            # 5. NET INCOME RECONCILIATION - ENHANCED
             net_income_reported = self._get_safe_series(df, 'Net Income')
             
             # Calculate what net income should be
@@ -4697,8 +4694,7 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Net Income (Reported)'] = net_income_reported
             reformulated['Net Income (Calculated)'] = calculated_net_income
             
-            # CRITICAL: Check if the difference is due to tax calculation
-            # The issue might be that "Current Tax" is not the same as "Tax Expense"
+            # CRITICAL: Improved reconciliation with tolerance
             for year in df.columns:
                 reported = net_income_reported[year]
                 calculated = calculated_net_income[year]
@@ -4708,28 +4704,39 @@ class EnhancedPenmanNissimAnalyzer:
                     tolerance = max(abs(reported) * 0.05, 1)  # 5% tolerance or 1 unit
                     
                     if diff > tolerance:
-                        # Try to reconcile by adjusting tax rate
-                        if operating_income[year] > 0 and net_financial_expense[year] != 0:
-                            # Back-calculate the implied tax rate
-                            implied_oi_after_tax = reported + (net_financial_expense[year] * (1 - reformulated['Tax Rate'][year]))
-                            implied_tax_on_oi = operating_income[year] - implied_oi_after_tax
-                            implied_tax_rate = implied_tax_on_oi / operating_income[year]
-                            
-                            self.logger.info(
-                                f"[PN-IS-V2] Year {year}: Implied tax rate from reconciliation: {implied_tax_rate:.2%}"
-                            )
+                        self.logger.warning(
+                            f"[PN-IS-V2] Year {year}: Net Income mismatch! "
+                            f"Reported: {reported:.2f}, Calculated: {calculated:.2f}, Diff: {diff:.2f}"
+                        )
+                        
+                        # NEW: Attempt to identify cause of mismatch
+                        if abs(diff - interest_expense[year]) < 1:
+                            self.logger.warning(f"[PN-IS-V2] Mismatch likely due to interest not deducted before tax")
+                        elif abs(diff - tax_expense[year]) < 1:
+                            self.logger.warning(f"[PN-IS-V2] Mismatch likely due to tax calculation error")
             
-            # 6. SUMMARY AND VALIDATION
+            # 6. SUMMARY AND VALIDATION - FIXED
             self.logger.info("\n[PN-IS-V2-SUMMARY] Income Statement Reformulation Summary:")
             self.logger.info(f"  Revenue range: {revenue.min():.0f} to {revenue.max():.0f}")
             self.logger.info(f"  Operating Income range: {operating_income.min():.0f} to {operating_income.max():.0f}")
             self.logger.info(f"  Net Income range: {net_income_reported.min():.0f} to {net_income_reported.max():.0f}")
             
-            # Log the actual reformulated DataFrame
-            self.logger.info("\n[PN-IS-V2] Reformulated Income Statement:")
-            for item in reformulated.index:
-                self.logger.info(f"  {item}: {reformulated.loc[item].to_dict()}")
+            # Log the actual reformulated DataFrame BEFORE transpose
+            self.logger.info("\n[PN-IS-V2] Reformulated Income Statement (before transpose):")
+            for col in reformulated.columns:  # FIXED: Check columns
+                self.logger.info(f"  {col}: {reformulated[col].to_dict()}")
             
+            # FIXED Validation: Check columns before transpose
+            essential_items = ['Revenue', 'Operating Income Before Tax', 'Operating Income After Tax', 
+                               'Net Income (Reported)', 'Net Income (Calculated)']
+            
+            for item in essential_items:
+                if item in reformulated.columns:  # FIXED: Check columns
+                    if (reformulated[item] == 0).all():
+                        self.logger.error(f"[PN-IS-V2] WARNING: {item} is all zeros!")
+                else:
+                    self.logger.error(f"[PN-IS-V2] MISSING: {item} not in reformulated statement!")
+        
         except Exception as e:
             self.logger.error(f"[PN-IS-V2-ERROR] Income statement reformulation failed: {e}", exc_info=True)
             raise
@@ -4739,7 +4746,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info("\n[PN-IS-V2-END] Income Statement Reformulation Complete")
         self.logger.info("="*80 + "\n")
         
-        # Cache result - TRANSPOSE to match expected format
+        # Cache result - TRANSPOSE to match expected format (metrics as rows, years as columns)
         self._cached_is = reformulated.T
         return self._cached_is
     
@@ -9672,103 +9679,63 @@ class FinancialAnalyticsPlatform:
         self.logger.info(f"First few rows:\n{df.head()}")
 
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
-        """Merge dataframes preserving all financial line items"""
-        try:
-            analysis_mode = self.get_state('analysis_mode', 'Standalone Analysis')
-    
-            if analysis_mode == "Standalone Analysis":
-                self.logger.info("Using standalone analysis mode - preserving all financial data")
-                
-                # Track cash flow items before and after
-                all_cash_flow_items = set()
-                
-                processed_dfs = []
-                
-                for i, df in enumerate(dataframes):
-                    # Trace cash flow items before processing
-                    self._trace_cash_flow_items(df, f"BEFORE-MERGE-FILE-{i}")
-                    
-                    df_copy = df.copy()
-                    
-                    # Collect cash flow items
-                    for idx in df_copy.index:
-                        if 'cash' in str(idx).lower() or 'flow' in str(idx).lower():
-                            all_cash_flow_items.add(str(idx))
-                    
-                    statement_type = self._detect_statement_type(df_copy)
-                    self.logger.info(f"Processing {statement_type} with {len(df_copy)} line items")
-                    
-                    new_index = []
-                    for idx in df_copy.index:
-                        if pd.isna(idx) or str(idx).strip() == '':
-                            new_idx = f"{statement_type}_EmptyRow_{df_copy.index.get_loc(idx)}"
-                        else:
-                            clean_idx = str(idx).strip()
-                            # Don't add prefix if it already has one
-                            if '::' in clean_idx:
-                                new_idx = clean_idx
-                            else:
-                                new_idx = f"{statement_type}::{clean_idx}"
-                        new_index.append(new_idx)
-                    
-                    df_copy.index = new_index
-                    processed_dfs.append(df_copy)
-                    
-                    # Trace after processing
-                    self._trace_cash_flow_items(df_copy, f"AFTER-PROCESS-FILE-{i}")
-                
-                # Use concat with proper handling of duplicates
-                merged_df = pd.concat(processed_dfs, axis=0, sort=False)
-                
-                # If there are duplicate indices, keep all cash flow items
-                if merged_df.index.duplicated().any():
-                    self.logger.warning("Found duplicate indices after merge")
-                    
-                    # Separate cash flow and non-cash flow items
-                    cash_flow_mask = merged_df.index.str.contains('CashFlow::', case=False, na=False)
-                    
-                    # For cash flow items, keep all duplicates
-                    cash_flow_df = merged_df[cash_flow_mask]
-                    non_cash_flow_df = merged_df[~cash_flow_mask]
-                    
-                    # Remove duplicates from non-cash flow items only
-                    non_cash_flow_df = non_cash_flow_df[~non_cash_flow_df.index.duplicated(keep='first')]
-                    
-                    # Combine back
-                    merged_df = pd.concat([non_cash_flow_df, cash_flow_df], axis=0)
-                
-                # Final trace
-                self._trace_cash_flow_items(merged_df, "AFTER-MERGE-FINAL")
-                
-                total_original = sum(len(df) for df in dataframes)
-                self.logger.info(f"Successfully preserved {len(merged_df)} line items (original: {total_original})")
-                self.logger.info(f"Total cash flow items tracked: {len(all_cash_flow_items)}")
-                
-                company_info = self._extract_company_info(merged_df)
-                if company_info:
-                    self.logger.info(f"Analyzing data for: {company_info['name']}")
-                    self.set_state('company_name', company_info['name'])
-                
-                return merged_df
-                
-            elif analysis_mode == "Benchmark Comparison":
-                self.logger.info("Using benchmark comparison mode")
-                
-                merged_df = self._merge_standalone_data(dataframes)
-                
-                benchmark_data = self.get_state('benchmark_data')
-                if benchmark_data is not None:
-                    benchmark_copy = benchmark_data.copy()
-                    benchmark_copy.index = [f"Benchmark::{idx}" for idx in benchmark_copy.index]
-                    merged_df = pd.concat([merged_df, benchmark_copy], axis=0)
-                
-                return merged_df
+        """Merge dataframes by aligning years and preserving statement types"""
+        merged_df = pd.DataFrame()
+        
+        for df in dataframes:
+            df_copy = df.copy()
+            statement_type = self._detect_statement_type(df_copy)
             
-            return pd.concat(dataframes, axis=0)
+            # Normalize column names to just years
+            normalized_columns = {}
+            for col in df_copy.columns:
+                # Extract year from column name (using your YEAR_REGEX or similar)
+                match = YEAR_REGEX.search(str(col))
+                if match:
+                    year = match.group(1)
+                    if year.startswith('FY'):
+                        year = year.replace('FY ', '20')  # e.g., FY 20 -> 2020
+                    elif len(year) == 4:
+                        year = year  # Already YYYY
+                    # Add more patterns if needed
+                    normalized_columns[col] = year
+                else:
+                    normalized_columns[col] = col  # Keep non-year columns
             
-        except Exception as e:
-            self.logger.error(f"Error merging dataframes: {e}")
-            return dataframes[0] if dataframes else pd.DataFrame()
+            df_copy = df_copy.rename(columns=normalized_columns)
+            
+            # Add statement prefix to index (rows/metrics)
+            df_copy.index = [f"{statement_type}::{str(idx).strip()}" for idx in df_copy.index]
+            
+            # Merge with existing DF (align on years/columns)
+            if merged_df.empty:
+                merged_df = df_copy
+            else:
+                # Combine, preferring non-NaN values from new DF for overlaps
+                for col in df_copy.columns:
+                    if col in merged_df.columns:
+                        # For overlapping columns, combine with priority to new data if non-NaN
+                        merged_df[col] = df_copy[col].combine_first(merged_df[col])  # New over old
+                    else:
+                        # New column, add it
+                        merged_df[col] = df_copy[col]
+        
+        # After merging, clean up
+        merged_df = merged_df.dropna(how='all', axis=1)  # Remove empty years/columns
+        merged_df = merged_df.sort_index(axis=1)  # Sort years chronologically
+        
+        # Log for debugging
+        self.logger.info(f"Merged DataFrame shape: {merged_df.shape}")
+        self.logger.info(f"Merged columns (years): {merged_df.columns.tolist()}")
+        
+        # Verify no cross-statement pollution
+        pl_rows = [idx for idx in merged_df.index if 'ProfitLoss::' in idx]
+        if pl_rows:
+            sample_pl_row = merged_df.loc[pl_rows[0]]
+            non_zero_count = (sample_pl_row != 0).sum()
+            self.logger.info(f"Sample P&L row non-zeros: {non_zero_count} (should match year count)")
+        
+        return merged_df
 
     def _verify_cash_flow_preservation(self, original_data: pd.DataFrame, processed_data: pd.DataFrame) -> bool:
         """Verify that cash flow items are preserved during processing"""

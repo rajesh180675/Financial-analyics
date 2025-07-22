@@ -9296,8 +9296,19 @@ class FinancialAnalyticsPlatform:
                     
                     if not tables:
                         raise ValueError("No tables found")
+
+                     # --- START OF INTEGRATED LOGIC ---
                     
+                    # Heuristic to detect the Capitaline-style single messy table
+                    # A single large table is a strong indicator of this format.
+                    if len(tables) == 1 and tables[0].shape[0] > 50:
+                        self.logger.info("Detected single large table, attempting specialized Capitaline parser.")
+                        # Use the new, specialized parser for this format
+                        return self._process_capitaline_table(tables[0])
+                
+                    # --- END OF INTEGRATED LOGIC ---
                     # Process each table to identify statement type
+                    self.logger.info("Multiple tables found, proceeding with standard multi-statement parser.")
                     processed_dfs = []
                     
                     for i, table in enumerate(tables):
@@ -9411,6 +9422,89 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error processing {statement_type} table: {e}")
             return None
+
+    
+    def _process_capitaline_table(self, table: pd.DataFrame) -> Optional[pd.DataFrame]:
+        """
+        NEW HELPER: Specifically processes a single, large, messy financial table from
+        sources like Capitaline by splitting it into clean statements.
+        """
+        self.logger.info("[CAPITALINE_PARSER] Running specialized parser for single-table format.")
+        
+        # 1. Basic Cleaning
+        df = table.dropna(how='all', axis=0).dropna(how='all', axis=1)
+        df.columns = range(df.shape[1]) # Reset columns for easy indexing
+    
+        # 2. Find the header row (the one with the most years)
+        header_row_idx = -1
+        year_cols = {} # Stores {column_index: year_string}
+    
+        for i, row in df.head(10).iterrows():
+            # Find all cells in this row that look like years (e.g., 2024, 202503)
+            temp_years = {
+                j: str(cell) for j, cell in row.items() 
+                if re.search(r'(20\d{2}|FY\s?\d{2,4})', str(cell))
+            }
+            if len(temp_years) >= 2 and len(temp_years) > len(year_cols):
+                year_cols = temp_years
+                header_row_idx = i
+                
+        if header_row_idx == -1:
+            self.logger.error("[CAPITALINE_PARSER] Could not find a valid year header row.")
+            return None
+    
+        # 3. Create a clean DataFrame with only the metric names and year data
+        particulars_col_idx = df.columns[0]
+        year_col_indices = list(year_cols.keys())
+        
+        clean_df = df[[particulars_col_idx] + year_col_indices].copy()
+        
+        # Set the index to be the metric names
+        clean_df = clean_df.set_index(clean_df.columns[0])
+        clean_df.index.name = 'Particulars'
+        
+        # Set the column headers to be the years
+        clean_df.columns = list(year_cols.values())
+        
+        # 4. Remove rows that are all empty or just section headers (like 'EXPENSES:')
+        clean_df = clean_df.dropna(how='all')
+        # Use regex to filter out rows that are likely section headers (all caps, ending in colon, etc.)
+        clean_df = clean_df[~clean_df.index.str.match(r'^[A-Z\s:]+$', na=False)]
+        
+        # 5. Convert all values to numeric
+        for col in clean_df.columns:
+            # Robust conversion to handle commas, hyphens, etc.
+            clean_df[col] = pd.to_numeric(
+                clean_df[col].astype(str).str.replace(',', '', regex=False).str.replace(r'^\s*-\s*$', '0', regex=True),
+                errors='coerce'
+            )
+    
+        # 6. Split into separate statements and add prefixes
+        statements = {}
+        pl_markers = ['Revenue From Operations', 'Profit After Tax', 'Earning Per Share']
+        bs_markers = ['Total Assets', 'Total Equity', 'Share Capital']
+        
+        pl_indices = [i for i, idx in enumerate(clean_df.index) if any(m in str(idx) for m in pl_markers)]
+        bs_indices = [i for i, idx in enumerate(clean_df.index) if any(m in str(idx) for m in bs_markers)]
+        
+        # Logic to slice the DataFrame based on markers
+        if pl_indices and bs_indices:
+            pl_start, pl_end = min(pl_indices), max(pl_indices) + 1
+            bs_start, bs_end = min(bs_indices), max(bs_indices) + 1
+            
+            pl_df = clean_df.iloc[pl_start:pl_end].copy()
+            pl_df.index = "ProfitLoss::" + pl_df.index.str.strip()
+            statements['ProfitLoss'] = pl_df
+    
+            bs_df = clean_df.iloc[bs_start:bs_end].copy()
+            bs_df.index = "BalanceSheet::" + bs_df.index.str.strip()
+            statements['BalanceSheet'] = bs_df
+            
+            # Combine and return
+            return pd.concat(statements.values(), axis=0)
+    
+        self.logger.error("[CAPITALINE_PARSER] Could not find markers to split statements.")
+        return None
     
     def _ensure_cash_flow_details(self, df: pd.DataFrame) -> pd.DataFrame:
         """

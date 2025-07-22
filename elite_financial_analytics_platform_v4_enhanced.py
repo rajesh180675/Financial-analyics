@@ -11215,7 +11215,97 @@ class FinancialAnalyticsPlatform:
                             st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
                         else:
                             st.metric("Spread", "N/A", help="Not calculated")
+            # --- NEW: ROE DECOMPOSITION ANALYSIS SECTION ---
+            st.markdown("---")
+            st.subheader("🔬 ROE Decomposition Analysis")
+            st.info("This analysis breaks down Return on Equity (ROE) into its core drivers: Operating Performance (RNOA) and the effect of Financial Leverage.")
+
+            # Check if all required components are available
+            required_components = ['Return on Equity (ROE) %', 'Return on Net Operating Assets (RNOA) %', 'Financial Leverage (FLEV)', 'Spread %']
+            if all(comp in ratios_df.index for comp in required_components):
                 
+                # 1. Prepare data for chart and table
+                roe = ratios_df.loc['Return on Equity (ROE) %']
+                rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %']
+                
+                # Calculate the leverage effect component
+                flev = ratios_df.loc['Financial Leverage (FLEV)']
+                spread = ratios_df.loc['Spread %']
+                leverage_effect = flev * spread
+                
+                # 2. Create the Decomposition Chart
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=ratios_df.columns,
+                    y=rnoa,
+                    name='Operating Return (RNOA)',
+                    marker_color='royalblue'
+                ))
+                fig.add_trace(go.Bar(
+                    x=ratios_df.columns,
+                    y=leverage_effect,
+                    name='Leverage Effect (FLEV x Spread)',
+                    marker_color='lightslategray'
+                ))
+                # Add the total ROE as a line to show the sum
+                fig.add_trace(go.Scatter(
+                    x=ratios_df.columns,
+                    y=roe,
+                    mode='lines+markers',
+                    name='Total ROE',
+                    line=dict(color='firebrick', width=3)
+                ))
+
+                fig.update_layout(
+                    barmode='relative', # Stacked bars (positive and negative)
+                    title='<b>Drivers of Return on Equity (ROE)</b>',
+                    xaxis_title='Year',
+                    yaxis_title='Percentage (%)',
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    hovermode='x unified',
+                    height=450
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 3. Display the Data Table
+                with st.expander("View Decomposition Data Table"):
+                    decomp_data = {
+                        'Total ROE (%)': roe,
+                        'Operating Return (RNOA %)': rnoa,
+                        'Leverage Effect (%)': leverage_effect,
+                        'Financial Leverage (FLEV)': flev,
+                        'Spread (%)': spread
+                    }
+                    decomp_df = pd.DataFrame(decomp_data).T
+                    st.dataframe(
+                        decomp_df.style.format("{:.2f}", na_rep="-").background_gradient(cmap='RdYlGn', axis=1, subset=pd.IndexSlice[['Total ROE (%)', 'Spread (%)'], :]),
+                        use_container_width=True
+                    )
+                
+                # 4. Generate a dynamic key takeaway
+                latest_roe = roe.iloc[-1]
+                latest_rnoa = rnoa.iloc[-1]
+                latest_leverage_effect = leverage_effect.iloc[-1]
+                
+                st.subheader("Key Takeaway")
+                if abs(latest_rnoa) > abs(latest_leverage_effect):
+                    primary_driver = "core operations (RNOA)"
+                    secondary_driver = "financial leverage"
+                else:
+                    primary_driver = "financial leverage"
+                    secondary_driver = "core operations (RNOA)"
+                
+                leverage_text = "positively contributing" if latest_leverage_effect > 0 else "negatively impacting"
+                
+                st.success(
+                    f"For the latest year, the ROE of **{latest_roe:.2f}%** was primarily driven by **{primary_driver}**, which contributed **{latest_rnoa:.2f}%**. "
+                    f"The use of **{secondary_driver}** is **{leverage_text}** to the total return, adding **{latest_leverage_effect:.2f}%**."
+                )
+
+            else:
+                st.warning("Could not perform ROE decomposition. Some required ratios (RNOA, FLEV, Spread) are missing.")
+            
+            # --- END OF NEW SECTION ---
                 # Display full ratios table
                 st.markdown("### Detailed Ratios Analysis")
                 st.dataframe(

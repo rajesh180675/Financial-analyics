@@ -5214,16 +5214,117 @@ class EnhancedPenmanNissimAnalyzer:
     # PASTE THIS CODE: Replace the _get_safe_series method in the EnhancedPenmanNissimAnalyzer class
 
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Enhanced safe series retrieval with comprehensive Capital Expenditure detection"""
+        """Enhanced safe series retrieval with STATEMENT TYPE VALIDATION and comprehensive detection"""
         self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
+        
+        # CRITICAL NEW SECTION: Define which metrics MUST come from which statements
+        STATEMENT_REQUIREMENTS = {
+            # P&L items MUST come from ProfitLoss::
+            'Revenue': 'ProfitLoss',
+            'Cost of Goods Sold': 'ProfitLoss',
+            'Operating Income': 'ProfitLoss',
+            'Operating Expenses': 'ProfitLoss',
+            'EBIT': 'ProfitLoss',
+            'Interest Expense': 'ProfitLoss',
+            'Interest Income': 'ProfitLoss',
+            'Tax Expense': 'ProfitLoss',
+            'Income Before Tax': 'ProfitLoss',
+            'Net Income': 'ProfitLoss',
+            'Depreciation': 'ProfitLoss',
+            'Other Income': 'ProfitLoss',
+            'Gross Profit': 'ProfitLoss',
+            
+            # Balance Sheet items MUST come from BalanceSheet::
+            'Total Assets': 'BalanceSheet',
+            'Total Liabilities': 'BalanceSheet',
+            'Total Equity': 'BalanceSheet',
+            'Current Assets': 'BalanceSheet',
+            'Current Liabilities': 'BalanceSheet',
+            'Cash and Cash Equivalents': 'BalanceSheet',
+            'Inventory': 'BalanceSheet',
+            'Trade Receivables': 'BalanceSheet',
+            'Property Plant Equipment': 'BalanceSheet',
+            'Short-term Debt': 'BalanceSheet',
+            'Long-term Debt': 'BalanceSheet',
+            'Share Capital': 'BalanceSheet',
+            'Retained Earnings': 'BalanceSheet',
+            'Investments': 'BalanceSheet',
+            'Short-term Investments': 'BalanceSheet',
+            'Accounts Payable': 'BalanceSheet',
+            'Accrued Expenses': 'BalanceSheet',
+            'Deferred Revenue': 'BalanceSheet',
+            
+            # Cash Flow items MUST come from CashFlow::
+            'Operating Cash Flow': 'CashFlow',
+            'Capital Expenditure': 'CashFlow',
+            'Investing Cash Flow': 'CashFlow',
+            'Financing Cash Flow': 'CashFlow',
+        }
+        
+        # Get the required statement type for this metric
+        required_statement = STATEMENT_REQUIREMENTS.get(target_metric)
         
         # First, try the mapped source
         source_metric = self._find_source_metric(target_metric)
-        if source_metric and source_metric in df.index:
-            series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
-            self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
-            self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
-            return series
+        
+        if source_metric:
+            self.logger.info(f"[PN-FETCH] Found mapping: '{target_metric}' -> '{source_metric}'")
+            
+            # CRITICAL: Validate the statement type
+            if required_statement:
+                statement_prefix = f"{required_statement}::"
+                if not source_metric.startswith(statement_prefix):
+                    self.logger.error(
+                        f"[PN-FETCH-ERROR] WRONG STATEMENT TYPE! "
+                        f"'{target_metric}' requires {required_statement} item, "
+                        f"but mapped to '{source_metric}'"
+                    )
+                    
+                    # Try to find the correct item
+                    self.logger.info(f"[PN-FETCH] Searching for correct {required_statement} item...")
+                    
+                    # Look for items with the right prefix
+                    correct_items = []
+                    for idx in df.index:
+                        if idx.startswith(statement_prefix):
+                            idx_clean = idx.split('::')[-1].lower()
+                            target_clean = target_metric.lower()
+                            
+                            # Check for matching keywords
+                            if any(keyword in idx_clean for keyword in target_clean.split()):
+                                correct_items.append(idx)
+                    
+                    if correct_items:
+                        self.logger.warning(
+                            f"[PN-FETCH] Found {len(correct_items)} correct items. "
+                            f"Please fix your mapping! Suggestions:"
+                        )
+                        for item in correct_items[:5]:
+                            self.logger.warning(f"  - {item}")
+                        
+                        # Don't use the wrong item - set source_metric to None to trigger pattern search
+                        source_metric = None
+                        self.logger.warning(f"[PN-FETCH] Ignoring wrong mapping, will search patterns instead")
+                    else:
+                        self.logger.error(f"[PN-FETCH] No {required_statement} items found for '{target_metric}'")
+                        
+                        # Show what's available
+                        available = [idx for idx in df.index if idx.startswith(statement_prefix)]
+                        if available:
+                            self.logger.info(f"[PN-FETCH] Available {required_statement} items:")
+                            for item in available[:10]:
+                                self.logger.info(f"  - {item}")
+                        
+                        # Set source_metric to None to trigger pattern search
+                        source_metric = None
+            
+            # If validation passed and we still have a valid source_metric, get the series
+            if source_metric and source_metric in df.index:
+                series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
+                self.logger.info(f"[PN-FETCH-SUCCESS] Retrieved '{target_metric}' from '{source_metric}'")
+                self.logger.debug(f"[PN-FETCH] Values: {series.to_dict()}")
+                self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping (validated)")
+                return series
         
         # Enhanced search patterns with ALL possible variations
         search_patterns = {
@@ -5415,6 +5516,20 @@ class EnhancedPenmanNissimAnalyzer:
                 'PBT',
                 'Income Before Tax',
             ],
+            
+            'Other Income': [
+                'ProfitLoss::Other Income',
+                'ProfitLoss::Other Operating Income',
+                'ProfitLoss::Miscellaneous Income',
+                'Other Income',
+            ],
+            
+            'Interest Income': [
+                'ProfitLoss::Interest Income',
+                'ProfitLoss::Investment Income',
+                'ProfitLoss::Income from Investments',
+                'Interest Income',
+            ],
         }
         
         # Try exact matches from patterns
@@ -5423,11 +5538,18 @@ class EnhancedPenmanNissimAnalyzer:
             
             for i, pattern in enumerate(search_patterns[target_metric]):
                 if pattern in df.index:
+                    # VALIDATE STATEMENT TYPE even for pattern matches
+                    if required_statement:
+                        if not pattern.startswith(f"{required_statement}::"):
+                            self.logger.warning(f"[PN-FETCH-PATTERN] Pattern '{pattern}' has wrong statement type, skipping")
+                            continue
+                    
                     series = df.loc[pattern].fillna(0 if default_zero else np.nan)
                     self.logger.info(f"[PN-FETCH-FOUND] Pattern match #{i+1}: '{pattern}' for '{target_metric}'")
                     self._log_metric_fetch(target_metric, pattern, series, f"Pattern search #{i+1}")
                     return series
-            # CRITICAL FIX: Total Liabilities
+        
+        # CRITICAL FIX: Total Liabilities
         if target_metric == "Total Liabilities":
             try:
                 # First, try to find it with patterns
@@ -5446,8 +5568,10 @@ class EnhancedPenmanNissimAnalyzer:
                 return liabilities
             except Exception as e:
                 self.logger.error(f"Failed to find or calculate Total Liabilities: {e}")
-                if default_zero: return pd.Series(0, index=df.columns)
+                if default_zero: 
+                    return pd.Series(0, index=df.columns)
                 raise ValueError(f"Could not find or calculate '{target_metric}'")
+        
         # Enhanced fuzzy matching for Capital Expenditure specifically
         if target_metric == 'Capital Expenditure':
             self.logger.info("[PN-FETCH-CAPEX] Performing enhanced CapEx fuzzy search...")
@@ -5467,7 +5591,7 @@ class EnhancedPenmanNissimAnalyzer:
                 if 'cashflow::' in idx_lower or 'cash flow' in idx_lower:
                     # Check for capex keywords
                     if any(keyword in idx_lower for keyword in capex_keywords):
-                        # Additional validation - should be an outflow (negative or positive that we'll make negative)
+                        # Additional validation - should be an outflow
                         series = df.loc[idx]
                         if series.notna().any():
                             self.logger.info(f"[PN-FETCH-CAPEX-FUZZY] Found potential CapEx: '{idx}'")
@@ -5483,6 +5607,11 @@ class EnhancedPenmanNissimAnalyzer:
         best_score = 0
         
         for idx in df.index:
+            # VALIDATE STATEMENT TYPE in fuzzy matching
+            if required_statement:
+                if not idx.startswith(f"{required_statement}::"):
+                    continue  # Skip items from wrong statement
+            
             idx_clean = str(idx).split('::')[-1].lower() if '::' in str(idx) else str(idx).lower()
             
             # Calculate similarity score
@@ -5502,7 +5631,7 @@ class EnhancedPenmanNissimAnalyzer:
         optional_metrics = [
             'Depreciation', 'Investments', 'Short-term Investments',
             'Interest Income', 'Accrued Expenses', 'Deferred Revenue',
-            'Total Liabilities', 'Capital Expenditure'  # Added CapEx as optional
+            'Total Liabilities', 'Capital Expenditure', 'Other Income'
         ]
         
         if default_zero or target_metric in optional_metrics:
@@ -5514,14 +5643,23 @@ class EnhancedPenmanNissimAnalyzer:
         # For required metrics, show helpful suggestions
         self.logger.error(f"[PN-FETCH-ERROR] Required metric '{target_metric}' not found")
         
-        # Show available cash flow items for Capital Expenditure
-        if target_metric == 'Capital Expenditure':
-            self.logger.info("[PN-FETCH-HELP] Available Cash Flow items in your data:")
-            cashflow_items = [idx for idx in df.index if 'cashflow::' in str(idx).lower()]
-            for item in cashflow_items[:20]:  # Show first 20
+        # Show available items based on required statement type
+        if required_statement:
+            self.logger.info(f"[PN-FETCH-HELP] Available {required_statement} items in your data:")
+            statement_items = [idx for idx in df.index if idx.startswith(f"{required_statement}::")]
+            for item in statement_items[:20]:  # Show first 20
                 self.logger.info(f"  - {item}")
-            if len(cashflow_items) > 20:
-                self.logger.info(f"  ... and {len(cashflow_items) - 20} more cash flow items")
+            if len(statement_items) > 20:
+                self.logger.info(f"  ... and {len(statement_items) - 20} more {required_statement} items")
+        else:
+            # Show available cash flow items for Capital Expenditure
+            if target_metric == 'Capital Expenditure':
+                self.logger.info("[PN-FETCH-HELP] Available Cash Flow items in your data:")
+                cashflow_items = [idx for idx in df.index if 'cashflow::' in str(idx).lower()]
+                for item in cashflow_items[:20]:  # Show first 20
+                    self.logger.info(f"  - {item}")
+                if len(cashflow_items) > 20:
+                    self.logger.info(f"  ... and {len(cashflow_items) - 20} more cash flow items")
         
         raise ValueError(f"Required metric '{target_metric}' not found")
 

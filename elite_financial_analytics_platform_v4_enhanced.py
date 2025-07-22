@@ -11185,37 +11185,58 @@ class FinancialAnalyticsPlatform:
                 ratios_df = results['ratios']
                 
                 # Display latest year metrics only if the DataFrame is not empty
+                # Display latest year metrics only if the DataFrame is not empty
                 if not ratios_df.empty and len(ratios_df.columns) > 0:
                     latest_year = ratios_df.columns[-1]
                     
                     col1, col2, col3, col4 = st.columns(4)
                     
                     with col1:
+                        # Check for RNOA
                         if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
                             rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
-                            st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
+                            # --- NEW: Add a check for NaN ---
+                            if pd.notna(rnoa):
+                                st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
+                            else:
+                                st.metric("RNOA", "N/A", help="Value is Not a Number (NaN)")
                         else:
                             st.metric("RNOA", "N/A", help="Not calculated")
                     
                     with col2:
+                        # Check for FLEV
                         if 'Financial Leverage (FLEV)' in ratios_df.index:
                             flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
-                            st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
+                            # --- NEW: Add a check for NaN ---
+                            if pd.notna(flev):
+                                st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
+                            else:
+                                st.metric("FLEV", "N/A", help="Value is Not a Number (NaN)")
                         else:
                             st.metric("FLEV", "N/A", help="Not calculated")
                     
                     with col3:
+                        # Check for NBC
                         if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
                             nbc = ratios_df.loc['Net Borrowing Cost (NBC) %', latest_year]
-                            st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
+                            # --- NEW: Add a check for NaN ---
+                            if pd.notna(nbc):
+                                st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
+                            else:
+                                st.metric("NBC", "N/A", help="Value is Not a Number (NaN)")
                         else:
                             st.metric("NBC", "N/A", help="Not calculated")
                     
                     with col4:
+                        # Check for Spread
                         if 'Spread %' in ratios_df.index:
                             spread = ratios_df.loc['Spread %', latest_year]
-                            delta_color = "normal" if spread > 0 else "inverse"
-                            st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
+                            # --- NEW: Add a check for NaN ---
+                            if pd.notna(spread):
+                                delta_color = "normal" if spread > 0 else "inverse"
+                                st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
+                            else:
+                                st.metric("Spread", "N/A", help="Value is Not a Number (NaN)")
                         else:
                             st.metric("Spread", "N/A", help="Not calculated")
                 

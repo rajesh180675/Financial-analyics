@@ -3667,6 +3667,12 @@ class EnhancedPenmanNissimAnalyzer:
         self.core_analyzer = None  # Don't use core analyzer due to NotImplemented error
         self._validate_input_data()
 
+     # ADD THE HELPER METHOD HERE (new addition)
+    def safe_format(self, value, format_spec=':.1f', default='N/A'):
+        if isinstance(value, (int, float)) and not np.isnan(value):
+            return f"{value{format_spec}}"
+        return default
+
     def _ensure_clean_data(self):
         """Ensure we have clean restructured data (only restructure once)"""
         if self._df_clean is None:
@@ -5050,14 +5056,24 @@ class EnhancedPenmanNissimAnalyzer:
             drivers['Revenue'] = revenue
             drivers['Revenue Growth %'] = revenue.pct_change() * 100
             
-            # CAGR calculation
+            # CAGR calculation with error handling
             if len(revenue.dropna()) > 1:
                 valid_revenue = revenue.dropna()
                 years = len(valid_revenue) - 1
-                if years > 0 and valid_revenue.iloc[0] > 0:
+                if years > 0 and valid_revenue.iloc[0] != 0:  # Avoid div by zero
                     cagr = ((valid_revenue.iloc[-1] / valid_revenue.iloc[0]) ** (1/years) - 1) * 100
-                    drivers['Revenue CAGR %'] = cagr
                     metadata['revenue_cagr'] = cagr
+                else:
+                    metadata['revenue_cagr'] = 'N/A'
+                    if years <= 0:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: insufficient periods")
+                    elif valid_revenue.iloc[0] == 0:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: division by zero (first value is 0)")
+                    else:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: unknown issue")
+            else:
+                metadata['revenue_cagr'] = 'N/A'
+                self.logger.warning("[PN-DRIVERS] Insufficient data for Revenue CAGR")
             
             # Get reformulated statements
             ref_is = self._reformulate_income_statement_enhanced(None)
@@ -5111,11 +5127,29 @@ class EnhancedPenmanNissimAnalyzer:
                 cash_conversion = (fcf / drivers['NOPAT'].replace(0, np.nan)) * 100
                 drivers['Cash Conversion %'] = cash_conversion
             
-            # Summary
+            # Summary with SAFE formatting
             self.logger.info("\n[PN-DRIVERS-SUMMARY] Value Drivers Summary:")
-            self.logger.info(f"  Revenue CAGR: {metadata.get('revenue_cagr', 'N/A'):.1f}%")
-            self.logger.info(f"  Latest NOPAT Margin: {drivers['NOPAT Margin %'].iloc[-1]:.1f}%")
-            self.logger.info(f"  Latest Asset Turnover: {drivers['Asset Turnover'].iloc[-1]:.2f}")
+            
+            cagr_value = metadata.get('revenue_cagr', 'N/A')
+            if isinstance(cagr_value, (int, float)) and not np.isnan(cagr_value):
+                self.logger.info(f"  Revenue CAGR: {cagr_value:.1f}%")
+            else:
+                self.logger.info(f"  Revenue CAGR: {cagr_value}")
+            
+            # Safe formatting for other metrics (example)
+            if 'NOPAT Margin %' in drivers.columns:
+                latest_nopat = drivers['NOPAT Margin %'].iloc[-1]
+                if isinstance(latest_nopat, (int, float)) and not np.isnan(latest_nopat):
+                    self.logger.info(f"  Latest NOPAT Margin: {latest_nopat:.1f}%")
+                else:
+                    self.logger.info(f"  Latest NOPAT Margin: N/A")
+            
+            if 'Asset Turnover' in drivers.columns:
+                latest_at = drivers['Asset Turnover'].iloc[-1]
+                if isinstance(latest_at, (int, float)) and not np.isnan(latest_at):
+                    self.logger.info(f"  Latest Asset Turnover: {latest_at:.2f}")
+                else:
+                    self.logger.info(f"  Latest Asset Turnover: N/A")
             
         except Exception as e:
             self.logger.error(f"[PN-DRIVERS-ERROR] Value drivers calculation failed: {e}", exc_info=True)

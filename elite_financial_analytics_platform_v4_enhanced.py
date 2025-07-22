@@ -3668,10 +3668,10 @@ class EnhancedPenmanNissimAnalyzer:
         self._validate_input_data()
 
     @staticmethod
-    def safe_format(value, format_spec=':.1f', default='N/A'):
-        if isinstance(value, (int, float)) and not np.isnan(value):
-            return f"{value:{format_spec}}"
-        return default
+    def safe_format(self, value, format_spec='.1f', default='N/A'):  # CHANGED: Default format_spec without leading ':'
+    if isinstance(value, (int, float)) and not np.isnan(value):
+        return f"{value:{format_spec}}"  # Correct: {value:{format_spec}} → e.g., {15.3:.1f} = '15.3'
+    return default
 
     def _ensure_clean_data(self):
         """Ensure we have clean restructured data (only restructure once)"""
@@ -5060,72 +5060,56 @@ class EnhancedPenmanNissimAnalyzer:
         metadata = {}
         
         try:
-            # Revenue drivers - check if revenue exists
+            # Revenue drivers
             revenue = self._get_safe_series(df, 'Revenue')
-            if revenue.dropna().empty:
-                self.logger.warning("[PN-DRIVERS] No valid Revenue data - skipping revenue-based metrics")
-                metadata['revenue_cagr'] = 'N/A'
-            else:
-                drivers['Revenue'] = revenue
-                drivers['Revenue Growth %'] = revenue.pct_change() * 100
-                
-                # CAGR calculation with error handling
+            drivers['Revenue'] = revenue
+            drivers['Revenue Growth %'] = revenue.pct_change() * 100
+            
+            # CAGR calculation with error handling
+            if len(revenue.dropna()) > 1:
                 valid_revenue = revenue.dropna()
-                if len(valid_revenue) > 1:
-                    years = len(valid_revenue) - 1
-                    first_val = valid_revenue.iloc[0]
-                    last_val = valid_revenue.iloc[-1]
-                    
-                    if years > 0 and first_val != 0 and not np.isnan(first_val) and not np.isnan(last_val):
-                        cagr = ((last_val / first_val) ** (1 / years) - 1) * 100
-                        metadata['revenue_cagr'] = cagr
-                    else:
-                        metadata['revenue_cagr'] = 'N/A'
-                        if years <= 0:
-                            self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: insufficient periods")
-                        elif first_val == 0:
-                            self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: division by zero (first value is 0)")
-                        else:
-                            self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: invalid/NaN values")
+                years = len(valid_revenue) - 1
+                if years > 0 and valid_revenue.iloc[0] != 0:  # Avoid div by zero
+                    cagr = ((valid_revenue.iloc[-1] / valid_revenue.iloc[0]) ** (1/years) - 1) * 100
+                    metadata['revenue_cagr'] = cagr
                 else:
                     metadata['revenue_cagr'] = 'N/A'
-                    self.logger.warning("[PN-DRIVERS] Insufficient data for Revenue CAGR")
+                    if years <= 0:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: insufficient periods")
+                    elif valid_revenue.iloc[0] == 0:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: division by zero (first value is 0)")
+                    else:
+                        self.logger.warning("[PN-DRIVERS] Could not calculate Revenue CAGR: unknown issue")
+            else:
+                metadata['revenue_cagr'] = 'N/A'
+                self.logger.warning("[PN-DRIVERS] Insufficient data for Revenue CAGR")
             
-            # Get reformulated statements (these may also have NaNs)
+            # Get reformulated statements
             ref_is = self._reformulate_income_statement_enhanced(None)
             ref_bs = self._reformulate_balance_sheet_enhanced(None)
             
-            # Profitability drivers - skip if no NOPAT
-            if 'Operating Income After Tax' in ref_is.index and not ref_is.loc['Operating Income After Tax'].dropna().empty:
+            # Profitability drivers
+            if 'Operating Income After Tax' in ref_is.index:
                 nopat = ref_is.loc['Operating Income After Tax']
                 drivers['NOPAT'] = nopat
                 drivers['NOPAT Growth %'] = nopat.pct_change() * 100
                 
-                # NOPAT Margin - only if revenue exists
-                if 'Revenue' in drivers.columns and not revenue.dropna().empty:
-                    nopat_margin = (nopat / revenue.replace(0, np.nan)) * 100
-                    drivers['NOPAT Margin %'] = nopat_margin
-                    drivers['NOPAT Margin Change %'] = nopat_margin.diff()
-                else:
-                    self.logger.warning("[PN-DRIVERS] Skipping NOPAT Margin: no valid revenue data")
-            else:
-                self.logger.warning("[PN-DRIVERS] No valid NOPAT data - skipping profitability drivers")
+                # NOPAT Margin
+                nopat_margin = (nopat / revenue.replace(0, np.nan)) * 100
+                drivers['NOPAT Margin %'] = nopat_margin
+                drivers['NOPAT Margin Change %'] = nopat_margin.diff()
             
-            # Investment drivers - skip if no NOA
-            if 'Net Operating Assets' in ref_bs.index and not ref_bs.loc['Net Operating Assets'].dropna().empty:
+            # Investment drivers
+            if 'Net Operating Assets' in ref_bs.index:
                 noa = ref_bs.loc['Net Operating Assets']
                 drivers['Net Operating Assets'] = noa
                 drivers['NOA Growth %'] = noa.pct_change() * 100
                 
-                # Investment Rate - only if NOPAT exists
+                # Investment Rate
                 if 'NOPAT' in drivers.columns:
                     noa_change = noa.diff()
                     investment_rate = (noa_change / drivers['NOPAT'].replace(0, np.nan)) * 100
                     drivers['Investment Rate %'] = investment_rate
-                else:
-                    self.logger.warning("[PN-DRIVERS] Skipping Investment Rate: no NOPAT data")
-            else:
-                self.logger.warning("[PN-DRIVERS] No valid NOA data - skipping investment drivers")
             
             # Working Capital drivers
             if self._find_source_metric('Current Assets') and self._find_source_metric('Current Liabilities'):
@@ -5135,49 +5119,37 @@ class EnhancedPenmanNissimAnalyzer:
                 working_capital = current_assets - current_liabilities
                 drivers['Working Capital'] = working_capital
                 
-                if 'Revenue' in drivers.columns and not revenue.dropna().empty:
+                if 'Revenue' in drivers.columns:
                     wc_to_revenue = (working_capital / revenue.replace(0, np.nan)) * 100
                     drivers['Working Capital % of Revenue'] = wc_to_revenue
-                else:
-                    self.logger.warning("[PN-DRIVERS] Skipping WC % of Revenue: no valid revenue data")
-            else:
-                self.logger.warning("[PN-DRIVERS] Missing Current Assets/Liabilities - skipping working capital drivers")
             
-            # Asset efficiency - only if revenue and assets exist
-            if 'Total Assets' in ref_bs.index and not ref_bs.loc['Total Assets'].dropna().empty and 'Revenue' in drivers.columns and not revenue.dropna().empty:
+            # Asset efficiency
+            if 'Total Assets' in ref_bs.index:
                 total_assets = ref_bs.loc['Total Assets']
                 asset_turnover = revenue / total_assets.replace(0, np.nan)
                 drivers['Asset Turnover'] = asset_turnover
-            else:
-                self.logger.warning("[PN-DRIVERS] Skipping Asset Turnover: missing assets or revenue data")
             
-            # Cash conversion - only if FCF and NOPAT exist
+            # Cash conversion
             fcf_df = self._calculate_free_cash_flow_enhanced(None)
-            if 'Free Cash Flow to Firm' in fcf_df.index and 'NOPAT' in drivers.columns and not drivers['NOPAT'].dropna().empty:
+            if 'Free Cash Flow to Firm' in fcf_df.index and 'NOPAT' in drivers.columns:
                 fcf = fcf_df.loc['Free Cash Flow to Firm']
                 cash_conversion = (fcf / drivers['NOPAT'].replace(0, np.nan)) * 100
                 drivers['Cash Conversion %'] = cash_conversion
-            else:
-                self.logger.warning("[PN-DRIVERS] Skipping Cash Conversion: missing FCF or NOPAT data")
             
             # Summary with SAFE formatting
             self.logger.info("\n[PN-DRIVERS-SUMMARY] Value Drivers Summary:")
             
             cagr_value = metadata.get('revenue_cagr', 'N/A')
-            self.logger.info(f"  Revenue CAGR: {self.safe_format(cagr_value, ':.1f', 'N/A')}%")
+            self.logger.info(f"  Revenue CAGR: {self.safe_format(cagr_value, '.1f', 'N/A')}%")  # FIXED: Pass '.1f' (no leading ':')
             
             # Safe formatting for other metrics (example)
-            if 'NOPAT Margin %' in drivers.columns and not drivers['NOPAT Margin %'].dropna().empty:
+            if 'NOPAT Margin %' in drivers.columns:
                 latest_nopat = drivers['NOPAT Margin %'].iloc[-1]
-                self.logger.info(f"  Latest NOPAT Margin: {self.safe_format(latest_nopat, ':.1f', 'N/A')}%")
-            else:
-                self.logger.info("  Latest NOPAT Margin: N/A (no data)")
+                self.logger.info(f"  Latest NOPAT Margin: {self.safe_format(latest_nopat, '.1f', 'N/A')}%")
             
-            if 'Asset Turnover' in drivers.columns and not drivers['Asset Turnover'].dropna().empty:
+            if 'Asset Turnover' in drivers.columns:
                 latest_at = drivers['Asset Turnover'].iloc[-1]
-                self.logger.info(f"  Latest Asset Turnover: {self.safe_format(latest_at, ':.2f', 'N/A')}")
-            else:
-                self.logger.info("  Latest Asset Turnover: N/A (no data)")
+                self.logger.info(f"  Latest Asset Turnover: {self.safe_format(latest_at, '.2f', 'N/A')}")
             
         except Exception as e:
             self.logger.error(f"[PN-DRIVERS-ERROR] Value drivers calculation failed: {e}", exc_info=True)
@@ -5189,6 +5161,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info("="*80 + "\n")
         
         return drivers.T
+    
     def calculate_all(self):
         """Calculate all Penman-Nissim metrics with optimized data flow"""
         try:

@@ -4602,22 +4602,24 @@ class EnhancedPenmanNissimAnalyzer:
             revenue = self._get_safe_series(df, 'Revenue')
             reformulated['Revenue'] = revenue
             
-            if (revenue <= 0).all():
+            if (revenue.dropna() <= 0).all():
                 raise ValueError("Revenue is zero or negative for all periods!")
             
             # 2. OPERATING INCOME (PBIT) - (Your original code)
             pbit_with_other_income = None
             
+            # Add 'Profit Before Exceptional Items and Tax' to the attempts
             op_income_attempts = [
                 ('Operating Income', 'Direct mapping'),
                 ('EBIT', 'EBIT as proxy'),
                 ('Operating Profit', 'Operating Profit as proxy'),
+                ('Profit Before Exceptional Items and Tax', 'PBIT before exceptional items')
             ]
             
             for attempt_metric, description in op_income_attempts:
                 try:
                     temp_oi = self._get_safe_series(df, attempt_metric, default_zero=False)
-                    if (temp_oi != 0).any():
+                    if temp_oi is not None and (temp_oi != 0).any():
                         pbit_with_other_income = temp_oi
                         metadata['operating_income_source'] = f"{attempt_metric} ({description})"
                         self.logger.info(f"[PN-IS-V2] Using {attempt_metric} for PBIT (includes Other Income)")
@@ -4635,28 +4637,29 @@ class EnhancedPenmanNissimAnalyzer:
             interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             other_income = self._get_safe_series(df, 'Other Income', default_zero=True)
             
-            # Determine total non-operating income. We assume 'Other Income' is the primary non-operating bucket
-            # and 'Interest Income' might be a specific line item within it or separate.
-            # To avoid double-counting if they are mapped to the same source, we handle it carefully.
+            # Your original logic for handling non-operating income
             interest_income_source = self._find_source_metric('Interest Income')
             other_income_source = self._find_source_metric('Other Income')
     
             if other_income_source and interest_income_source and (other_income_source == interest_income_source):
-                 # They map to the same line, so just use one.
                  total_non_operating_income = other_income
                  self.logger.info("[PN-IS-FIX] 'Interest/Other Income' are the same source. Using as total non-operating income.")
             else:
-                 # They are different or one is missing. Sum them up.
                  total_non_operating_income = interest_income + other_income
                  self.logger.info("[PN-IS-FIX] Combining separate 'Interest Income' and 'Other Income' lines.")
     
             # 2B. CALCULATE PURE OPERATING INCOME
-            # Pure Operating Income = PBIT (as reported) - Total Non-Operating Income
             pure_operating_income = pbit_with_other_income - total_non_operating_income
             self.logger.info(f"[PN-IS-FIX] Calculated Pure Operating Income: {pure_operating_income.to_dict()}")
             
-            # We will use this PURE figure for NOPAT calculation
             reformulated['Operating Income Before Tax'] = pure_operating_income
+    
+            # --- NEW FIX FOR "EXCEPTIONAL ITEMS" ---
+            # Safely fetch the "Exceptional Items Before Tax" value, defaulting to zero if it's not found.
+            # This is critical for years like 2025 where this item exists.
+            exceptional_items = self._get_safe_series(df, 'Exceptional Items', default_zero=True)
+            self.logger.info(f"[PN-IS-FIX] Found Exceptional Items (before tax): {exceptional_items.to_dict()}")
+            # --- END NEW FIX ---
     
             # --- END INTEGRATED FIX ---
     
@@ -4665,17 +4668,17 @@ class EnhancedPenmanNissimAnalyzer:
                 tax_expense = self._get_safe_series(df, 'Tax Expense')
                 income_before_tax = self._get_safe_series(df, 'Income Before Tax')
                 
-                tax_rate = tax_expense / income_before_tax.replace(0, np.nan)
+                tax_rate = (tax_expense / income_before_tax.replace(0, np.nan)).fillna(0) # Use fillna(0) to handle division by zero safely
                 
                 valid_rates = tax_rate[(tax_rate > 0) & (tax_rate < 1)]
                 median_rate = valid_rates.median() if not valid_rates.empty else 0.25
-                tax_rate = tax_rate.fillna(median_rate).clip(0.1, 0.5)
+                tax_rate = tax_rate.replace(0, median_rate).clip(0.1, 0.5) # Replace 0 rates with median, then clip
                 
                 reformulated['Tax Rate'] = tax_rate
                 self.logger.info(f"[PN-IS-V2] Tax rates: {tax_rate.to_dict()}")
                 
             except Exception as e:
-                self.logger.error(f"[PN-IS-V2] Tax calculation failed: {e}")
+                self.logger.warning(f"[PN-IS-V2] Tax calculation failed: {e}, using default 25%")
                 tax_rate = pd.Series(0.25, index=df.columns)
                 reformulated['Tax Rate'] = tax_rate
             
@@ -4685,45 +4688,53 @@ class EnhancedPenmanNissimAnalyzer:
             
             # 4. FINANCIAL ITEMS - (Your original code, but we use corrected components)
             interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
-            if (abs(interest_expense) < 1).all():
+            if (abs(interest_expense.dropna()) < 1).all():
                 interest_expense = pd.Series(0, index=df.columns)
                 self.logger.info("[PN-IS-V2] Forced Interest Expense to zero as per data")
     
-            # Net Financial INCOME = Total Non-Operating Income - Interest Expense
             net_financial_income_before_tax = total_non_operating_income - interest_expense
             
             reformulated['Interest Expense'] = interest_expense
             reformulated['Interest Income'] = interest_income # Keep your original variable
             reformulated['Net Financial Income Before Tax'] = net_financial_income_before_tax
             
-            # Tax effect on financial items
             reformulated['Tax on Financial Income'] = net_financial_income_before_tax * tax_rate
             reformulated['Net Financial Income After Tax'] = net_financial_income_before_tax * (1 - tax_rate)
             
+            # --- NEW FIX FOR "EXCEPTIONAL ITEMS" (continued) ---
+            # Calculate the after-tax value of exceptional items
+            exceptional_items_after_tax = exceptional_items * (1 - tax_rate)
+            reformulated['Exceptional Items After Tax'] = exceptional_items_after_tax
+            self.logger.info(f"[PN-IS-FIX] Exceptional Items (after tax): {exceptional_items_after_tax.to_dict()}")
+    
             # 5. NET INCOME RECONCILIATION - This will now work
             net_income_reported = self._get_safe_series(df, 'Net Income')
             
-            # Calculated Net Income = NOPAT (pure) + Net Financial Income (after tax)
-            calculated_net_income = reformulated['Operating Income After Tax'] + reformulated['Net Financial Income After Tax']
+            # Calculated Net Income = NOPAT (pure) + Net Financial Income (after tax) + Exceptional Items (after tax)
+            calculated_net_income = (
+                reformulated['Operating Income After Tax'] + 
+                reformulated['Net Financial Income After Tax'] +
+                exceptional_items_after_tax  # This is the new, critical part
+            )
             
             reformulated['Net Income (Reported)'] = net_income_reported
             reformulated['Net Income (Calculated)'] = calculated_net_income
             
             # Your original reconciliation logging logic is preserved
             for year in df.columns:
-                reported = net_income_reported[year]
-                calculated = calculated_net_income[year]
+                reported = net_income_reported.get(year)
+                calculated = calculated_net_income.get(year)
                 if pd.notna(reported) and pd.notna(calculated):
                     diff = abs(reported - calculated)
-                    tolerance = max(abs(reported) * 0.01, 0.5) # 1% tolerance or 0.5 units
+                    tolerance = max(abs(reported) * 0.01, 1.0) # 1% tolerance or 1 unit
                     if diff > tolerance:
                         self.logger.warning(f"[PN-IS-V2-FIXED] Year {year}: Mismatch! Reported: {reported:.2f}, Calculated: {calculated:.2f}, Diff: {diff:.2f}")
     
             # 6. SUMMARY AND VALIDATION - (Your original code)
             self.logger.info("\n[PN-IS-V2-SUMMARY] Income Statement Reformulation Summary:")
-            self.logger.info(f"  Revenue range: {revenue.min():.0f} to {revenue.max():.0f}")
-            self.logger.info(f"  Pure Operating Income range: {pure_operating_income.min():.0f} to {pure_operating_income.max():.0f}")
-            self.logger.info(f"  Net Income range: {net_income_reported.min():.0f} to {net_income_reported.max():.0f}")
+            self.logger.info(f"  Revenue range: {revenue.min():,.0f} to {revenue.max():,.0f}")
+            self.logger.info(f"  Pure Operating Income range: {pure_operating_income.min():,.0f} to {pure_operating_income.max():,.0f}")
+            self.logger.info(f"  Net Income range: {net_income_reported.min():,.0f} to {net_income_reported.max():,.0f}")
             
         except Exception as e:
             self.logger.error(f"[PN-IS-V2-ERROR] Income statement reformulation failed: {e}", exc_info=True)

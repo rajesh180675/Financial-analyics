@@ -3791,8 +3791,18 @@ class EnhancedPenmanNissimAnalyzer:
             for year in final_columns:
                 transfer_stats['total_attempts'] += 1
                 
-                # Get potential source columns for this year AND matching statement
+                # FIXED: Relaxed filter - prioritize columns with statement type, but fall back to any if none match
                 source_columns = [col for col in year_to_columns[year] if statement_type.lower() in str(col).lower()]
+                
+                if not source_columns:
+                    # Fallback: Use any column for this year if no statement match (prevents empty data)
+                    source_columns = year_to_columns[year]
+                    if source_columns:
+                        self.logger.warning(f"[PN-TRANSFER] No statement-matching columns for {idx_str} ({statement_type}) in {year} - using fallback columns")
+                    else:
+                        self.logger.debug(f"[PN-TRANSFER] No columns at all for {idx_str} in {year}")
+                        transfer_stats['null_values'] += 1
+                        continue
                 
                 # Prioritize columns
                 prioritized_columns = self._prioritize_columns_v2(
@@ -3820,24 +3830,19 @@ class EnhancedPenmanNissimAnalyzer:
                     
                     for col, val in original_values:
                         try:
-                            # FIXED: Enhanced parsing to handle strings and convert to numeric
+                            # Parse the value
                             if isinstance(val, str):
                                 val_clean = (val.replace(',', '')
                                                .replace('(', '-')
                                                .replace(')', '')
                                                .replace('₹', '')
                                                .replace('$', '')
-                                               .replace('%', '')  # Remove % if present
                                                .strip())
                                 
-                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil', '']:
-                                    numeric_val = np.nan
-                                else:
-                                    try:
-                                        numeric_val = float(val_clean)
-                                    except ValueError:
-                                        self.logger.warning(f"Non-numeric value '{val_clean}' in {col} for {idx} - skipping")
-                                        continue
+                                if val_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil']:
+                                    continue
+                                
+                                numeric_val = float(val_clean)
                             else:
                                 numeric_val = float(val)
                             
@@ -3850,7 +3855,7 @@ class EnhancedPenmanNissimAnalyzer:
                             self.logger.debug(f"Failed to parse {val} from {col}: {e}")
                             continue
                     
-                    if selected_value is not None and not np.isnan(selected_value):
+                    if selected_value is not None:
                         # Apply data quality rules but preserve the value
                         cleaned_value, stats = self._apply_comprehensive_quality_rules(
                             selected_value, idx_str, year, statement_type
@@ -9711,83 +9716,68 @@ class FinancialAnalyticsPlatform:
 
     def _merge_dataframes(self, dataframes: List[pd.DataFrame]) -> pd.DataFrame:
         """Merge dataframes by aligning years and preserving ALL statement types and rows"""
-        # Step 1: Collect all unique indices (rows/metrics) from all DFs
-        all_indices = set()
-        statement_dfs = {}  # Store DFs by statement type
+        # Step 1: Find all unique years across all DFs
+        all_years = set()
+        for df in dataframes:
+            for col in df.columns:
+                match = YEAR_REGEX.search(str(col))
+                if match:
+                    year = match.group(1)
+                    if year.startswith('FY'):
+                        year = year.replace('FY ', '20')
+                    all_years.add(year)
+        
+        final_columns = sorted(all_years)
+        
+        # Step 2: Create master DF with all rows and normalized year columns
+        master_index = set()
+        merged_data = {year: {} for year in final_columns}  # Temp dict for values
         
         for df in dataframes:
-            df_copy = df.copy()
-            statement_type = self._detect_statement_type(df_copy)
+            statement_type = self._detect_statement_type(df)
             
-            # Add statement prefix to index if not already present
-            prefixed_index = []
-            for idx in df_copy.index:
-                idx_str = str(idx).strip()
-                if '::' not in idx_str:
-                    idx_str = f"{statement_type}::{idx_str}"
-                prefixed_index.append(idx_str)
+            # Prefix indices
+            prefixed_index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
             
-            df_copy.index = prefixed_index
+            # Add to master index
+            master_index.update(prefixed_index)
             
-            # Collect unique indices
-            all_indices.update(df_copy.index)
-            
-            # Store the DF
-            if statement_type not in statement_dfs:
-                statement_dfs[statement_type] = []
-            statement_dfs[statement_type].append(df_copy)
+            # Normalize and transfer values
+            for col in df.columns:
+                match = YEAR_REGEX.search(str(col))
+                if match:
+                    year = match.group(1)
+                    if year.startswith('FY'):
+                        year = year.replace('FY ', '20')
+                    
+                    for i, idx in enumerate(df.index):
+                        prefixed_idx = prefixed_index[i]
+                        value = df.loc[idx, col]
+                        if pd.notna(value):
+                            if prefixed_idx not in merged_data[year]:
+                                merged_data[year][prefixed_idx] = value
+                            else:
+                                # If conflict, prefer non-zero or log
+                                if merged_data[year][prefixed_idx] == 0 and value != 0:
+                                    merged_data[year][prefixed_idx] = value
+                                self.logger.warning(f"Conflict for {prefixed_idx} in {year}: keeping {merged_data[year][prefixed_idx]}")
         
-        # Step 2: Create master DF with all unique rows and no columns yet
-        merged_df = pd.DataFrame(index=sorted(all_indices))
+        # Step 3: Build final DF
+        merged_df = pd.DataFrame(index=sorted(master_index), columns=final_columns)
         
-        # Step 3: For each statement type, merge its DFs and add to master
-        for statement_type, stmt_dfs in statement_dfs.items():
-            # Merge multiple DFs of same type (if any)
-            stmt_merged = pd.DataFrame(index=merged_df.index)
-            
-            for df in stmt_dfs:
-                # Normalize columns to just years
-                normalized_columns = {}
-                for col in df.columns:
-                    match = YEAR_REGEX.search(str(col))
-                    if match:
-                        year = match.group(1)
-                        if year.startswith('FY'):
-                            year = year.replace('FY ', '20')  # e.g., FY 20 -> 2020
-                        normalized_columns[col] = year
-                    else:
-                        normalized_columns[col] = col
-                
-                df = df.rename(columns=normalized_columns)
-                
-                # Update stmt_merged with values from this DF (only for its rows)
-                for idx in df.index:
-                    if idx in stmt_merged.index:
-                        for year in df.columns:
-                            if year not in stmt_merged.columns:
-                                stmt_merged[year] = np.nan  # Add new year column if missing
-                            if pd.notna(df.loc[idx, year]):
-                                stmt_merged.loc[idx, year] = df.loc[idx, year]
+        for year in final_columns:
+            for idx, value in merged_data[year].items():
+                merged_df.loc[idx, year] = value
         
-            # Now add to overall merged_df
-            for col in stmt_merged.columns:
-                if col not in merged_df.columns:
-                    merged_df[col] = np.nan
-                merged_df[col] = stmt_merged[col].combine_first(merged_df[col])
-        
-        # Step 4: Clean up
-        merged_df = merged_df.dropna(how='all', axis=1)  # Remove empty columns
-        merged_df = merged_df.sort_index(axis=1)  # Sort years
-        
-        # Fill NaNs with 0 for numeric consistency (optional, adjust as needed)
+        # Fill remaining NaNs with 0 (or np.nan if preferred)
         merged_df = merged_df.fillna(0)
         
-        # Log for debugging
+        # Log debugging
         self.logger.info(f"Merged DataFrame shape: {merged_df.shape}")
         self.logger.info(f"Merged columns (years): {merged_df.columns.tolist()}")
         
-        # Verify preservation by statement type
-        for stmt_type in statement_dfs:
+        # Verify row counts by type
+        for stmt_type in ['ProfitLoss', 'BalanceSheet', 'CashFlow']:
             type_rows = [idx for idx in merged_df.index if idx.startswith(f"{stmt_type}::")]
             self.logger.info(f"Preserved {len(type_rows)} rows for {stmt_type}")
         

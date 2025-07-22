@@ -3667,7 +3667,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.core_analyzer = None  # Don't use core analyzer due to NotImplemented error
         self._validate_input_data()
 
-     @staticmethod
+    @staticmethod
     def safe_format(value, format_spec=':.1f', default='N/A'):
         if isinstance(value, (int, float)) and not np.isnan(value):
             return f"{value{format_spec}}"

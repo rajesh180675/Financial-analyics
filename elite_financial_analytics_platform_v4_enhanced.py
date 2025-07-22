@@ -5201,150 +5201,86 @@ class EnhancedPenmanNissimAnalyzer:
     # PASTE THIS CODE: Replace the _get_safe_series method in the EnhancedPenmanNissimAnalyzer class
 
     def _get_safe_series(self, df: pd.DataFrame, target_metric: str, default_zero: bool = False) -> pd.Series:
-        """Enhanced safe series retrieval with proper fallbacks and validation"""
+        """
+        RESTORED & FIXED: Combines original robust pattern matching with targeted fixes.
+        """
         self.logger.info(f"\n[PN-FETCH-START] Looking for: '{target_metric}'")
         
-        # First, try the mapped source
+        # 1. Try the mapped source first (if mappings exist)
         source_metric = self._find_source_metric(target_metric)
         if source_metric and source_metric in df.index:
             series = df.loc[source_metric].fillna(0 if default_zero else np.nan)
             self.logger.info(f"[PN-FETCH-SUCCESS] Found '{target_metric}' mapped to '{source_metric}'")
             self._log_metric_fetch(target_metric, source_metric, series, "Direct mapping")
-            
-            # CRITICAL: Validate the data makes sense
-            if target_metric == "Interest Expense" and (series > 1000).any():
-                self.logger.warning(f"Interest Expense seems too high: {series.to_dict()}")
-                # Check if we're getting Balance Sheet data by mistake
-                if source_metric.startswith('BalanceSheet::'):
-                    self.logger.error("Interest Expense is mapped to a Balance Sheet item! This is wrong.")
-                    # Try to find the correct P&L item
-                    for idx in df.index:
-                        if 'Finance Cost' in idx and 'ProfitLoss::' in idx:
-                            series = df.loc[idx].fillna(0)
-                            self.logger.info(f"Corrected to use {idx}")
-                            break
-            
             return series
         
-        # Special handling for key metrics with fallbacks
-        
-        # Total Liabilities - CRITICAL FIX
-        if target_metric == "Total Liabilities":
-            self.logger.info("[PN-FETCH] Total Liabilities not directly mapped, calculating...")
-            try:
-                # Try to find it directly first
+        # 2. If no mapping, use the original robust pattern search
+        self.logger.warning(f"[PN-FETCH] No direct mapping for '{target_metric}'. Searching patterns...")
+    
+        # Define comprehensive search patterns from your original working code
+        search_patterns = {
+            'Total Assets': ['Total Assets', 'TOTAL ASSETS', 'Total Equity and Liabilities'],
+            'Total Equity': ['Total Equity', 'TOTAL EQUITY', 'Shareholders Funds', 'Net Worth'],
+            'Revenue': ['Revenue From Operations', 'Total Revenue', 'Net Sales', 'Sales'],
+            'Operating Income': ['Operating Profit', 'EBIT', 'Profit Before Exceptional Items and Tax'],
+            'Net Income': ['Profit After Tax', 'Net Profit', 'PAT', 'Profit/Loss For The Period'],
+            'Interest Expense': ['Finance Cost', 'Finance Costs', 'Interest Expense', 'Interest'], # CRITICAL FIX
+            'Tax Expense': ['Tax Expense', 'Current Tax', 'Total Tax Expense'],
+            'Capital Expenditure': [ # CRITICAL FIX: Only Cash Flow items
+                'Purchase of Fixed Assets', 'Purchase of Property, Plant and Equipment',
+                'Capital Expenditure', 'Additions to Fixed Assets'
+            ],
+            'Operating Cash Flow': ['Net Cash from Operating Activities', 'Operating Cash Flow'],
+            'Depreciation': ['Depreciation and Amortisation', 'Depreciation'],
+            # Add any other patterns from your original code here
+        }
+    
+        if target_metric in search_patterns:
+            patterns_to_check = search_patterns[target_metric]
+            for pattern in patterns_to_check:
                 for idx in df.index:
-                    if 'Total Liabilities' in idx and 'BalanceSheet::' in idx:
+                    # Check section alignment for critical metrics
+                    if target_metric == 'Capital Expenditure' and not idx.startswith('CashFlow::'):
+                        continue
+                    if target_metric == 'Interest Expense' and not idx.startswith('ProfitLoss::'):
+                        continue
+    
+                    if pattern.lower() in str(idx).lower():
                         series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                        self.logger.info(f"Found Total Liabilities at {idx}")
+                        self.logger.info(f"[PN-FETCH-PATTERN] Found '{target_metric}' via pattern '{pattern}' in '{idx}'")
+                        
+                        # VALIDATION: Check for the "wrong section" values
+                        if target_metric == 'Interest Expense' and (series > 100).any():
+                            self.logger.error(f"  - Discarding '{idx}' for Interest Expense, values are too high (likely BS data).")
+                            continue # Skip this match, it's wrong
+    
                         return series
-                
-                # Fallback: Calculate as Assets - Equity
+    
+        # 3. Handle special fallbacks for critical items
+    
+        # CRITICAL FIX for Total Liabilities
+        if target_metric == "Total Liabilities":
+            try:
                 assets = self._get_safe_series(df, "Total Assets")
                 equity = self._get_safe_series(df, "Total Equity")
                 liabilities = assets - equity
-                self.logger.warning("Total Liabilities calculated as Total Assets - Total Equity")
-                self._log_metric_fetch(target_metric, "CALCULATED", liabilities, "Assets - Equity")
+                self.logger.warning(f"[PN-FETCH-CALCULATED] Calculated '{target_metric}' as Total Assets - Total Equity.")
                 return liabilities
             except Exception as e:
                 self.logger.error(f"Failed to calculate Total Liabilities: {e}")
-                return pd.Series(0, index=df.columns)
+                if default_zero: return pd.Series(0, index=df.columns)
+    
+        # 4. If all else fails, handle the error
+        self.logger.error(f"[PN-FETCH-CRITICAL] Could not find '{target_metric}' after all attempts.")
         
-        # Operating Liabilities - Use Current Liabilities as proxy if not found
-        if target_metric == "Operating Liabilities":
-            self.logger.info("[PN-FETCH] Looking for Operating Liabilities...")
-            try:
-                # First try Current Liabilities
-                current_liab = self._get_safe_series(df, "Current Liabilities", default_zero=True)
-                if (current_liab > 0).any():
-                    self.logger.info("Using Current Liabilities as proxy for Operating Liabilities")
-                    return current_liab
-                
-                # Fallback: Try to calculate from Total Liabilities - Financial Liabilities
-                total_liab = self._get_safe_series(df, "Total Liabilities")
-                financial_liab = self._get_safe_series(df, "Financial Liabilities", default_zero=True)
-                operating_liab = total_liab - financial_liab
-                self.logger.info("Calculated Operating Liabilities as Total Liabilities - Financial Liabilities")
-                return operating_liab
-            except Exception as e:
-                self.logger.error(f"Failed to get Operating Liabilities: {e}")
-                return pd.Series(0, index=df.columns)
-        
-        # Financial Liabilities - Sum of short and long term debt
-        if target_metric == "Financial Liabilities":
-            try:
-                short_debt = self._get_safe_series(df, "Short-term Debt", default_zero=True)
-                long_debt = self._get_safe_series(df, "Long-term Debt", default_zero=True)
-                financial_liab = short_debt + long_debt
-                self.logger.info("Calculated Financial Liabilities as Short-term + Long-term Debt")
-                return financial_liab
-            except:
-                return pd.Series(0, index=df.columns)
-        
-        # Interest Expense - CRITICAL FIX
-        if target_metric == "Interest Expense":
-            self.logger.info("[PN-FETCH] Looking for Interest Expense (Finance Cost)...")
-            # Look specifically for P&L Finance Cost
-            for idx in df.index:
-                if ('Finance Cost' in idx or 'Interest Expense' in idx) and 'ProfitLoss::' in idx:
-                    series = df.loc[idx].fillna(0)
-                    self.logger.info(f"Found Interest Expense at {idx}: {series.to_dict()}")
-                    return series
-            
-            # If not found, return zeros (company may have no debt)
-            self.logger.info("No Interest Expense found, returning zeros")
-            return pd.Series(0, index=df.columns)
-        
-        # Capital Expenditure - Look in Cash Flow section
-        if target_metric == "Capital Expenditure":
-            self.logger.info("[PN-FETCH] Looking for Capital Expenditure...")
-            capex_patterns = [
-                'Purchase of Fixed Assets',
-                'Purchase of Property',
-                'Capital Expenditure',
-                'Additions to Fixed Assets',
-                'Investment in Fixed Assets'
-            ]
-            
-            for idx in df.index:
-                if 'CashFlow::' in idx:
-                    for pattern in capex_patterns:
-                        if pattern.lower() in idx.lower():
-                            series = df.loc[idx].fillna(0)
-                            # CapEx should be positive (it's an outflow)
-                            series = series.abs()
-                            self.logger.info(f"Found CapEx at {idx}: {series.to_dict()}")
-                            return series
-            
-            # Fallback to zero
-            self.logger.warning("No Capital Expenditure found")
-            return pd.Series(0, index=df.columns)
-        
-        # Enhanced search patterns for other metrics
-        search_patterns = {
-            'Revenue': ['Revenue From Operations', 'Total Revenue', 'Net Sales', 'Sales'],
-            'Operating Income': ['Operating Profit', 'EBIT', 'Profit Before Interest and Tax'],
-            'Net Income': ['Profit After Tax', 'Net Profit', 'PAT', 'Profit for the Period'],
-            'Tax Expense': ['Tax Expense', 'Current Tax', 'Income Tax'],
-            'Depreciation': ['Depreciation', 'Depreciation and Amortisation'],
-            'Operating Cash Flow': ['Net Cash from Operating Activities', 'Operating Cash Flow'],
-        }
-        
-        # Try pattern matching
-        if target_metric in search_patterns:
-            for pattern in search_patterns[target_metric]:
-                for idx in df.index:
-                    if pattern.lower() in idx.lower():
-                        series = df.loc[idx].fillna(0 if default_zero else np.nan)
-                        self.logger.info(f"Found {target_metric} via pattern '{pattern}' at {idx}")
-                        return series
-        
-        # Default behavior
-        if default_zero:
-            self.logger.info(f"[PN-FETCH-DEFAULT] Metric '{target_metric}' not found, using zeros")
-            return pd.Series(0, index=df.columns)
+        # Provide helpful debug info
+        available_rows = [row for row in df.index if target_metric.split(' ')[0].lower() in str(row).lower()]
+        if available_rows:
+            self.logger.error(f"  - Possible related rows in data: {available_rows[:5]}")
         else:
-            raise ValueError(f"Required metric '{target_metric}' not found")
+            self.logger.error("  - No similar rows found in the data.")
+            
+        raise ValueError(f"Required metric '{target_metric}' not found")
 
     def _calculate_similarity(self, str1: str, str2: str) -> float:
         """Calculate similarity between two strings"""

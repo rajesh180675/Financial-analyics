@@ -4560,102 +4560,178 @@ class EnhancedPenmanNissimAnalyzer:
         return self._cached_bs
 
     def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Enhanced income statement reformulation - ALWAYS uses cached clean data"""
+        """
+        FIXED VERSION: Enhanced income statement reformulation that ensures correct P&L values
+        """
         # Use cached result if available
         if self._cached_is is not None:
             return self._cached_is
         
-        # ALWAYS use clean data, ignore parameter
+        # ALWAYS use clean data
         df = self._df_clean
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-IS-START] Starting Income Statement Reformulation (V5)")
+        self.logger.info("[PN-IS-V2-START] Starting FIXED Income Statement Reformulation")
         self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
         metadata = {}
+        debug_info = {}  # Store what we actually found
         
         try:
-            # Revenue
-            revenue = self._get_safe_series(df, 'Revenue')
-            self._log_metric_fetch('Revenue', self._find_source_metric('Revenue'), 
-                                  revenue, "Income Statement Item")
+            # CRITICAL: Helper function to get ONLY P&L items
+            def get_pl_series(target_metric: str, required: bool = True) -> pd.Series:
+                """Get series ONLY from P&L rows with validation"""
+                self.logger.info(f"\n[PN-IS-V2] Looking for P&L metric: {target_metric}")
+                
+                # Find the mapped source
+                source_metric = self._find_source_metric(target_metric)
+                
+                if source_metric:
+                    self.logger.info(f"[PN-IS-V2] Mapped source: {source_metric}")
+                    
+                    # CRITICAL: Verify it's a P&L item
+                    if 'ProfitLoss::' in source_metric or 'P&L::' in source_metric:
+                        if source_metric in df.index:
+                            series = df.loc[source_metric]
+                            self.logger.info(f"[PN-IS-V2] ✓ Found P&L item: {source_metric}")
+                            self.logger.info(f"[PN-IS-V2] Values: {series.to_dict()}")
+                            
+                            # Store debug info
+                            debug_info[target_metric] = {
+                                'source': source_metric,
+                                'values': series.to_dict(),
+                                'non_null_count': series.notna().sum()
+                            }
+                            
+                            return series
+                        else:
+                            self.logger.error(f"[PN-IS-V2] Mapped item '{source_metric}' not found in data!")
+                    else:
+                        self.logger.error(f"[PN-IS-V2] WARNING: Mapped item '{source_metric}' is NOT a P&L item!")
+                        
+                        # Try to find the correct P&L item
+                        self.logger.info(f"[PN-IS-V2] Searching for P&L version of {target_metric}...")
+                        
+                        # Look for P&L items that might match
+                        pl_candidates = []
+                        for idx in df.index:
+                            if ('ProfitLoss::' in str(idx) or 'P&L::' in str(idx)):
+                                idx_clean = str(idx).split('::')[-1].lower()
+                                target_clean = target_metric.lower()
+                                
+                                # Check for keyword matches
+                                if target_metric == 'Revenue' and any(kw in idx_clean for kw in ['revenue', 'sales', 'turnover']):
+                                    pl_candidates.append(idx)
+                                elif target_metric == 'Operating Income' and any(kw in idx_clean for kw in ['operating', 'ebit', 'profit before exceptional']):
+                                    pl_candidates.append(idx)
+                                elif target_metric == 'Net Income' and any(kw in idx_clean for kw in ['net income', 'net profit', 'profit after tax', 'pat']):
+                                    pl_candidates.append(idx)
+                                elif target_metric == 'Tax Expense' and any(kw in idx_clean for kw in ['tax expense', 'tax', 'current tax']):
+                                    pl_candidates.append(idx)
+                                elif target_metric == 'Interest Expense' and any(kw in idx_clean for kw in ['interest', 'finance cost']):
+                                    pl_candidates.append(idx)
+                                elif target_metric == 'Income Before Tax' and any(kw in idx_clean for kw in ['profit before tax', 'pbt', 'income before tax']):
+                                    pl_candidates.append(idx)
+                        
+                        if pl_candidates:
+                            self.logger.warning(f"[PN-IS-V2] Found {len(pl_candidates)} P&L candidates for {target_metric}:")
+                            for candidate in pl_candidates[:5]:
+                                self.logger.warning(f"  - {candidate}")
+                            self.logger.error(f"[PN-IS-V2] Please fix your mapping! Map '{target_metric}' to one of these P&L items.")
+                
+                # If required and not found, raise error
+                if required:
+                    raise ValueError(f"Required P&L metric '{target_metric}' not found or incorrectly mapped")
+                
+                # Return zeros if optional
+                self.logger.warning(f"[PN-IS-V2] Using zeros for optional metric: {target_metric}")
+                return pd.Series(0, index=df.columns)
+            
+            # 1. REVENUE - Most critical
+            revenue = get_pl_series('Revenue', required=True)
             reformulated['Revenue'] = revenue
             
-            # Operating Income - try multiple variants
+            # Validate revenue
+            if (revenue <= 0).all():
+                raise ValueError("Revenue is zero or negative for all periods!")
+            
+            # 2. OPERATING INCOME
             operating_income = None
-            op_income_variants = [
-                'Operating Income', 'EBIT', 'Operating Profit',
-                'Profit Before Exceptional Items and Tax',
-                'Profit Before Interest and Tax'
+            
+            # Try variants in order of preference
+            op_income_attempts = [
+                ('Operating Income', 'Direct mapping'),
+                ('EBIT', 'EBIT as proxy'),
+                ('Operating Profit', 'Operating Profit as proxy'),
+                ('Profit Before Exceptional Items and Tax', 'Indian GAAP variant')
             ]
             
-            for variant in op_income_variants:
+            for attempt_metric, description in op_income_attempts:
                 try:
-                    operating_income = self._get_safe_series(df, variant)
-                    if operating_income is not None and (operating_income != 0).any():
-                        metadata['operating_income_source'] = variant
-                        self.logger.info(f"[PN-IS] Found operating income from: {variant}")
+                    temp_oi = get_pl_series(attempt_metric, required=False)
+                    if (temp_oi != 0).any():
+                        operating_income = temp_oi
+                        metadata['operating_income_source'] = f"{attempt_metric} ({description})"
+                        self.logger.info(f"[PN-IS-V2] Using {attempt_metric} for Operating Income")
                         break
                 except:
                     continue
             
             if operating_income is None:
-                # Try to calculate from components
-                self.logger.warning("[PN-IS] Calculating operating income from components...")
-                try:
-                    gross_profit = self._get_safe_series(df, 'Gross Profit')
-                    operating_expenses = self._get_safe_series(df, 'Operating Expenses', default_zero=True)
-                    operating_income = gross_profit - operating_expenses
-                    metadata['operating_income_calculated'] = True
-                except:
-                    raise ValueError("Cannot determine Operating Income")
+                raise ValueError("Could not find Operating Income in any form!")
             
             reformulated['Operating Income Before Tax'] = operating_income
             
-            # Tax calculation - CRITICAL
+            # 3. TAX CALCULATION
             try:
-                tax_expense = self._get_safe_series(df, 'Tax Expense')
-                income_before_tax = self._get_safe_series(df, 'Income Before Tax')
+                # Get tax expense and income before tax
+                tax_expense = get_pl_series('Tax Expense', required=True)
+                income_before_tax = get_pl_series('Income Before Tax', required=True)
                 
-                # Calculate effective tax rate year by year
+                # Calculate effective tax rate
                 tax_rate = pd.Series(index=df.columns, dtype=float)
                 
                 for year in df.columns:
                     if pd.notna(income_before_tax[year]) and income_before_tax[year] > 0:
-                        # Standard calculation
                         rate = tax_expense[year] / income_before_tax[year]
                         # Sanity check - corporate tax rates typically 15-40%
-                        tax_rate[year] = max(0.0, min(0.40, rate))
+                        if 0 <= rate <= 0.5:  # Allow up to 50% for some jurisdictions
+                            tax_rate[year] = rate
+                        else:
+                            self.logger.warning(f"[PN-IS-V2] Unusual tax rate {rate:.2%} in {year}, using 25%")
+                            tax_rate[year] = 0.25
                     else:
                         # Default rate
                         tax_rate[year] = 0.25
                 
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
-                
-                # NOPAT - Operating Income After Tax
                 reformulated['Operating Income After Tax'] = operating_income - reformulated['Tax on Operating Income']
                 
-                self._log_calculation(
-                    "NOPAT (Operating Income After Tax)",
-                    "Operating Income × (1 - Tax Rate)",
-                    {"Operating Income": operating_income, "Tax Rate": tax_rate},
-                    reformulated['Operating Income After Tax'],
-                    {"purpose": "This is the numerator for RNOA calculation"}
-                )
+                self.logger.info(f"[PN-IS-V2] Tax rates: {tax_rate.to_dict()}")
                 
             except Exception as e:
-                self.logger.warning(f"[PN-IS-TAX] Tax calculation issue: {e}. Using default 25% tax rate")
+                self.logger.error(f"[PN-IS-V2] Tax calculation failed: {e}")
+                # Use default 25% tax rate
                 tax_rate = 0.25
                 reformulated['Tax Rate'] = tax_rate
                 reformulated['Tax on Operating Income'] = operating_income * tax_rate
                 reformulated['Operating Income After Tax'] = operating_income * (1 - tax_rate)
-                metadata['tax_calculation'] = 'default'
             
-            # Financial items
-            interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
-            interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
+            # 4. FINANCIAL ITEMS
+            interest_expense = get_pl_series('Interest Expense', required=False)
+            interest_income = get_pl_series('Interest Income', required=False)
+            
+            # If interest income not found, try Other Income
+            if (interest_income == 0).all():
+                try:
+                    other_income = get_pl_series('Other Income', required=False)
+                    if (other_income != 0).any():
+                        interest_income = other_income * 0.5  # Assume 50% of other income is interest
+                        metadata['interest_income_estimated'] = True
+                except:
+                    pass
             
             # Net Financial Expense
             net_financial_expense = interest_expense - interest_income
@@ -4664,49 +4740,77 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Interest Income'] = interest_income
             reformulated['Net Financial Expense Before Tax'] = net_financial_expense
             
-            # Tax benefit on financial expense
-            reformulated['Tax Benefit on Financial Expense'] = net_financial_expense * tax_rate
-            reformulated['Net Financial Expense After Tax'] = net_financial_expense * (1 - tax_rate)
+            # Tax effect on financial expense
+            reformulated['Tax Benefit on Financial Expense'] = net_financial_expense * reformulated['Tax Rate']
+            reformulated['Net Financial Expense After Tax'] = net_financial_expense * (1 - reformulated['Tax Rate'])
             
-            # Net Income reconciliation
-            net_income = self._get_safe_series(df, 'Net Income')
+            # 5. NET INCOME RECONCILIATION
+            net_income_reported = get_pl_series('Net Income', required=True)
+            
+            # Calculate what net income should be
             calculated_net_income = (reformulated['Operating Income After Tax'] - 
                                     reformulated['Net Financial Expense After Tax'])
             
-            reformulated['Net Income (Reported)'] = net_income
+            reformulated['Net Income (Reported)'] = net_income_reported
             reformulated['Net Income (Calculated)'] = calculated_net_income
             
-            # Check reconciliation
-            income_diff = (net_income - calculated_net_income).abs().max()
-            metadata['income_reconciliation_diff'] = income_diff
+            # CRITICAL: Validation
+            for year in df.columns:
+                reported = net_income_reported[year]
+                calculated = calculated_net_income[year]
+                
+                if pd.notna(reported) and pd.notna(calculated):
+                    diff = abs(reported - calculated)
+                    tolerance = max(abs(reported) * 0.05, 1)  # 5% tolerance or 1 unit
+                    
+                    if diff > tolerance:
+                        self.logger.warning(
+                            f"[PN-IS-V2] Year {year}: Net Income mismatch! "
+                            f"Reported: {reported:.2f}, Calculated: {calculated:.2f}, Diff: {diff:.2f}"
+                        )
             
-            if income_diff > 0.01:  # More than 1 cent difference
-                self.logger.info(f"[PN-IS-CHECK] Income reconciliation difference: {income_diff:,.2f}")
-                self.logger.info(f"[PN-IS-CHECK] Reported vs Calculated:")
-                for year in df.columns:
-                    if pd.notna(net_income[year]):
-                        self.logger.debug(f"  {year}: {net_income[year]:,.2f} vs {calculated_net_income[year]:,.2f}")
+            # 6. SUMMARY AND VALIDATION
+            self.logger.info("\n[PN-IS-V2-SUMMARY] Income Statement Reformulation Summary:")
+            self.logger.info(f"  Revenue range: {revenue.min():.0f} to {revenue.max():.0f}")
+            self.logger.info(f"  Operating Income range: {operating_income.min():.0f} to {operating_income.max():.0f}")
+            self.logger.info(f"  Net Income range: {net_income_reported.min():.0f} to {net_income_reported.max():.0f}")
             
-            # Summary
-            self.logger.info("\n[PN-IS-SUMMARY] Income Statement Reformulation Summary:")
-            self.logger.info(f"  Revenue: {revenue.sum():,.0f}")
-            self.logger.info(f"  Operating Income: {operating_income.sum():,.0f}")
-            self.logger.info(f"  NOPAT: {reformulated['Operating Income After Tax'].sum():,.0f}")
-            self.logger.info(f"  Net Income: {net_income.sum():,.0f}")
+            # Log debug info
+            self.logger.info("\n[PN-IS-V2-DEBUG] Data Sources Used:")
+            for metric, info in debug_info.items():
+                self.logger.info(f"  {metric}: {info['source']} (non-null: {info['non_null_count']})")
+            
+            # Final validation
+            essential_items = ['Revenue', 'Operating Income Before Tax', 'Operating Income After Tax', 
+                              'Net Income (Reported)', 'Net Income (Calculated)']
+            
+            for item in essential_items:
+                if item in reformulated.index:
+                    if (reformulated.loc[item] == 0).all():
+                        self.logger.error(f"[PN-IS-V2] WARNING: {item} is all zeros!")
+                else:
+                    self.logger.error(f"[PN-IS-V2] MISSING: {item} not in reformulated statement!")
             
         except Exception as e:
-            self.logger.error(f"[PN-IS-ERROR] Income statement reformulation failed: {e}", exc_info=True)
+            self.logger.error(f"[PN-IS-V2-ERROR] Income statement reformulation failed: {e}", exc_info=True)
+            
+            # Show what we found for debugging
+            self.logger.error("\n[PN-IS-V2-DEBUG] Debug Information:")
+            for metric, info in debug_info.items():
+                self.logger.error(f"  {metric}: Found {info.get('non_null_count', 0)} values from {info.get('source', 'NOT FOUND')}")
+            
             raise
         
         self.calculation_metadata['income_statement'] = metadata
+        self.calculation_metadata['income_statement_debug'] = debug_info
         
-        self.logger.info("\n[PN-IS-END] Income Statement Reformulation Complete")
+        self.logger.info("\n[PN-IS-V2-END] Income Statement Reformulation Complete")
         self.logger.info("="*80 + "\n")
         
         # Cache result
         self._cached_is = reformulated.T
         return self._cached_is
-
+    
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhanced ratio calculations - uses cached reformulated statements"""
         self.logger.info("\n" + "="*80)

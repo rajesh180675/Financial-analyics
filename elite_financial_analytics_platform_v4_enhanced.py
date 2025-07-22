@@ -9024,9 +9024,39 @@ class FinancialAnalyticsPlatform:
             )
             self.config.set('app.debug', debug_mode)
             
-            if st.sidebar.button("Clear Cache"):
-                self._clear_all_caches()
-                st.success("Cache cleared!")
+          # In _render_sidebar (or a debug section)
+            if st.sidebar.button("🗑️ Clear Cache & Reset App", key="clear_cache_reset"):
+                # Step 1: Clear all internal caches
+                if hasattr(self, '_clear_all_caches'):
+                    self._clear_all_caches()  # Your existing cache clear method
+                
+                # Step 2: Reset key session state variables to initial values
+                reset_keys = [
+                    'analysis_data', 'analysis_hash', 'metric_mappings', 'pn_mappings', 
+                    'pn_results', 'ml_forecast_results', 'ai_mapping_result', 
+                    'benchmark_data', 'validation_results', 'data_quality_score',
+                    'outlier_detection_results', 'industry_benchmarks', 'custom_ratios',
+                    'custom_metrics', 'pn_active_template', 'temp_pn_mappings', 'pn_unmapped'
+                    # Add any other analysis-related keys here
+                ]
+                
+                for key in reset_keys:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                
+                # Step 3: Reset UI-related states
+                st.session_state['show_manual_mapping'] = False
+                st.session_state['show_tutorial'] = True  # Optional: Restart tutorial
+                st.session_state['tutorial_step'] = 0
+                st.session_state['data_source'] = None
+                
+                # Step 4: Clear Streamlit caches (for good measure)
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                
+                # Force full rerun
+                st.sidebar.success("✅ App fully reset! Ready for new analysis.")
+                st.rerun()
             
             if st.sidebar.button("Reset Configuration"):
                 self._reset_configuration()

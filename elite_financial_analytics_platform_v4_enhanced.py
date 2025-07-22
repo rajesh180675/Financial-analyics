@@ -3670,7 +3670,7 @@ class EnhancedPenmanNissimAnalyzer:
     @staticmethod
     def safe_format(value, format_spec=':.1f', default='N/A'):
         if isinstance(value, (int, float)) and not np.isnan(value):
-            return f"{value{format_spec}}"
+            return f"{value:{format_spec}}"
         return default
 
     def _ensure_clean_data(self):

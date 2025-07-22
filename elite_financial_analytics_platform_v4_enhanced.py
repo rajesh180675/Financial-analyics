@@ -9373,24 +9373,14 @@ class FinancialAnalyticsPlatform:
         Process a financial table based on its type
         """
         try:
-            # ADD DEBUG 1: Log initial table info
-            self.logger.info(f"[DEBUG] Processing {statement_type} table with shape: {table.shape}")
-            self.logger.info(f"[DEBUG] First row of table: {table.iloc[0].tolist() if len(table) > 0 else 'Empty'}")
-            
             # Find the header row (usually contains years)
             header_row = None
             for i in range(min(10, len(table))):
                 row = table.iloc[i].astype(str)
-                # ADD DEBUG 2: Log each row being checked
-                self.logger.debug(f"[DEBUG] Row {i}: {row.tolist()}")
-                
-                # Check if row contains year patterns
-                year_count = sum(1 for val in row if re.search(r'20\d{2}|19\d{2}', str(val)))
+                # FIXED: Check for both 4-digit and 6-digit year patterns
+                year_count = sum(1 for val in row if re.search(r'(20\d{2}|19\d{2}|20\d{4}|19\d{4})', str(val)))
                 if year_count >= 2:
                     header_row = i
-                    # ADD DEBUG 3: Log the header row found
-                    self.logger.info(f"[DEBUG] Found header row at index {i} with {year_count} year patterns")
-                    self.logger.info(f"[DEBUG] Header row content: {row.tolist()}")
                     break
             
             if header_row is None:
@@ -9400,11 +9390,6 @@ class FinancialAnalyticsPlatform:
             # Set the header and clean the data
             df = table.iloc[header_row:].copy()
             df.columns = table.iloc[header_row]
-            
-            # ADD DEBUG 4: Log columns after setting
-            self.logger.info(f"[DEBUG] Columns after setting header: {list(df.columns)}")
-            self.logger.info(f"[DEBUG] Number of columns: {len(df.columns)}")
-            
             df = df.iloc[1:]  # Remove the header row from data
             
             # Set the first column as index (usually contains line items)
@@ -9414,59 +9399,26 @@ class FinancialAnalyticsPlatform:
             # Clean column names
             df.columns = [str(col).strip() for col in df.columns]
             
-            # ADD DEBUG 5: Log columns after cleaning
-            self.logger.info(f"[DEBUG] Columns after cleaning: {list(df.columns)}")
-            
-            # ADD DEBUG 6: Check for specific years
-            year_columns = [col for col in df.columns if re.match(r'\d{6}', str(col))]
-            self.logger.info(f"[DEBUG] Year columns found: {year_columns}")
-            
             # Remove empty rows and columns
-            before_shape = df.shape
             df = df.dropna(how='all').dropna(axis=1, how='all')
-            after_shape = df.shape
-            
-            # ADD DEBUG 7: Log if columns were dropped
-            if before_shape[1] != after_shape[1]:
-                self.logger.warning(f"[DEBUG] Columns dropped: {before_shape[1]} -> {after_shape[1]}")
-                self.logger.info(f"[DEBUG] Remaining columns: {list(df.columns)}")
-            
-            # ADD DEBUG 8: Check if 202503 is still present
-            if '202503' not in df.columns and any('2025' in str(col) for col in before_shape):
-                self.logger.error("[DEBUG] 202503 column was dropped!")
             
             # Add statement type prefix to index
             df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
             
             # Convert numeric columns
             for col in df.columns:
-                # ADD DEBUG 9: Log conversion issues
-                original_col = df[col].copy()
                 df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''), errors='coerce')
-                
-                # Check if entire column became NaN
-                if df[col].isna().all() and not original_col.isna().all():
-                    self.logger.warning(f"[DEBUG] Column {col} became all NaN after conversion!")
             
             # Special handling for Cash Flow to ensure detail items are captured
             if statement_type == 'CashFlow':
                 df = self._ensure_cash_flow_details(df)
             
-            # ADD DEBUG 10: Final check
-            self.logger.info(f"[DEBUG] Final {statement_type} table shape: {df.shape}")
-            self.logger.info(f"[DEBUG] Final columns: {list(df.columns)}")
-            final_year_columns = [col for col in df.columns if re.match(r'\d{6}', str(col))]
-            self.logger.info(f"[DEBUG] Final year columns: {final_year_columns}")
-            
             return df
             
         except Exception as e:
             self.logger.error(f"Error processing {statement_type} table: {e}")
-            # ADD DEBUG 11: Log full traceback
-            import traceback
-            self.logger.error(f"[DEBUG] Full traceback:\n{traceback.format_exc()}")
             return None
-    
+        
     def _ensure_cash_flow_details(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Ensure cash flow statement includes detailed items, not just summaries

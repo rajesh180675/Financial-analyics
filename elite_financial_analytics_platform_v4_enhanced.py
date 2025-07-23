@@ -4979,8 +4979,7 @@ class EnhancedPenmanNissimAnalyzer:
         Version 6.0 - Complete rewrite with all fixes and enhancements
         """
 
-        self._logger.error(f"Error calculating coverage ratios: {e}")
-        self.logger.info("\n" + "="*80)
+        
         self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.0)")
         self.logger.info("="*80)
         

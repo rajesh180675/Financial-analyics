@@ -9053,40 +9053,32 @@ class FinancialAnalyticsPlatform:
         st.success("Configuration reset to defaults!")
 
     def _export_logs(self):
-        """Export application logs as ZIP with error handling"""
+        """
+        Prepares log data for download and stores it in session state.
+        This method does NOT render the button itself.
+        """
         try:
             log_dir = Path("logs")
-            if not log_dir.exists():
-                st.warning("No log directory found. No logs to export.")
+            if not log_dir.exists() or not any(log_dir.iterdir()):
+                st.warning("No log files found to export.")
+                self.set_state('log_download_data', None) # Clear any old data
                 return
-            
-            log_files = list(log_dir.glob("*.log"))
-            if not log_files:
-                st.warning("No log files found in the directory.")
-                return
-            
+    
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                for log_file in log_files:
+                for log_file in log_dir.glob("*.log"):
                     zip_file.write(log_file, arcname=log_file.name)
             
             zip_buffer.seek(0)
-            
-            st.download_button(
-                label="📥 Download Logs ZIP",
-                data=zip_buffer,
-                file_name=f"app_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                mime="application/zip",
-                key="download_logs_unique"  # FIXED: Unique key to avoid duplication
-            )
-            st.success(f"Exported {len(log_files)} log files!")
-            
-        except PermissionError:
-            st.error("Permission denied when accessing logs. Check file permissions.")
+            # Store the prepared data in session state
+            self.set_state('log_download_data', zip_buffer.getvalue())
+            self.logger.info("Log data prepared for download.")
+    
         except Exception as e:
-            st.error(f"Failed to export logs: {str(e)}")
-            self.logger.error(f"Log export error: {e}", exc_info=True)
-
+            st.error(f"Failed to prepare logs for export: {e}")
+            self.logger.error(f"Log export preparation error: {e}", exc_info=True)
+            self.set_state('log_download_data', None)
+        
     @error_boundary()
     @critical_method
     def run(self):
@@ -9923,8 +9915,24 @@ class FinancialAnalyticsPlatform:
             if st.sidebar.button("Reset Configuration"):
                 self._reset_configuration()
             
-            if st.sidebar.button("Export Logs"):
-                self._export_logs()
+            # --- CORRECTED LOG DOWNLOAD LOGIC ---
+            # 1. The preparation button
+            if st.sidebar.button("Prepare Logs for Download"):
+                self._export_logs() # This now prepares data and saves to session state
+    
+            # 2. The download button, which appears only after data is prepared
+            log_data = self.get_state('log_download_data')
+            if log_data:
+                st.sidebar.download_button(
+                    label="📥 Download Log File",
+                    data=log_data,
+                    file_name=f"app_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                    mime="application/zip",
+                    key="download_logs_final_btn",
+                    # On click, Streamlit handles the download and we can clear the state
+                    on_click=lambda: self.set_state('log_download_data', None)
+                )
+                st.sidebar.info("Click the button above to download the prepared log file.")
             
             if debug_mode:
                 perf_summary = performance_monitor.get_performance_summary()

@@ -4973,660 +4973,720 @@ class EnhancedPenmanNissimAnalyzer:
         # Conservative default - assume not included
         return False
     
-    def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         """
         Enhanced ratio calculations with comprehensive error handling and edge case management
-        Version 6.0 - Complete rewrite with all fixes and enhancements
+        Version 7.0 - Complete rewrite with all fixes and enhancements
         """
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.0)")
+        self.logger.info("[RATIOS-START] Starting Enhanced Ratio Calculations (V7.0)")
         self.logger.info("="*80)
         
-        # Get reformulated statements (already cached)
-        ref_bs = self._reformulate_balance_sheet_enhanced(None)
-        ref_is = self._reformulate_income_statement_enhanced(None)
-        
-        self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
-        self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
-        
-        # Initialize ratios DataFrame with years as index (will transpose at end)
-        ratios = pd.DataFrame(index=ref_bs.columns)
+        # Initialize ratios dictionary
+        ratios = {}
         metadata = {}
         
         # Track calculation status
         calculation_status = {
             'successful': [],
             'failed': [],
-            'warnings': []
+            'warnings': [],
+            'zero_divisions': [],
+            'missing_data': []
         }
         
         try:
-            # ========== 1. CORE PENMAN-NISSIM RATIOS ==========
+            # ========== STEP 1: EXTRACT ALL METRICS FROM ORIGINAL DATA ==========
+            self.logger.info("\n[RATIOS-EXTRACT] Extracting metrics from original data...")
             
-            # --- RNOA (Return on Net Operating Assets) ---
-            self.logger.info("\n[PN-RATIOS-RNOA] CALCULATING RNOA...")
+            # Enhanced metric extraction with multiple pattern matching
+            metric_patterns = {
+                # Balance Sheet Items
+                'total_assets': {
+                    'patterns': ['Total Assets', 'TOTAL ASSETS', 'Total Asset', 'Assets Total'],
+                    'statement': 'BalanceSheet'
+                },
+                'current_assets': {
+                    'patterns': ['Current Assets', 'Total Current Assets', 'CURRENT ASSETS', 'Current Asset'],
+                    'statement': 'BalanceSheet'
+                },
+                'non_current_assets': {
+                    'patterns': ['Non-current Assets', 'Non Current Assets', 'Fixed Assets', 'Long-term Assets'],
+                    'statement': 'BalanceSheet'
+                },
+                'cash': {
+                    'patterns': ['Cash and Cash Equivalents', 'Cash & Cash Equivalents', 'Cash', 'Cash and Bank'],
+                    'statement': 'BalanceSheet'
+                },
+                'inventory': {
+                    'patterns': ['Inventory', 'Inventories', 'Stock', 'Stock-in-Trade'],
+                    'statement': 'BalanceSheet'
+                },
+                'receivables': {
+                    'patterns': ['Trade Receivables', 'Accounts Receivable', 'Receivables', 'Debtors', 'Trade receivables'],
+                    'statement': 'BalanceSheet'
+                },
+                'total_liabilities': {
+                    'patterns': ['Total Liabilities', 'TOTAL LIABILITIES', 'Total Liability'],
+                    'statement': 'BalanceSheet'
+                },
+                'current_liabilities': {
+                    'patterns': ['Current Liabilities', 'Total Current Liabilities', 'CURRENT LIABILITIES'],
+                    'statement': 'BalanceSheet'
+                },
+                'non_current_liabilities': {
+                    'patterns': ['Non-current Liabilities', 'Non Current Liabilities', 'Long-term Liabilities'],
+                    'statement': 'BalanceSheet'
+                },
+                'short_term_debt': {
+                    'patterns': ['Short-term Debt', 'Short Term Borrowings', 'Current Borrowings', 'Short-term Borrowings'],
+                    'statement': 'BalanceSheet'
+                },
+                'long_term_debt': {
+                    'patterns': ['Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings', 'Long-term Borrowings'],
+                    'statement': 'BalanceSheet'
+                },
+                'total_equity': {
+                    'patterns': ['Total Equity', 'TOTAL EQUITY', 'Shareholders Equity', 'Net Worth', 'Equity'],
+                    'statement': 'BalanceSheet'
+                },
+                'share_capital': {
+                    'patterns': ['Share Capital', 'Equity Share Capital', 'Paid-up Capital', 'Capital Stock'],
+                    'statement': 'BalanceSheet'
+                },
+                
+                # Income Statement Items
+                'revenue': {
+                    'patterns': ['Revenue', 'Sales', 'Total Revenue', 'Net Sales', 'Revenue from Operations', 'Turnover'],
+                    'statement': 'ProfitLoss'
+                },
+                'cost_of_goods_sold': {
+                    'patterns': ['Cost of Goods Sold', 'COGS', 'Cost of Sales', 'Cost of Revenue', 'Cost of Materials'],
+                    'statement': 'ProfitLoss'
+                },
+                'gross_profit': {
+                    'patterns': ['Gross Profit', 'Gross Income', 'Gross Margin'],
+                    'statement': 'ProfitLoss'
+                },
+                'operating_expenses': {
+                    'patterns': ['Operating Expenses', 'OPEX', 'Operating Costs', 'Administrative Expenses'],
+                    'statement': 'ProfitLoss'
+                },
+                'operating_income': {
+                    'patterns': ['Operating Income', 'EBIT', 'Operating Profit', 'Profit Before Interest and Tax'],
+                    'statement': 'ProfitLoss'
+                },
+                'interest_expense': {
+                    'patterns': ['Interest Expense', 'Finance Costs', 'Interest', 'Finance Cost', 'Financial Expenses'],
+                    'statement': 'ProfitLoss'
+                },
+                'income_before_tax': {
+                    'patterns': ['Income Before Tax', 'Profit Before Tax', 'PBT', 'EBT'],
+                    'statement': 'ProfitLoss'
+                },
+                'tax_expense': {
+                    'patterns': ['Tax Expense', 'Income Tax', 'Tax', 'Current Tax', 'Total Tax Expense'],
+                    'statement': 'ProfitLoss'
+                },
+                'net_income': {
+                    'patterns': ['Net Income', 'Net Profit', 'Profit After Tax', 'PAT', 'Net Earnings', 'Bottom Line'],
+                    'statement': 'ProfitLoss'
+                },
+                'ebitda': {
+                    'patterns': ['EBITDA', 'Earnings Before Interest Tax Depreciation'],
+                    'statement': 'ProfitLoss'
+                },
+                'depreciation': {
+                    'patterns': ['Depreciation', 'Depreciation and Amortization', 'D&A', 'Depreciation Expense'],
+                    'statement': 'ProfitLoss'
+                },
+                
+                # Cash Flow Items
+                'operating_cash_flow': {
+                    'patterns': ['Operating Cash Flow', 'Cash from Operations', 'Net Cash from Operating Activities'],
+                    'statement': 'CashFlow'
+                },
+                'capex': {
+                    'patterns': ['Capital Expenditure', 'CAPEX', 'Purchase of Fixed Assets', 'Investment in PPE'],
+                    'statement': 'CashFlow'
+                },
+                'free_cash_flow': {
+                    'patterns': ['Free Cash Flow', 'FCF'],
+                    'statement': 'CashFlow'
+                }
+            }
             
-            rnoa_calculated = False
-            if 'Operating Income After Tax' in ref_is.index and 'Net Operating Assets' in ref_bs.index:
+            # Extract metric values
+            metric_values = {}
+            metric_sources = {}  # Track where each metric came from
+            
+            for metric_name, metric_info in metric_patterns.items():
+                value = self._find_metric_in_dataframe(df, metric_info['patterns'], metric_info.get('statement'))
+                if value is not None:
+                    metric_values[metric_name] = value
+                    # Find which pattern matched
+                    for pattern in metric_info['patterns']:
+                        if self._check_pattern_exists(df, pattern):
+                            metric_sources[metric_name] = pattern
+                            break
+                    self.logger.debug(f"[RATIOS-EXTRACT] Found {metric_name} from '{metric_sources.get(metric_name, 'unknown')}'")
+                else:
+                    calculation_status['missing_data'].append(metric_name)
+                    self.logger.debug(f"[RATIOS-EXTRACT] Missing: {metric_name}")
+            
+            # Log extraction summary
+            self.logger.info(f"[RATIOS-EXTRACT] Successfully extracted {len(metric_values)} out of {len(metric_patterns)} metrics")
+            
+            # ========== STEP 2: CALCULATE RATIOS BY CATEGORY ==========
+            
+            # Helper function for safe division with enhanced error handling
+            def safe_divide(numerator_key, denominator_key, multiplier=1, name="ratio"):
+                """Enhanced safe division with detailed logging"""
+                numerator = metric_values.get(numerator_key)
+                denominator = metric_values.get(denominator_key)
+                
+                if numerator is None:
+                    self.logger.debug(f"[RATIOS-CALC] {name}: Missing numerator ({numerator_key})")
+                    return None
+                if denominator is None:
+                    self.logger.debug(f"[RATIOS-CALC] {name}: Missing denominator ({denominator_key})")
+                    return None
+                
                 try:
-                    nopat = ref_is.loc['Operating Income After Tax']
-                    noa = ref_bs.loc['Net Operating Assets']
-                    
-                    # Use average NOA for more accurate calculation
-                    avg_noa = noa.rolling(window=2, min_periods=1).mean()
-                    
-                    # Handle division by zero
-                    rnoa = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_noa != 0) & avg_noa.notna()
-                    rnoa[mask] = (nopat[mask] / avg_noa[mask]) * 100
-                    rnoa[~mask] = np.nan
-                    
-                    ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
-                    rnoa_calculated = True
-                    calculation_status['successful'].append('RNOA')
-                    
-                    self._log_calculation(
-                        "RNOA",
-                        "(NOPAT / Average NOA) × 100",
-                        {"NOPAT": nopat, "Average NOA": avg_noa},
-                        rnoa,
-                        {"formula": "RNOA = (Operating Income After Tax / Average Net Operating Assets) × 100"}
-                    )
-                    
-                    self.logger.info(f"[PN-RATIOS-RNOA] CALCULATED RNOA VALUES: {rnoa.to_dict()}")
-                    
-                    # --- RNOA Components: OPM and NOAT ---
-                    if 'Revenue' in ref_is.index:
-                        revenue = ref_is.loc['Revenue']
+                    # Handle series division
+                    if hasattr(denominator, 'replace'):
+                        # Create a mask for valid divisions
+                        valid_mask = (denominator != 0) & denominator.notna() & numerator.notna()
+                        result = pd.Series(index=denominator.index, dtype=float)
+                        result[valid_mask] = (numerator[valid_mask] / denominator[valid_mask]) * multiplier
+                        result[~valid_mask] = np.nan
                         
-                        # Operating Profit Margin (OPM)
-                        opm = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (revenue != 0) & revenue.notna()
-                        opm[mask] = (nopat[mask] / revenue[mask]) * 100
-                        opm[~mask] = np.nan
-                        ratios['Operating Profit Margin (OPM) %'] = opm
+                        # Log zero divisions
+                        zero_divisions = (denominator == 0).sum()
+                        if zero_divisions > 0:
+                            calculation_status['zero_divisions'].append(f"{name}: {zero_divisions} zero divisions")
                         
-                        # Net Operating Asset Turnover (NOAT)
-                        noat = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (avg_noa != 0) & avg_noa.notna()
-                        noat[mask] = revenue[mask] / avg_noa[mask]
-                        noat[~mask] = np.nan
-                        ratios['Net Operating Asset Turnover (NOAT)'] = noat
-                        
-                        # Verify RNOA = OPM × NOAT
-                        calculated_rnoa = (opm * noat) / 100
-                        decomposition_diff = (rnoa - calculated_rnoa).abs().max()
-                        metadata['rnoa_decomposition_check'] = decomposition_diff
-                        
-                        if decomposition_diff > 0.1:
-                            calculation_status['warnings'].append(f'RNOA decomposition mismatch: {decomposition_diff:.2f}')
-                        
-                        self.logger.info("\n[PN-RATIOS-RNOA-DECOMP] RNOA Decomposition:")
-                        self.logger.info(f"  OPM: {opm.to_dict()}")
-                        self.logger.info(f"  NOAT: {noat.to_dict()}")
-                        self.logger.info(f"  Decomposition check diff: {decomposition_diff:.4f}")
-                        
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-RNOA-ERROR] Failed to calculate RNOA: {e}")
-                    calculation_status['failed'].append(f'RNOA: {str(e)}')
-                    # Add placeholder
-                    ratios['Return on Net Operating Assets (RNOA) %'] = pd.Series(np.nan, index=ref_bs.columns)
-            else:
-                self.logger.warning("[PN-RATIOS-RNOA] Missing data for RNOA calculation")
-                ratios['Return on Net Operating Assets (RNOA) %'] = pd.Series(np.nan, index=ref_bs.columns)
-                calculation_status['failed'].append('RNOA: Missing required data')
-            
-            # --- Financial Leverage (FLEV) ---
-            self.logger.info("\n[PN-RATIOS-FLEV] Calculating Financial Leverage...")
-            
-            flev_calculated = False
-            if 'Net Financial Assets' in ref_bs.index and 'Common Equity' in ref_bs.index:
-                try:
-                    nfa = ref_bs.loc['Net Financial Assets']
-                    ce = ref_bs.loc['Common Equity']
-                    
-                    avg_ce = ce.rolling(window=2, min_periods=1).mean()
-                    
-                    # FLEV = -NFA/CE (negative NFA means net debt)
-                    flev = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_ce != 0) & avg_ce.notna()
-                    flev[mask] = -nfa[mask] / avg_ce[mask]
-                    flev[~mask] = np.nan
-                    
-                    ratios['Financial Leverage (FLEV)'] = flev
-                    flev_calculated = True
-                    calculation_status['successful'].append('FLEV')
-                    
-                    # Log leverage status
-                    latest_flev = flev.iloc[-1] if not flev.empty else np.nan
-                    if pd.notna(latest_flev):
-                        if latest_flev < 0:
-                            self.logger.info("[PN-RATIOS-FLEV] Company has net financial assets (negative leverage)")
-                        elif latest_flev > 2:
-                            self.logger.warning("[PN-RATIOS-FLEV] High financial leverage detected")
-                    
-                    # Alternative: Debt to Equity
-                    if 'Total Debt' in ref_bs.index:
-                        total_debt = ref_bs.loc['Total Debt']
-                        debt_to_equity = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (avg_ce != 0) & avg_ce.notna()
-                        debt_to_equity[mask] = total_debt[mask] / avg_ce[mask]
-                        debt_to_equity[~mask] = np.nan
-                        ratios['Debt to Equity'] = debt_to_equity
-                        
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-FLEV-ERROR] Failed to calculate FLEV: {e}")
-                    calculation_status['failed'].append(f'FLEV: {str(e)}')
-                    ratios['Financial Leverage (FLEV)'] = pd.Series(np.nan, index=ref_bs.columns)
-            else:
-                self.logger.warning("[PN-RATIOS-FLEV] Missing data for FLEV calculation")
-                ratios['Financial Leverage (FLEV)'] = pd.Series(np.nan, index=ref_bs.columns)
-                calculation_status['failed'].append('FLEV: Missing required data')
-            
-            # --- Net Borrowing Cost (NBC) - ENHANCED VERSION ---
-            self.logger.info("\n[PN-RATIOS-NBC] Calculating Net Borrowing Cost (Enhanced)...")
-            
-            # Initialize NBC with zeros (important for companies with no debt)
-            nbc = pd.Series(0.0, index=ref_bs.columns)
-            nbc_calculated = False
-            
-            try:
-                if 'Net Financial Expense After Tax' in ref_is.index and 'Net Financial Assets' in ref_bs.index:
-                    nfe_after_tax = ref_is.loc['Net Financial Expense After Tax']
-                    nfa = ref_bs.loc['Net Financial Assets']
-                    
-                    avg_nfa = nfa.rolling(window=2, min_periods=1).mean()
-                    
-                    # Net Financial Obligations = -Net Financial Assets
-                    avg_net_financial_obligations = -avg_nfa
-                    
-                    # Calculate NBC only where there are actual financial obligations
-                    mask = (avg_net_financial_obligations > 0) & avg_net_financial_obligations.notna()
-                    
-                    if mask.any():
-                        nbc[mask] = (nfe_after_tax[mask] / avg_net_financial_obligations[mask]) * 100
-                        self.logger.info(f"[PN-RATIOS-NBC] NBC calculated for periods with net debt")
+                        return result
                     else:
-                        self.logger.info("[PN-RATIOS-NBC] Company has net cash position in all periods, NBC = 0")
-                    
-                    nbc_calculated = True
-                    calculation_status['successful'].append('NBC')
-                    
-                    # Handle edge cases
-                    # Cap NBC at reasonable bounds (-50% to 50%)
-                    nbc = nbc.clip(lower=-50, upper=50)
-                    
-                    # Log NBC status
-                    self.logger.info(f"[PN-RATIOS-NBC] NBC values: {nbc.to_dict()}")
-                    
-                else:
-                    self.logger.warning("[PN-RATIOS-NBC] Missing data for NBC calculation, using zero")
-                    calculation_status['warnings'].append('NBC: Missing data, defaulting to zero')
-                    
-            except Exception as e:
-                self.logger.error(f"[PN-RATIOS-NBC-ERROR] NBC calculation failed: {e}")
-                calculation_status['failed'].append(f'NBC: {str(e)}')
+                        # Scalar division
+                        if denominator == 0:
+                            calculation_status['zero_divisions'].append(f"{name}: scalar zero division")
+                            return np.nan
+                        return (numerator / denominator) * multiplier
+                        
+                except Exception as e:
+                    self.logger.error(f"[RATIOS-CALC] Error calculating {name}: {e}")
+                    calculation_status['failed'].append(f"{name}: {str(e)}")
+                    return None
             
-            # ALWAYS add NBC to ratios (even if zero)
-            ratios['Net Borrowing Cost (NBC) %'] = nbc
-            
-            # --- Alternative NBC using gross borrowing rate ---
-            self.logger.info("\n[PN-RATIOS-GROSS] Calculating Gross Borrowing Rate...")
-            
-            gross_rate = pd.Series(0.0, index=ref_bs.columns)
-            
+            # --- LIQUIDITY RATIOS ---
+            self.logger.info("\n[RATIOS-LIQUIDITY] Calculating Liquidity Ratios...")
             try:
-                if 'Interest Expense' in ref_is.index and 'Total Debt' in ref_bs.index:
-                    interest_expense = ref_is.loc['Interest Expense']
-                    total_debt = ref_bs.loc['Total Debt']
-                    avg_debt = total_debt.rolling(window=2, min_periods=1).mean()
+                liquidity_data = {}
+                
+                # Current Ratio = Current Assets / Current Liabilities
+                current_ratio = safe_divide('current_assets', 'current_liabilities', name="Current Ratio")
+                if current_ratio is not None:
+                    liquidity_data['Current Ratio'] = current_ratio
+                    calculation_status['successful'].append('Current Ratio')
+                    self.logger.info(f"[RATIOS-LIQUIDITY] Current Ratio calculated: {self._summarize_series(current_ratio)}")
+                
+                # Quick Ratio = (Current Assets - Inventory) / Current Liabilities
+                if metric_values.get('current_assets') is not None and metric_values.get('current_liabilities') is not None:
+                    inventory = metric_values.get('inventory', 0)  # Default to 0 if no inventory
+                    quick_assets = metric_values['current_assets'] - inventory
+                    quick_ratio = safe_divide(None, None)  # We'll calculate manually
                     
-                    # Only calculate where there's actual debt
-                    mask = (avg_debt > 0) & avg_debt.notna()
+                    cl = metric_values['current_liabilities']
+                    valid_mask = (cl != 0) & cl.notna() & quick_assets.notna()
+                    quick_ratio = pd.Series(index=cl.index, dtype=float)
+                    quick_ratio[valid_mask] = quick_assets[valid_mask] / cl[valid_mask]
+                    quick_ratio[~valid_mask] = np.nan
                     
-                    if mask.any():
-                        gross_rate[mask] = (interest_expense[mask] / avg_debt[mask]) * 100
-                        # Cap at reasonable bounds
-                        gross_rate = gross_rate.clip(lower=0, upper=30)
-                        self.logger.info(f"[PN-RATIOS-GROSS] Gross rate calculated for periods with debt")
-                    else:
-                        self.logger.info("[PN-RATIOS-GROSS] No debt found, gross borrowing rate = 0")
-                        
-                    calculation_status['successful'].append('Gross Borrowing Rate')
+                    liquidity_data['Quick Ratio'] = quick_ratio
+                    calculation_status['successful'].append('Quick Ratio')
+                    self.logger.info(f"[RATIOS-LIQUIDITY] Quick Ratio calculated: {self._summarize_series(quick_ratio)}")
+                
+                # Cash Ratio = Cash / Current Liabilities
+                cash_ratio = safe_divide('cash', 'current_liabilities', name="Cash Ratio")
+                if cash_ratio is not None:
+                    liquidity_data['Cash Ratio'] = cash_ratio
+                    calculation_status['successful'].append('Cash Ratio')
+                    self.logger.info(f"[RATIOS-LIQUIDITY] Cash Ratio calculated: {self._summarize_series(cash_ratio)}")
+                
+                # Working Capital to Total Assets
+                if (metric_values.get('current_assets') is not None and 
+                    metric_values.get('current_liabilities') is not None and
+                    metric_values.get('total_assets') is not None):
                     
+                    working_capital = metric_values['current_assets'] - metric_values['current_liabilities']
+                    wc_to_assets = safe_divide(None, None)  # Manual calculation
+                    
+                    ta = metric_values['total_assets']
+                    valid_mask = (ta != 0) & ta.notna() & working_capital.notna()
+                    wc_to_assets = pd.Series(index=ta.index, dtype=float)
+                    wc_to_assets[valid_mask] = (working_capital[valid_mask] / ta[valid_mask]) * 100
+                    wc_to_assets[~valid_mask] = np.nan
+                    
+                    liquidity_data['Working Capital to Total Assets %'] = wc_to_assets
+                    calculation_status['successful'].append('Working Capital to Total Assets')
+                
+                if liquidity_data:
+                    liquidity_df = pd.DataFrame(liquidity_data)
+                    ratios['Liquidity'] = liquidity_df.T
+                    self.logger.info(f"[RATIOS-LIQUIDITY] Created {len(liquidity_data)} liquidity ratios")
                 else:
-                    self.logger.warning("[PN-RATIOS-GROSS] Missing data for gross borrowing rate")
-                    calculation_status['warnings'].append('Gross Borrowing Rate: Missing data')
+                    self.logger.warning("[RATIOS-LIQUIDITY] No liquidity ratios could be calculated")
                     
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-GROSS-ERROR] Gross rate calculation failed: {e}")
-                calculation_status['failed'].append(f'Gross Borrowing Rate: {str(e)}')
+                self.logger.error(f"[RATIOS-LIQUIDITY-ERROR] Error calculating liquidity ratios: {e}", exc_info=True)
+                calculation_status['failed'].append(f'Liquidity Ratios: {str(e)}')
             
-            ratios['Gross Borrowing Rate %'] = gross_rate
-            
-            # --- Spread (RNOA - NBC) - ALWAYS CALCULATE ---
-            self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
-            
-            spread = pd.Series(0.0, index=ref_bs.columns)
-            
+            # --- PROFITABILITY RATIOS ---
+            self.logger.info("\n[RATIOS-PROFITABILITY] Calculating Profitability Ratios...")
             try:
-                if rnoa_calculated:
-                    # Spread = RNOA - NBC
-                    # FIX: Access as column, not row, since we haven't transposed yet
-                    spread = ratios['Return on Net Operating Assets (RNOA) %'] - nbc
-                    self.logger.info(f"[PN-RATIOS-SPREAD] Spread calculated: {spread.to_dict()}")
-                    calculation_status['successful'].append('Spread')
-                else:
-                    self.logger.warning("[PN-RATIOS-SPREAD] Cannot calculate spread without RNOA")
-                    calculation_status['warnings'].append('Spread: RNOA not available')
-                    
-            except Exception as e:
-                self.logger.error(f"[PN-RATIOS-SPREAD-ERROR] Spread calculation failed: {e}")
-                calculation_status['failed'].append(f'Spread: {str(e)}')
-            
-            # ALWAYS add Spread (both names for compatibility)
-            ratios['Spread %'] = spread
-            ratios['Leverage Spread %'] = spread
-            
-            # --- ROE and its decomposition ---
-            self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
-            
-            roe_calculated = False
-            if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
-                try:
-                    net_income = ref_is.loc['Net Income (Reported)']
-                    ce = ref_bs.loc['Common Equity']
-                    avg_ce = ce.rolling(window=2, min_periods=1).mean()
-                    
-                    roe = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_ce != 0) & avg_ce.notna()
-                    roe[mask] = (net_income[mask] / avg_ce[mask]) * 100
-                    roe[~mask] = np.nan
-                    
-                    ratios['Return on Equity (ROE) %'] = roe
-                    roe_calculated = True
-                    calculation_status['successful'].append('ROE')
-                    
-                    # ROE Decomposition: ROE = RNOA + (FLEV × Spread)
-                    if rnoa_calculated and flev_calculated:
-                        # FIX: Access as columns since we haven't transposed yet
-                        rnoa_values = ratios['Return on Net Operating Assets (RNOA) %']
-                        flev_values = ratios['Financial Leverage (FLEV)']
-                        spread_values = ratios['Spread %']
-                        
-                        calculated_roe = rnoa_values + (flev_values * spread_values)
-                        ratios['ROE (Calculated) %'] = calculated_roe
-                        
-                        # Check decomposition accuracy
-                        roe_diff = (roe - calculated_roe).abs()
-                        metadata['roe_decomposition_diff'] = roe_diff.max()
-                        
-                        if roe_diff.max() > 1.0:
-                            calculation_status['warnings'].append(f'ROE decomposition mismatch: {roe_diff.max():.2f}%')
-                        
-                        self.logger.info(f"[PN-RATIOS-ROE-DECOMP] ROE decomposition check:")
-                        self.logger.info(f"  Reported ROE: {roe.to_dict()}")
-                        self.logger.info(f"  Calculated ROE: {calculated_roe.to_dict()}")
-                        self.logger.info(f"  Max difference: {roe_diff.max():.2f}%")
-                        
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-ROE-ERROR] ROE calculation failed: {e}")
-                    calculation_status['failed'].append(f'ROE: {str(e)}')
-                    ratios['Return on Equity (ROE) %'] = pd.Series(np.nan, index=ref_bs.columns)
-            else:
-                self.logger.warning("[PN-RATIOS-ROE] Missing data for ROE calculation")
-                ratios['Return on Equity (ROE) %'] = pd.Series(np.nan, index=ref_bs.columns)
-                calculation_status['failed'].append('ROE: Missing required data')
-            
-            # ========== 2. ADDITIONAL PERFORMANCE METRICS ==========
-            
-            # --- Return on Assets (ROA) ---
-            if 'Total Assets' in ref_bs.index and 'Net Income (Reported)' in ref_is.index:
-                try:
-                    total_assets = ref_bs.loc['Total Assets']
-                    net_income = ref_is.loc['Net Income (Reported)']
-                    avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
-                    
-                    roa = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_assets != 0) & avg_assets.notna()
-                    roa[mask] = (net_income[mask] / avg_assets[mask]) * 100
-                    roa[~mask] = np.nan
-                    
-                    ratios['Return on Assets (ROA) %'] = roa
-                    calculation_status['successful'].append('ROA')
-                    
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-ROA-ERROR] ROA calculation failed: {e}")
-                    ratios['Return on Assets (ROA) %'] = pd.Series(np.nan, index=ref_bs.columns)
-            
-            # --- Growth Metrics ---
-            self.logger.info("\n[PN-RATIOS-GROWTH] Calculating growth metrics...")
-            
-            # Revenue Growth
-            if 'Revenue' in ref_is.index:
-                try:
-                    revenue = ref_is.loc['Revenue']
-                    revenue_growth = revenue.pct_change() * 100
-                    ratios['Revenue Growth %'] = revenue_growth
-                    
-                    # CAGR
-                    first_valid = revenue.first_valid_index()
-                    last_valid = revenue.last_valid_index()
-                    if first_valid and last_valid and first_valid != last_valid:
-                        years = revenue.index.get_loc(last_valid) - revenue.index.get_loc(first_valid)
-                        if years > 0 and revenue[first_valid] > 0:
-                            cagr = ((revenue[last_valid] / revenue[first_valid]) ** (1/years) - 1) * 100
-                            metadata['revenue_cagr'] = cagr
-                            self.logger.info(f"[PN-RATIOS-GROWTH] Revenue CAGR: {cagr:.2f}%")
-                            
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-GROWTH-ERROR] Growth calculation failed: {e}")
-            
-            # NOA Growth
-            if 'Net Operating Assets' in ref_bs.index:
-                try:
-                    noa = ref_bs.loc['Net Operating Assets']
-                    noa_growth = noa.pct_change() * 100
-                    ratios['NOA Growth %'] = noa_growth
-                except:
-                    pass
-            
-            # Net Income Growth
-            if 'Net Income (Reported)' in ref_is.index:
-                try:
-                    net_income = ref_is.loc['Net Income (Reported)']
-                    ni_growth = net_income.pct_change() * 100
-                    ratios['Net Income Growth %'] = ni_growth
-                except:
-                    pass
-            
-            # --- Efficiency Ratios ---
-            self.logger.info("\n[PN-RATIOS-EFFICIENCY] Calculating efficiency ratios...")
-            
-            # Asset Turnover
-            if 'Revenue' in ref_is.index and 'Total Assets' in ref_bs.index:
-                try:
-                    revenue = ref_is.loc['Revenue']
-                    total_assets = ref_bs.loc['Total Assets']
-                    avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
-                    
-                    asset_turnover = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_assets != 0) & avg_assets.notna()
-                    asset_turnover[mask] = revenue[mask] / avg_assets[mask]
-                    asset_turnover[~mask] = np.nan
-                    
-                    ratios['Asset Turnover'] = asset_turnover
-                    calculation_status['successful'].append('Asset Turnover')
-                    
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-EFFICIENCY-ERROR] Efficiency calculation failed: {e}")
-            
-            # Working Capital Turnover
-            if 'Revenue' in ref_is.index and all(x in ref_bs.index for x in ['Current Assets', 'Current Liabilities']):
-                try:
-                    revenue = ref_is.loc['Revenue']
-                    current_assets = ref_bs.loc['Current Assets']
-                    current_liabilities = ref_bs.loc['Current Liabilities']
-                    
-                    working_capital = current_assets - current_liabilities
-                    avg_wc = working_capital.rolling(window=2, min_periods=1).mean()
-                    
-                    wc_turnover = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (avg_wc != 0) & avg_wc.notna() & (avg_wc > 0)  # Only positive WC
-                    wc_turnover[mask] = revenue[mask] / avg_wc[mask]
-                    wc_turnover[~mask] = np.nan
-                    
-                    ratios['Working Capital Turnover'] = wc_turnover
-                    
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-WC-ERROR] Working capital turnover failed: {e}")
-            
-            # --- Liquidity Ratios ---
-            self.logger.info("\n[PN-RATIOS-LIQUIDITY] Calculating liquidity ratios...")
-            
-            if 'Current Assets' in ref_bs.index and 'Current Liabilities' in ref_bs.index:
-                try:
-                    current_assets = ref_bs.loc['Current Assets']
-                    current_liabilities = ref_bs.loc['Current Liabilities']
-                    
-                    # Current Ratio
-                    current_ratio = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (current_liabilities != 0) & current_liabilities.notna()
-                    current_ratio[mask] = current_assets[mask] / current_liabilities[mask]
-                    current_ratio[~mask] = np.nan
-                    
-                    ratios['Current Ratio'] = current_ratio
-                    
-                    # Quick Ratio (if inventory available)
-                    inventory_source = self._find_source_metric('Inventory')
-                    if inventory_source and inventory_source in self._df_clean.index:
-                        inventory = self._df_clean.loc[inventory_source]
-                        quick_assets = current_assets - inventory
-                        
-                        quick_ratio = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (current_liabilities != 0) & current_liabilities.notna()
-                        quick_ratio[mask] = quick_assets[mask] / current_liabilities[mask]
-                        quick_ratio[~mask] = np.nan
-                        
-                        ratios['Quick Ratio'] = quick_ratio
-                        
-                    # Cash Ratio
-                    if 'Cash and Equivalents' in ref_bs.index:
-                        cash = ref_bs.loc['Cash and Equivalents']
-                        
-                        cash_ratio = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (current_liabilities != 0) & current_liabilities.notna()
-                        cash_ratio[mask] = cash[mask] / current_liabilities[mask]
-                        cash_ratio[~mask] = np.nan
-                        
-                        ratios['Cash Ratio'] = cash_ratio
-                        
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-LIQUIDITY-ERROR] Liquidity calculation failed: {e}")
-            
-            # --- Coverage Ratios ---
-            self.logger.info("\n[PN-RATIOS-COVERAGE] Calculating coverage ratios...")
-            
-            # Interest Coverage Ratio
-            if 'Operating Income Before Tax' in ref_is.index and 'Interest Expense' in ref_is.index:
-                try:
-                    ebit = ref_is.loc['Operating Income Before Tax']
-                    interest_expense = ref_is.loc['Interest Expense']
-                    
-                    interest_coverage = pd.Series(index=ref_bs.columns, dtype=float)
-                    mask = (interest_expense != 0) & interest_expense.notna() & (interest_expense > 0)
-                    interest_coverage[mask] = ebit[mask] / interest_expense[mask]
-                    interest_coverage[~mask] = np.nan
-                    
-                    ratios['Interest Coverage'] = interest_coverage
-                    
-                except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-COVERAGE-ERROR] Coverage ratio failed: {e}")
-            
-            # --- Profitability Margins ---
-            if 'Revenue' in ref_is.index:
-                revenue = ref_is.loc['Revenue']
+                profitability_data = {}
                 
                 # Gross Profit Margin
-                if 'Gross Profit' in ref_is.index:
-                    try:
-                        gross_profit = ref_is.loc['Gross Profit']
-                        gpm = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (revenue != 0) & revenue.notna()
-                        gpm[mask] = (gross_profit[mask] / revenue[mask]) * 100
-                        gpm[~mask] = np.nan
-                        ratios['Gross Profit Margin %'] = gpm
-                    except:
-                        pass
+                if metric_values.get('gross_profit') is not None:
+                    gpm = safe_divide('gross_profit', 'revenue', 100, "Gross Profit Margin")
+                else:
+                    # Calculate from Revenue - COGS if Gross Profit not available
+                    if metric_values.get('revenue') is not None and metric_values.get('cost_of_goods_sold') is not None:
+                        gross_profit = metric_values['revenue'] - metric_values['cost_of_goods_sold']
+                        metric_values['gross_profit'] = gross_profit  # Store for later use
+                        gpm = safe_divide('gross_profit', 'revenue', 100, "Gross Profit Margin")
+                    else:
+                        gpm = None
                 
-                # EBITDA Margin
-                if 'EBITDA' in ref_is.index:
-                    try:
-                        ebitda = ref_is.loc['EBITDA']
-                        ebitda_margin = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (revenue != 0) & revenue.notna()
-                        ebitda_margin[mask] = (ebitda[mask] / revenue[mask]) * 100
-                        ebitda_margin[~mask] = np.nan
-                        ratios['EBITDA Margin %'] = ebitda_margin
-                    except:
-                        pass
+                if gpm is not None:
+                    profitability_data['Gross Profit Margin %'] = gpm
+                    calculation_status['successful'].append('Gross Profit Margin')
+                
+                # Operating Profit Margin
+                opm = safe_divide('operating_income', 'revenue', 100, "Operating Profit Margin")
+                if opm is not None:
+                    profitability_data['Operating Profit Margin %'] = opm
+                    calculation_status['successful'].append('Operating Profit Margin')
                 
                 # Net Profit Margin
-                if 'Net Income (Reported)' in ref_is.index:
-                    try:
-                        net_income = ref_is.loc['Net Income (Reported)']
-                        npm = pd.Series(index=ref_bs.columns, dtype=float)
-                        mask = (revenue != 0) & revenue.notna()
-                        npm[mask] = (net_income[mask] / revenue[mask]) * 100
-                        npm[~mask] = np.nan
-                        ratios['Net Profit Margin %'] = npm
-                    except:
-                        pass
+                npm = safe_divide('net_income', 'revenue', 100, "Net Profit Margin")
+                if npm is not None:
+                    profitability_data['Net Profit Margin %'] = npm
+                    calculation_status['successful'].append('Net Profit Margin')
+                
+                # EBITDA Margin
+                if metric_values.get('ebitda') is not None:
+                    ebitda_margin = safe_divide('ebitda', 'revenue', 100, "EBITDA Margin")
+                else:
+                    # Calculate EBITDA if not available
+                    if (metric_values.get('operating_income') is not None and 
+                        metric_values.get('depreciation') is not None):
+                        ebitda = metric_values['operating_income'] + metric_values['depreciation']
+                        metric_values['ebitda'] = ebitda
+                        ebitda_margin = safe_divide('ebitda', 'revenue', 100, "EBITDA Margin")
+                    else:
+                        ebitda_margin = None
+                
+                if ebitda_margin is not None:
+                    profitability_data['EBITDA Margin %'] = ebitda_margin
+                    calculation_status['successful'].append('EBITDA Margin')
+                
+                # Return on Assets (ROA)
+                roa = safe_divide('net_income', 'total_assets', 100, "Return on Assets")
+                if roa is not None:
+                    profitability_data['Return on Assets %'] = roa
+                    calculation_status['successful'].append('ROA')
+                
+                # Return on Equity (ROE)
+                roe = safe_divide('net_income', 'total_equity', 100, "Return on Equity")
+                if roe is not None:
+                    profitability_data['Return on Equity %'] = roe
+                    calculation_status['successful'].append('ROE')
+                
+                # Return on Capital Employed (ROCE)
+                if (metric_values.get('operating_income') is not None and 
+                    metric_values.get('total_assets') is not None and
+                    metric_values.get('current_liabilities') is not None):
+                    
+                    capital_employed = metric_values['total_assets'] - metric_values['current_liabilities']
+                    roce = pd.Series(index=capital_employed.index, dtype=float)
+                    valid_mask = (capital_employed > 0) & capital_employed.notna()
+                    roce[valid_mask] = (metric_values['operating_income'][valid_mask] / capital_employed[valid_mask]) * 100
+                    roce[~valid_mask] = np.nan
+                    
+                    profitability_data['ROCE %'] = roce
+                    calculation_status['successful'].append('ROCE')
+                
+                if profitability_data:
+                    profitability_df = pd.DataFrame(profitability_data)
+                    ratios['Profitability'] = profitability_df.T
+                    self.logger.info(f"[RATIOS-PROFITABILITY] Created {len(profitability_data)} profitability ratios")
+                    
+            except Exception as e:
+                self.logger.error(f"[RATIOS-PROFITABILITY-ERROR] Error calculating profitability ratios: {e}", exc_info=True)
+                calculation_status['failed'].append(f'Profitability Ratios: {str(e)}')
             
-            # ========== 3. QUALITY CHECKS AND VALIDATION ==========
+            # --- LEVERAGE/SOLVENCY RATIOS ---
+            self.logger.info("\n[RATIOS-LEVERAGE] Calculating Leverage Ratios...")
+            try:
+                leverage_data = {}
+                
+                # Total Debt calculation
+                if metric_values.get('short_term_debt') is not None and metric_values.get('long_term_debt') is not None:
+                    total_debt = metric_values['short_term_debt'] + metric_values['long_term_debt']
+                    metric_values['total_debt'] = total_debt
+                elif metric_values.get('long_term_debt') is not None:
+                    metric_values['total_debt'] = metric_values['long_term_debt']
+                
+                # Debt to Equity
+                if 'total_debt' in metric_values:
+                    de_ratio = safe_divide('total_debt', 'total_equity', name="Debt to Equity")
+                    if de_ratio is not None:
+                        leverage_data['Debt to Equity'] = de_ratio
+                        calculation_status['successful'].append('Debt to Equity')
+                
+                # Debt Ratio (Total Debt / Total Assets)
+                if 'total_debt' in metric_values:
+                    debt_ratio = safe_divide('total_debt', 'total_assets', name="Debt Ratio")
+                    if debt_ratio is not None:
+                        leverage_data['Debt Ratio'] = debt_ratio
+                        calculation_status['successful'].append('Debt Ratio')
+                
+                # Interest Coverage Ratio = EBIT / Interest Expense
+                if metric_values.get('operating_income') is not None and metric_values.get('interest_expense') is not None:
+                    interest_expense = metric_values['interest_expense']
+                    ebit = metric_values['operating_income']
+                    
+                    # Only calculate where interest expense > 0
+                    valid_mask = (interest_expense > 0) & interest_expense.notna() & ebit.notna()
+                    interest_coverage = pd.Series(index=interest_expense.index, dtype=float)
+                    interest_coverage[valid_mask] = ebit[valid_mask] / interest_expense[valid_mask]
+                    interest_coverage[~valid_mask] = np.nan
+                    
+                    leverage_data['Interest Coverage'] = interest_coverage
+                    calculation_status['successful'].append('Interest Coverage')
+                    self.logger.info(f"[RATIOS-LEVERAGE] Interest Coverage calculated: {self._summarize_series(interest_coverage)}")
+                
+                # Financial Leverage Ratio = Total Assets / Total Equity
+                fl_ratio = safe_divide('total_assets', 'total_equity', name="Financial Leverage")
+                if fl_ratio is not None:
+                    leverage_data['Financial Leverage'] = fl_ratio
+                    calculation_status['successful'].append('Financial Leverage')
+                
+                # Debt Service Coverage Ratio (if we have cash flow data)
+                if (metric_values.get('operating_cash_flow') is not None and 
+                    metric_values.get('interest_expense') is not None and
+                    'total_debt' in metric_values):
+                    
+                    # Simple approximation: OCF / (Interest + Principal Repayment)
+                    # Assuming 10% of total debt as annual principal repayment
+                    debt_service = metric_values['interest_expense'] + (metric_values['total_debt'] * 0.1)
+                    
+                    valid_mask = (debt_service > 0) & debt_service.notna()
+                    dscr = pd.Series(index=debt_service.index, dtype=float)
+                    dscr[valid_mask] = metric_values['operating_cash_flow'][valid_mask] / debt_service[valid_mask]
+                    dscr[~valid_mask] = np.nan
+                    
+                    leverage_data['Debt Service Coverage'] = dscr
+                    calculation_status['successful'].append('DSCR')
+                
+                if leverage_data:
+                    leverage_df = pd.DataFrame(leverage_data)
+                    ratios['Leverage'] = leverage_df.T
+                    self.logger.info(f"[RATIOS-LEVERAGE] Created {len(leverage_data)} leverage ratios")
+                    
+            except Exception as e:
+                self.logger.error(f"[RATIOS-LEVERAGE-ERROR] Error calculating leverage ratios: {e}", exc_info=True)
+                calculation_status['failed'].append(f'Leverage Ratios: {str(e)}')
             
-            self.logger.info("\n[PN-RATIOS-VALIDATION] Performing quality checks...")
+            # --- EFFICIENCY/ACTIVITY RATIOS ---
+            self.logger.info("\n[RATIOS-EFFICIENCY] Calculating Efficiency Ratios...")
+            try:
+                efficiency_data = {}
+                
+                # Asset Turnover
+                asset_turnover = safe_divide('revenue', 'total_assets', name="Asset Turnover")
+                if asset_turnover is not None:
+                    efficiency_data['Asset Turnover'] = asset_turnover
+                    calculation_status['successful'].append('Asset Turnover')
+                
+                # Working Capital Turnover
+                if (metric_values.get('current_assets') is not None and 
+                    metric_values.get('current_liabilities') is not None and
+                    metric_values.get('revenue') is not None):
+                    
+                    working_capital = metric_values['current_assets'] - metric_values['current_liabilities']
+                    
+                    # Only calculate for positive working capital
+                    valid_mask = (working_capital > 0) & working_capital.notna()
+                    wc_turnover = pd.Series(index=working_capital.index, dtype=float)
+                    wc_turnover[valid_mask] = metric_values['revenue'][valid_mask] / working_capital[valid_mask]
+                    wc_turnover[~valid_mask] = np.nan
+                    
+                    efficiency_data['Working Capital Turnover'] = wc_turnover
+                    calculation_status['successful'].append('Working Capital Turnover')
+                    self.logger.info(f"[RATIOS-EFFICIENCY] Working Capital Turnover calculated: {self._summarize_series(wc_turnover)}")
+                
+                # Inventory Turnover
+                inv_turnover = safe_divide('cost_of_goods_sold', 'inventory', name="Inventory Turnover")
+                if inv_turnover is not None:
+                    efficiency_data['Inventory Turnover'] = inv_turnover
+                    efficiency_data['Days Inventory Outstanding'] = 365 / inv_turnover.replace(0, np.nan)
+                    calculation_status['successful'].append('Inventory Turnover')
+                
+                # Receivables Turnover
+                rec_turnover = safe_divide('revenue', 'receivables', name="Receivables Turnover")
+                if rec_turnover is not None:
+                    efficiency_data['Receivables Turnover'] = rec_turnover
+                    efficiency_data['Days Sales Outstanding'] = 365 / rec_turnover.replace(0, np.nan)
+                    calculation_status['successful'].append('Receivables Turnover')
+                
+                # Fixed Asset Turnover
+                if metric_values.get('revenue') is not None and metric_values.get('non_current_assets') is not None:
+                    fa_turnover = safe_divide('revenue', 'non_current_assets', name="Fixed Asset Turnover")
+                    if fa_turnover is not None:
+                        efficiency_data['Fixed Asset Turnover'] = fa_turnover
+                        calculation_status['successful'].append('Fixed Asset Turnover')
+                
+                # Cash Conversion Cycle (if we have the components)
+                if all(key in efficiency_data for key in ['Days Inventory Outstanding', 'Days Sales Outstanding']):
+                    # Payables turnover
+                    if metric_values.get('cost_of_goods_sold') is not None:
+                        # Try to find payables
+                        payables = self._find_metric_in_dataframe(df, ['Trade Payables', 'Accounts Payable', 'Payables'])
+                        if payables is not None:
+                            payables_turnover = safe_divide('cost_of_goods_sold', None)  # Manual calc
+                            valid_mask = (payables > 0) & payables.notna()
+                            payables_turnover = pd.Series(index=payables.index, dtype=float)
+                            payables_turnover[valid_mask] = metric_values['cost_of_goods_sold'][valid_mask] / payables[valid_mask]
+                            
+                            days_payables = 365 / payables_turnover.replace(0, np.nan)
+                            efficiency_data['Days Payables Outstanding'] = days_payables
+                            
+                            # Cash Conversion Cycle = DIO + DSO - DPO
+                            ccc = (efficiency_data['Days Inventory Outstanding'] + 
+                                   efficiency_data['Days Sales Outstanding'] - 
+                                   days_payables)
+                            efficiency_data['Cash Conversion Cycle'] = ccc
+                            calculation_status['successful'].append('Cash Conversion Cycle')
+                
+                if efficiency_data:
+                    efficiency_df = pd.DataFrame(efficiency_data)
+                    ratios['Efficiency'] = efficiency_df.T
+                    self.logger.info(f"[RATIOS-EFFICIENCY] Created {len(efficiency_data)} efficiency ratios")
+                    
+            except Exception as e:
+                self.logger.error(f"[RATIOS-EFFICIENCY-ERROR] Error calculating efficiency ratios: {e}", exc_info=True)
+                calculation_status['failed'].append(f'Efficiency Ratios: {str(e)}')
+            
+            # --- VALUATION RATIOS (if market data available) ---
+            self.logger.info("\n[RATIOS-VALUATION] Calculating Valuation Ratios...")
+            try:
+                valuation_data = {}
+                
+                # Book Value per Share (if we have share capital info)
+                if metric_values.get('total_equity') is not None and metric_values.get('share_capital') is not None:
+                    # This is a simplified calculation
+                    book_value = metric_values['total_equity']
+                    valuation_data['Book Value'] = book_value
+                
+                # Add more valuation ratios here if market data is available
+                
+                if valuation_data:
+                    valuation_df = pd.DataFrame(valuation_data)
+                    ratios['Valuation'] = valuation_df.T
+                    
+            except Exception as e:
+                self.logger.error(f"[RATIOS-VALUATION-ERROR] Error calculating valuation ratios: {e}", exc_info=True)
+            
+            # --- GROWTH RATIOS ---
+            self.logger.info("\n[RATIOS-GROWTH] Calculating Growth Ratios...")
+            try:
+                growth_data = {}
+                
+                # Revenue Growth
+                if metric_values.get('revenue') is not None:
+                    revenue_growth = metric_values['revenue'].pct_change() * 100
+                    growth_data['Revenue Growth %'] = revenue_growth
+                    
+                    # CAGR calculation
+                    revenue_series = metric_values['revenue'].dropna()
+                    if len(revenue_series) > 1:
+                        years = len(revenue_series) - 1
+                        if years > 0 and revenue_series.iloc[0] > 0:
+                            cagr = ((revenue_series.iloc[-1] / revenue_series.iloc[0]) ** (1/years) - 1) * 100
+                            metadata['revenue_cagr'] = cagr
+                            self.logger.info(f"[RATIOS-GROWTH] Revenue CAGR: {cagr:.2f}%")
+                
+                # Net Income Growth
+                if metric_values.get('net_income') is not None:
+                    ni_growth = metric_values['net_income'].pct_change() * 100
+                    growth_data['Net Income Growth %'] = ni_growth
+                
+                # Asset Growth
+                if metric_values.get('total_assets') is not None:
+                    asset_growth = metric_values['total_assets'].pct_change() * 100
+                    growth_data['Asset Growth %'] = asset_growth
+                
+                # Equity Growth
+                if metric_values.get('total_equity') is not None:
+                    equity_growth = metric_values['total_equity'].pct_change() * 100
+                    growth_data['Equity Growth %'] = equity_growth
+                
+                if growth_data:
+                    growth_df = pd.DataFrame(growth_data)
+                    ratios['Growth'] = growth_df.T
+                    self.logger.info(f"[RATIOS-GROWTH] Created {len(growth_data)} growth ratios")
+                    
+            except Exception as e:
+                self.logger.error(f"[RATIOS-GROWTH-ERROR] Error calculating growth ratios: {e}", exc_info=True)
+            
+            # ========== STEP 3: QUALITY CHECKS AND VALIDATION ==========
+            self.logger.info("\n[RATIOS-VALIDATION] Performing quality checks...")
             
             # Check for ratios with all NaN values
             nan_ratios = []
-            for ratio_name in ratios.columns:  # Changed from ratios.index
-                if ratios[ratio_name].isna().all():
-                    nan_ratios.append(ratio_name)
+            for category, ratio_df in ratios.items():
+                if isinstance(ratio_df, pd.DataFrame):
+                    for ratio_name in ratio_df.index:
+                        if ratio_df.loc[ratio_name].isna().all():
+                            nan_ratios.append(f"{category}::{ratio_name}")
             
             if nan_ratios:
-                self.logger.warning(f"[PN-RATIOS-VALIDATION] Ratios with all NaN values: {nan_ratios}")
+                self.logger.warning(f"[RATIOS-VALIDATION] Ratios with all NaN values: {nan_ratios}")
                 calculation_status['warnings'].append(f"All-NaN ratios: {len(nan_ratios)}")
             
             # Check for extreme values
-            for ratio_name in ratios.columns:  # Changed from ratios.index
-                series = ratios[ratio_name].dropna()
-                if len(series) > 0:
-                    if series.abs().max() > 1000:
-                        self.logger.warning(f"[PN-RATIOS-VALIDATION] Extreme values in {ratio_name}: max={series.max():.2f}")
-                        calculation_status['warnings'].append(f"Extreme values in {ratio_name}")
+            for category, ratio_df in ratios.items():
+                if isinstance(ratio_df, pd.DataFrame):
+                    for ratio_name in ratio_df.index:
+                        series = ratio_df.loc[ratio_name].dropna()
+                        if len(series) > 0:
+                            # Check for extreme values based on ratio type
+                            if '%' in ratio_name:
+                                # Percentage ratios
+                                if series.abs().max() > 1000:
+                                    self.logger.warning(f"[RATIOS-VALIDATION] Extreme percentage in {ratio_name}: max={series.max():.2f}%")
+                                    calculation_status['warnings'].append(f"Extreme values in {ratio_name}")
+                            elif 'Ratio' in ratio_name or 'Turnover' in ratio_name:
+                                # Regular ratios
+                                if series.abs().max() > 100:
+                                    self.logger.warning(f"[RATIOS-VALIDATION] High ratio value in {ratio_name}: max={series.max():.2f}")
+                                    calculation_status['warnings'].append(f"High values in {ratio_name}")
             
-            # ========== 4. TRANSPOSE BEFORE ENSURING REQUIRED RATIOS ==========
-            
-            # Transpose the DataFrame NOW before the ensure section
-            ratios = ratios.T  # Now ratios has ratio names as index, years as columns
-            
-            # ========== 5. ENSURE ALL REQUIRED RATIOS EXIST ==========
-            
-            self.logger.info("\n[PN-RATIOS-ENSURE] Ensuring all required ratios exist...")
-            
-            required_ratios = [
-                # Core Penman-Nissim Ratios
-                'Return on Net Operating Assets (RNOA) %',
-                'Operating Profit Margin (OPM) %',
-                'Net Operating Asset Turnover (NOAT)',
-                'Financial Leverage (FLEV)',
-                'Net Borrowing Cost (NBC) %',
-                'Spread %',
-                'Leverage Spread %',
-                'Return on Equity (ROE) %',
-                'ROE (Calculated) %',
-                
-                # Additional Performance Ratios
-                'Return on Assets (ROA) %',
-                'Gross Borrowing Rate %',
-                'Debt to Equity',
-                
-                # Growth Ratios
-                'Revenue Growth %',
-                'NOA Growth %',
-                'Net Income Growth %',
-                
-                # Efficiency Ratios
-                'Asset Turnover',
-                'Working Capital Turnover',
-                
-                # Liquidity Ratios
-                'Current Ratio',
-                'Quick Ratio',
-                'Cash Ratio',
-                
-                # Coverage Ratios
-                'Interest Coverage',
-                
-                # Profitability Margins
-                'Gross Profit Margin %',
-                'EBITDA Margin %',
-                'Net Profit Margin %'
-            ]
-            
-            for ratio_name in required_ratios:
-                if ratio_name not in ratios.index:
-                    self.logger.info(f"[PN-RATIOS-ENSURE] Adding missing ratio: {ratio_name}")
-                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ratios.columns)
-                    calculation_status['warnings'].append(f"Added missing ratio: {ratio_name}")
-            
-            # ========== 6. CALCULATE RATIO TRENDS ==========
-            
-            self.logger.info("\n[PN-RATIOS-TRENDS] Analyzing ratio trends...")
-            
-            ratio_trends = self._analyze_ratio_trends(ratios)
-            metadata['ratio_trends'] = ratio_trends
-            
-            # ========== 7. CALCULATE RATIO QUALITY SCORES ==========
-            
-            self.logger.info("\n[PN-RATIOS-QUALITY] Calculating ratio quality scores...")
-            
-            quality_scores = self._calculate_ratio_quality_scores(ratios)
-            metadata['ratio_quality_scores'] = quality_scores
-            
-            # ========== 8. SUMMARY AND METADATA ==========
-            
-            # Store calculation status
+            # ========== STEP 4: METADATA AND SUMMARY ==========
             metadata['calculation_status'] = calculation_status
-            metadata['total_ratios'] = len(ratios.index)
+            metadata['total_ratios'] = sum(len(df.index) for df in ratios.values() if isinstance(df, pd.DataFrame))
             metadata['successful_calculations'] = len(calculation_status['successful'])
             metadata['failed_calculations'] = len(calculation_status['failed'])
             metadata['warnings'] = len(calculation_status['warnings'])
+            metadata['missing_metrics'] = calculation_status['missing_data']
+            metadata['metric_sources'] = metric_sources
             
             # Summary logging
-            self.logger.info("\n[PN-RATIOS-SUMMARY] Ratio Calculation Summary:")
-            self.logger.info(f"  Total ratios calculated: {len(ratios.index)}")
-            self.logger.info(f"  Successful calculations: {len(calculation_status['successful'])}")
-            self.logger.info(f"  Failed calculations: {len(calculation_status['failed'])}")
-            self.logger.info(f"  Warnings: {len(calculation_status['warnings'])}")
-            self.logger.info(f"  Key ratios: {list(ratios.columns[:10])}")  # Changed to columns
+            self.logger.info("\n[RATIOS-SUMMARY] Ratio Calculation Summary:")
+            self.logger.info(f"  Total ratios calculated: {metadata['total_ratios']}")
+            self.logger.info(f"  Successful calculations: {metadata['successful_calculations']}")
+            self.logger.info(f"  Failed calculations: {metadata['failed_calculations']}")
+            self.logger.info(f"  Warnings: {metadata['warnings']}")
+            self.logger.info(f"  Missing metrics: {len(metadata['missing_metrics'])}")
             
-            # Log all calculated ratios with their latest values
-            self.logger.info("\n[PN-RATIOS-ALL] All Calculated Ratios (Latest Values):")
-            for ratio_name in ratios.index:
-                latest_value = ratios.loc[ratio_name].iloc[-1] if not ratios.loc[ratio_name].empty else np.nan
-                if pd.notna(latest_value):
-                    self.logger.info(f"  {ratio_name}: {latest_value:.2f}")
-                else:
-                    self.logger.info(f"  {ratio_name}: N/A")
+            # Log categories summary
+            self.logger.info("\n[RATIOS-CATEGORIES] Ratios by Category:")
+            for category, ratio_df in ratios.items():
+                if isinstance(ratio_df, pd.DataFrame):
+                    self.logger.info(f"  {category}: {len(ratio_df.index)} ratios")
+                    for ratio in ratio_df.index:
+                        latest_value = ratio_df.loc[ratio].iloc[-1] if not ratio_df.loc[ratio].empty else np.nan
+                        if pd.notna(latest_value):
+                            self.logger.debug(f"    - {ratio}: {latest_value:.2f}")
             
             # Log any failures
             if calculation_status['failed']:
-                self.logger.error("\n[PN-RATIOS-FAILURES] Failed Calculations:")
+                self.logger.error("\n[RATIOS-FAILURES] Failed Calculations:")
                 for failure in calculation_status['failed']:
                     self.logger.error(f"  - {failure}")
             
-            # Log any warnings
-            if calculation_status['warnings']:
-                self.logger.warning("\n[PN-RATIOS-WARNINGS] Calculation Warnings:")
-                for warning in calculation_status['warnings']:
-                    self.logger.warning(f"  - {warning}")
+            # Log missing data
+            if calculation_status['missing_data']:
+                self.logger.warning("\n[RATIOS-MISSING] Missing Metrics:")
+                for missing in calculation_status['missing_data'][:10]:  # First 10
+                    self.logger.warning(f"  - {missing}")
+                if len(calculation_status['missing_data']) > 10:
+                    self.logger.warning(f"  ... and {len(calculation_status['missing_data']) - 10} more")
             
         except Exception as e:
-            self.logger.error(f"[PN-RATIOS-ERROR] Critical error in ratio calculation: {e}", exc_info=True)
-            # Ensure we return at least an empty DataFrame with required ratios
-            ratios = pd.DataFrame(index=required_ratios, columns=ref_bs.columns)
+            self.logger.error(f"[RATIOS-ERROR] Critical error in ratio calculation: {e}", exc_info=True)
             metadata['critical_error'] = str(e)
+            # Return at least empty dataframes for each category
+            ratios = {
+                'Liquidity': pd.DataFrame(),
+                'Profitability': pd.DataFrame(),
+                'Leverage': pd.DataFrame(),
+                'Efficiency': pd.DataFrame(),
+                'Growth': pd.DataFrame()
+            }
         
         finally:
             # Store metadata
             self.calculation_metadata['ratios'] = metadata
             
-            self.logger.info("\n[PN-RATIOS-END] Ratio Calculations Complete")
+            self.logger.info("\n[RATIOS-END] Ratio Calculations Complete")
             self.logger.info("="*80 + "\n")
         
-        # Return DataFrame with years as columns, ratios as rows (already transposed)
         return ratios
+    
+    def _find_metric_in_dataframe(self, df: pd.DataFrame, patterns: List[str], 
+                                  preferred_statement: Optional[str] = None) -> Optional[pd.Series]:
+        """
+        Find a metric in the dataframe using multiple patterns with statement preference
+        """
+        # First try exact matches with preferred statement
+        if preferred_statement:
+            for pattern in patterns:
+                for idx in df.index:
+                    idx_str = str(idx)
+                    # Check if it's from the preferred statement
+                    if f'{preferred_statement}::' in idx_str:
+                        # Clean the index for comparison
+                        idx_clean = idx_str.split('::')[-1] if '::' in idx_str else idx_str
+                        if pattern.lower() == idx_clean.lower():
+                            return df.loc[idx]
+        
+        # Then try exact matches without statement preference
+        for pattern in patterns:
+            for idx in df.index:
+                idx_clean = str(idx).split('::')[-1] if '::' in str(idx) else str(idx)
+                if pattern.lower() == idx_clean.lower():
+                    return df.loc[idx]
+        
+        # Then try partial matches
+        for pattern in patterns:
+            for idx in df.index:
+                if pattern.lower() in str(idx).lower():
+                    return df.loc[idx]
+        
+        return None
+    
+    def _check_pattern_exists(self, df: pd.DataFrame, pattern: str) -> bool:
+        """Check if a pattern exists in the dataframe index"""
+        for idx in df.index:
+            idx_clean = str(idx).split('::')[-1] if '::' in str(idx) else str(idx)
+            if pattern.lower() == idx_clean.lower() or pattern.lower() in idx_clean.lower():
+                return True
+        return False
+    
+    def _summarize_series(self, series: pd.Series) -> str:
+        """Create a summary string for a series"""
+        if series is None:
+            return "None"
+        
+        non_na = series.dropna()
+        if len(non_na) == 0:
+            return "All NaN"
+        
+        return f"mean={non_na.mean():.2f}, min={non_na.min():.2f}, max={non_na.max():.2f}"
     
     def _analyze_ratio_trends(self, ratios: pd.DataFrame) -> Dict[str, Any]:
         """Analyze trends in key ratios"""

@@ -9876,11 +9876,15 @@ class FinancialAnalyticsPlatform:
 
         self.set_state('number_format_value', 
                       'Indian' if "Indian" in format_option else 'International')
-
-            if st.sidebar.checkbox("Debug Mode", value=self.config.get('app.debug', False)):
-                self.config.set('app.debug', True)
-                if st.sidebar.button("Download Output Log"):
-                    self._export_logs()
+        
+        with st.sidebar.expander("🔧 Advanced Options"):
+            debug_mode = st.sidebar.checkbox(
+                "Debug Mode",
+                value=self.config.get('app.debug', False),
+                help="Show detailed error information"
+            )
+            self.config.set('app.debug', debug_mode)
+                               
             
           # In _render_sidebar (or a debug section)
             if st.sidebar.button("🗑️ Clear Cache & Reset App", key="clear_cache_reset"):

@@ -4974,10 +4974,6 @@ class EnhancedPenmanNissimAnalyzer:
         return False
     
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Enhanced ratio calculations with comprehensive error handling and edge case management
-        Version 6.0 - Complete rewrite with all fixes and enhancements
-        """
         self.logger.info("\n" + "="*80)
         self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.0)")
         self.logger.info("="*80)
@@ -4989,8 +4985,8 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
         self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
         
-        # Initialize ratios DataFrame with years as index
-        ratios = pd.DataFrame(index=ref_bs.columns)
+        # Initialize ratios DataFrame with years as columns, ratios as index (fixed orientation)
+        ratios = pd.DataFrame(columns=ref_bs.columns)  # Years as columns
         metadata = {}
         
         # Track calculation status
@@ -5012,16 +5008,34 @@ class EnhancedPenmanNissimAnalyzer:
                     nopat = ref_is.loc['Operating Income After Tax']
                     noa = ref_bs.loc['Net Operating Assets']
                     
+                    # NEW: Fallback if NOA is zero or NaN - use Total Assets as proxy
+                    if (noa == 0).all() or noa.isna().all():
+                        if 'Total Assets' in ref_bs.index:
+                            noa = ref_bs.loc['Total Assets']
+                            calculation_status['warnings'].append('Used Total Assets as proxy for NOA (NOA was zero/NaN)')
+                        else:
+                            raise ValueError("Cannot calculate RNOA: NOA and Total Assets missing")
+                    
                     # Use average NOA for more accurate calculation
                     avg_noa = noa.rolling(window=2, min_periods=1).mean()
                     
-                    # Handle division by zero
+                    # Handle division by zero with fallback to NaN
                     rnoa = pd.Series(index=ref_bs.columns, dtype=float)
                     mask = (avg_noa != 0) & avg_noa.notna()
                     rnoa[mask] = (nopat[mask] / avg_noa[mask]) * 100
                     rnoa[~mask] = np.nan
                     
-                    ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
+                    # NEW: If all NaN, try alternative calculation
+                    if rnoa.isna().all():
+                        if 'Net Income (Reported)' in ref_is.index and 'Total Assets' in ref_bs.index:
+                            net_income = ref_is.loc['Net Income (Reported)']
+                            total_assets = ref_bs.loc['Total Assets']
+                            avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
+                            mask = (avg_assets != 0) & avg_assets.notna()
+                            rnoa[mask] = (net_income[mask] / avg_assets[mask]) * 100
+                            calculation_status['warnings'].append('Used ROA as proxy for RNOA (standard RNOA failed)')
+                    
+                    ratios = ratios.append(pd.Series(rnoa, name='Return on Net Operating Assets (RNOA) %'))
                     rnoa_calculated = True
                     calculation_status['successful'].append('RNOA')
                     
@@ -5044,14 +5058,14 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (revenue != 0) & revenue.notna()
                         opm[mask] = (nopat[mask] / revenue[mask]) * 100
                         opm[~mask] = np.nan
-                        ratios['Operating Profit Margin (OPM) %'] = opm
+                        ratios = ratios.append(pd.Series(opm, name='Operating Profit Margin (OPM) %'))
                         
                         # Net Operating Asset Turnover (NOAT)
                         noat = pd.Series(index=ref_bs.columns, dtype=float)
                         mask = (avg_noa != 0) & avg_noa.notna()
                         noat[mask] = revenue[mask] / avg_noa[mask]
                         noat[~mask] = np.nan
-                        ratios['Net Operating Asset Turnover (NOAT)'] = noat
+                        ratios = ratios.append(pd.Series(noat, name='Net Operating Asset Turnover (NOAT)'))
                         
                         # Verify RNOA = OPM × NOAT
                         calculated_rnoa = (opm * noat) / 100
@@ -5070,10 +5084,10 @@ class EnhancedPenmanNissimAnalyzer:
                     self.logger.error(f"[PN-RATIOS-RNOA-ERROR] Failed to calculate RNOA: {e}")
                     calculation_status['failed'].append(f'RNOA: {str(e)}')
                     # Add placeholder
-                    ratios['Return on Net Operating Assets (RNOA) %'] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Return on Net Operating Assets (RNOA) %'))
             else:
                 self.logger.warning("[PN-RATIOS-RNOA] Missing data for RNOA calculation")
-                ratios['Return on Net Operating Assets (RNOA) %'] = pd.Series(np.nan, index=ref_bs.columns)
+                ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Return on Net Operating Assets (RNOA) %'))
                 calculation_status['failed'].append('RNOA: Missing required data')
             
             # --- Financial Leverage (FLEV) ---
@@ -5093,7 +5107,7 @@ class EnhancedPenmanNissimAnalyzer:
                     flev[mask] = -nfa[mask] / avg_ce[mask]
                     flev[~mask] = np.nan
                     
-                    ratios['Financial Leverage (FLEV)'] = flev
+                    ratios = ratios.append(pd.Series(flev, name='Financial Leverage (FLEV)'))
                     flev_calculated = True
                     calculation_status['successful'].append('FLEV')
                     
@@ -5112,15 +5126,15 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (avg_ce != 0) & avg_ce.notna()
                         debt_to_equity[mask] = total_debt[mask] / avg_ce[mask]
                         debt_to_equity[~mask] = np.nan
-                        ratios['Debt to Equity'] = debt_to_equity
+                        ratios = ratios.append(pd.Series(debt_to_equity, name='Debt to Equity'))
                         
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-FLEV-ERROR] Failed to calculate FLEV: {e}")
                     calculation_status['failed'].append(f'FLEV: {str(e)}')
-                    ratios['Financial Leverage (FLEV)'] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Financial Leverage (FLEV)'))
             else:
                 self.logger.warning("[PN-RATIOS-FLEV] Missing data for FLEV calculation")
-                ratios['Financial Leverage (FLEV)'] = pd.Series(np.nan, index=ref_bs.columns)
+                ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Financial Leverage (FLEV)'))
                 calculation_status['failed'].append('FLEV: Missing required data')
             
             # --- Net Borrowing Cost (NBC) - ENHANCED VERSION ---
@@ -5168,7 +5182,7 @@ class EnhancedPenmanNissimAnalyzer:
                 calculation_status['failed'].append(f'NBC: {str(e)}')
             
             # ALWAYS add NBC to ratios (even if zero)
-            ratios['Net Borrowing Cost (NBC) %'] = nbc
+            ratios = ratios.append(pd.Series(nbc, name='Net Borrowing Cost (NBC) %'))
             
             # --- Alternative NBC using gross borrowing rate ---
             self.logger.info("\n[PN-RATIOS-GROSS] Calculating Gross Borrowing Rate...")
@@ -5202,7 +5216,7 @@ class EnhancedPenmanNissimAnalyzer:
                 self.logger.error(f"[PN-RATIOS-GROSS-ERROR] Gross rate calculation failed: {e}")
                 calculation_status['failed'].append(f'Gross Borrowing Rate: {str(e)}')
             
-            ratios['Gross Borrowing Rate %'] = gross_rate
+            ratios = ratios.append(pd.Series(gross_rate, name='Gross Borrowing Rate %'))
             
             # --- Spread (RNOA - NBC) - ALWAYS CALCULATE ---
             self.logger.info("\n[PN-RATIOS-SPREAD] Calculating Spread...")
@@ -5224,8 +5238,8 @@ class EnhancedPenmanNissimAnalyzer:
                 calculation_status['failed'].append(f'Spread: {str(e)}')
             
             # ALWAYS add Spread (both names for compatibility)
-            ratios['Spread %'] = spread
-            ratios['Leverage Spread %'] = spread
+            ratios = ratios.append(pd.Series(spread, name='Spread %'))
+            ratios = ratios.append(pd.Series(spread, name='Leverage Spread %'))
             
             # --- ROE and its decomposition ---
             self.logger.info("\n[PN-RATIOS-ROE] Calculating ROE and decomposition...")
@@ -5242,10 +5256,12 @@ class EnhancedPenmanNissimAnalyzer:
                     roe[mask] = (net_income[mask] / avg_ce[mask]) * 100
                     roe[~mask] = np.nan
                     
-                    ratios['Return on Equity (ROE) %'] = roe
+                    ratios = ratios.append(pd.Series(roe, name='Return on Equity (ROE) %'))
                     roe_calculated = True
                     calculation_status['successful'].append('ROE')
                     
+                    
+                    # Inside the ROE section, after calculating roe
                     # ROE Decomposition: ROE = RNOA + (FLEV × Spread)
                     if rnoa_calculated and flev_calculated:
                         rnoa_values = ratios.loc['Return on Net Operating Assets (RNOA) %']
@@ -5253,27 +5269,34 @@ class EnhancedPenmanNissimAnalyzer:
                         spread_values = ratios.loc['Spread %']
                         
                         calculated_roe = rnoa_values + (flev_values * spread_values)
-                        ratios['ROE (Calculated) %'] = calculated_roe
+                        ratios = ratios.append(pd.Series(calculated_roe, name='ROE (Calculated) %'))
                         
-                        # Check decomposition accuracy
-                        roe_diff = (roe - calculated_roe).abs()
-                        metadata['roe_decomposition_diff'] = roe_diff.max()
-                        
-                        if roe_diff.max() > 1.0:
-                            calculation_status['warnings'].append(f'ROE decomposition mismatch: {roe_diff.max():.2f}%')
+                        # Check decomposition accuracy with NaN handling
+                        valid_mask = roe.notna() & calculated_roe.notna()
+                        if valid_mask.any():
+                            roe_diff = (roe[valid_mask] - calculated_roe[valid_mask]).abs()
+                            max_diff = roe_diff.max()
+                            metadata['roe_decomposition_diff'] = max_diff
+                            
+                            if max_diff > 1.0:
+                                calculation_status['warnings'].append(f'ROE decomposition mismatch: {max_diff:.2f}% (on {valid_mask.sum()} valid periods)')
+                            else:
+                                self.logger.info("[PN-RATIOS-ROE-DECOMP] Decomposition matches within tolerance")
+                        else:
+                            calculation_status['warnings'].append('ROE decomposition: No valid periods for comparison')
                         
                         self.logger.info(f"[PN-RATIOS-ROE-DECOMP] ROE decomposition check:")
                         self.logger.info(f"  Reported ROE: {roe.to_dict()}")
                         self.logger.info(f"  Calculated ROE: {calculated_roe.to_dict()}")
-                        self.logger.info(f"  Max difference: {roe_diff.max():.2f}%")
+                        self.logger.info(f"  Max difference: {max_diff:.2f}%")
                         
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-ROE-ERROR] ROE calculation failed: {e}")
                     calculation_status['failed'].append(f'ROE: {str(e)}')
-                    ratios['Return on Equity (ROE) %'] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Return on Equity (ROE) %'))
             else:
                 self.logger.warning("[PN-RATIOS-ROE] Missing data for ROE calculation")
-                ratios['Return on Equity (ROE) %'] = pd.Series(np.nan, index=ref_bs.columns)
+                ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Return on Equity (ROE) %'))
                 calculation_status['failed'].append('ROE: Missing required data')
             
             # ========== 2. ADDITIONAL PERFORMANCE METRICS ==========
@@ -5290,12 +5313,12 @@ class EnhancedPenmanNissimAnalyzer:
                     roa[mask] = (net_income[mask] / avg_assets[mask]) * 100
                     roa[~mask] = np.nan
                     
-                    ratios['Return on Assets (ROA) %'] = roa
+                    ratios = ratios.append(pd.Series(roa, name='Return on Assets (ROA) %'))
                     calculation_status['successful'].append('ROA')
                     
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-ROA-ERROR] ROA calculation failed: {e}")
-                    ratios['Return on Assets (ROA) %'] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name='Return on Assets (ROA) %'))
             
             # --- Growth Metrics ---
             self.logger.info("\n[PN-RATIOS-GROWTH] Calculating growth metrics...")
@@ -5305,7 +5328,7 @@ class EnhancedPenmanNissimAnalyzer:
                 try:
                     revenue = ref_is.loc['Revenue']
                     revenue_growth = revenue.pct_change() * 100
-                    ratios['Revenue Growth %'] = revenue_growth
+                    ratios = ratios.append(pd.Series(revenue_growth, name='Revenue Growth %'))
                     
                     # CAGR
                     first_valid = revenue.first_valid_index()
@@ -5316,7 +5339,7 @@ class EnhancedPenmanNissimAnalyzer:
                             cagr = ((revenue[last_valid] / revenue[first_valid]) ** (1/years) - 1) * 100
                             metadata['revenue_cagr'] = cagr
                             self.logger.info(f"[PN-RATIOS-GROWTH] Revenue CAGR: {cagr:.2f}%")
-                            
+                                
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-GROWTH-ERROR] Growth calculation failed: {e}")
             
@@ -5325,7 +5348,7 @@ class EnhancedPenmanNissimAnalyzer:
                 try:
                     noa = ref_bs.loc['Net Operating Assets']
                     noa_growth = noa.pct_change() * 100
-                    ratios['NOA Growth %'] = noa_growth
+                    ratios = ratios.append(pd.Series(noa_growth, name='NOA Growth %'))
                 except:
                     pass
             
@@ -5334,7 +5357,7 @@ class EnhancedPenmanNissimAnalyzer:
                 try:
                     net_income = ref_is.loc['Net Income (Reported)']
                     ni_growth = net_income.pct_change() * 100
-                    ratios['Net Income Growth %'] = ni_growth
+                    ratios = ratios.append(pd.Series(ni_growth, name='Net Income Growth %'))
                 except:
                     pass
             
@@ -5353,7 +5376,7 @@ class EnhancedPenmanNissimAnalyzer:
                     asset_turnover[mask] = revenue[mask] / avg_assets[mask]
                     asset_turnover[~mask] = np.nan
                     
-                    ratios['Asset Turnover'] = asset_turnover
+                    ratios = ratios.append(pd.Series(asset_turnover, name='Asset Turnover'))
                     calculation_status['successful'].append('Asset Turnover')
                     
                 except Exception as e:
@@ -5374,7 +5397,7 @@ class EnhancedPenmanNissimAnalyzer:
                     wc_turnover[mask] = revenue[mask] / avg_wc[mask]
                     wc_turnover[~mask] = np.nan
                     
-                    ratios['Working Capital Turnover'] = wc_turnover
+                    ratios = ratios.append(pd.Series(wc_turnover, name='Working Capital Turnover'))
                     
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-WC-ERROR] Working capital turnover failed: {e}")
@@ -5393,7 +5416,7 @@ class EnhancedPenmanNissimAnalyzer:
                     current_ratio[mask] = current_assets[mask] / current_liabilities[mask]
                     current_ratio[~mask] = np.nan
                     
-                    ratios['Current Ratio'] = current_ratio
+                    ratios = ratios.append(pd.Series(current_ratio, name='Current Ratio'))
                     
                     # Quick Ratio (if inventory available)
                     inventory_source = self._find_source_metric('Inventory')
@@ -5405,8 +5428,7 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (current_liabilities != 0) & current_liabilities.notna()
                         quick_ratio[mask] = quick_assets[mask] / current_liabilities[mask]
                         quick_ratio[~mask] = np.nan
-                        
-                        ratios['Quick Ratio'] = quick_ratio
+                        ratios = ratios.append(pd.Series(quick_ratio, name='Quick Ratio'))
                         
                     # Cash Ratio
                     if 'Cash and Equivalents' in ref_bs.index:
@@ -5416,8 +5438,7 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (current_liabilities != 0) & current_liabilities.notna()
                         cash_ratio[mask] = cash[mask] / current_liabilities[mask]
                         cash_ratio[~mask] = np.nan
-                        
-                        ratios['Cash Ratio'] = cash_ratio
+                        ratios = ratios.append(pd.Series(cash_ratio, name='Cash Ratio'))
                         
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-LIQUIDITY-ERROR] Liquidity calculation failed: {e}")
@@ -5436,7 +5457,7 @@ class EnhancedPenmanNissimAnalyzer:
                     interest_coverage[mask] = ebit[mask] / interest_expense[mask]
                     interest_coverage[~mask] = np.nan
                     
-                    ratios['Interest Coverage'] = interest_coverage
+                    ratios = ratios.append(pd.Series(interest_coverage, name='Interest Coverage'))
                     
                 except Exception as e:
                     self.logger.error(f"[PN-RATIOS-COVERAGE-ERROR] Coverage ratio failed: {e}")
@@ -5453,7 +5474,7 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (revenue != 0) & revenue.notna()
                         gpm[mask] = (gross_profit[mask] / revenue[mask]) * 100
                         gpm[~mask] = np.nan
-                        ratios['Gross Profit Margin %'] = gpm
+                        ratios = ratios.append(pd.Series(gpm, name='Gross Profit Margin %'))
                     except:
                         pass
                 
@@ -5465,7 +5486,7 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (revenue != 0) & revenue.notna()
                         ebitda_margin[mask] = (ebitda[mask] / revenue[mask]) * 100
                         ebitda_margin[~mask] = np.nan
-                        ratios['EBITDA Margin %'] = ebitda_margin
+                        ratios = ratios.append(pd.Series(ebitda_margin, name='EBITDA Margin %'))
                     except:
                         pass
                 
@@ -5477,7 +5498,7 @@ class EnhancedPenmanNissimAnalyzer:
                         mask = (revenue != 0) & revenue.notna()
                         npm[mask] = (net_income[mask] / revenue[mask]) * 100
                         npm[~mask] = np.nan
-                        ratios['Net Profit Margin %'] = npm
+                        ratios = ratios.append(pd.Series(npm, name='Net Profit Margin %'))
                     except:
                         pass
             
@@ -5550,7 +5571,7 @@ class EnhancedPenmanNissimAnalyzer:
             for ratio_name in required_ratios:
                 if ratio_name not in ratios.index:
                     self.logger.info(f"[PN-RATIOS-ENSURE] Adding missing ratio: {ratio_name}")
-                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name=ratio_name))
                     calculation_status['warnings'].append(f"Added missing ratio: {ratio_name}")
             
             # ========== 5. CALCULATE RATIO TRENDS ==========
@@ -5584,15 +5605,6 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info(f"  Warnings: {len(calculation_status['warnings'])}")
             self.logger.info(f"  Key ratios: {list(ratios.index[:10])}")
             
-            # Log all calculated ratios with their latest values
-            self.logger.info("\n[PN-RATIOS-ALL] All Calculated Ratios (Latest Values):")
-            for ratio_name in ratios.index:
-                latest_value = ratios.loc[ratio_name].iloc[-1] if not ratios.loc[ratio_name].empty else np.nan
-                if pd.notna(latest_value):
-                    self.logger.info(f"  {ratio_name}: {latest_value:.2f}")
-                else:
-                    self.logger.info(f"  {ratio_name}: N/A")
-            
             # Log any failures
             if calculation_status['failed']:
                 self.logger.error("\n[PN-RATIOS-FAILURES] Failed Calculations:")
@@ -5610,7 +5622,7 @@ class EnhancedPenmanNissimAnalyzer:
             # Ensure we return at least an empty DataFrame with required ratios
             for ratio_name in required_ratios:
                 if ratio_name not in ratios.index:
-                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios = ratios.append(pd.Series(np.nan, index=ref_bs.columns, name=ratio_name))
             metadata['critical_error'] = str(e)
         
         finally:
@@ -12023,11 +12035,13 @@ class FinancialAnalyticsPlatform:
             if 'ratios' in results and isinstance(results['ratios'], pd.DataFrame) and not results['ratios'].empty:
                 st.subheader("Penman-Nissim Key Ratios")
                 
-                # Display latest year metrics
-                # Assuming 'results' is a dictionary available in this scope
                 ratios_df = results['ratios']
                 
-                # Display latest year metrics only if the DataFrame is not empty
+                # FIXED: Ensure correct orientation (ratios as rows, years as columns)
+                if ratios_df.shape[0] < ratios_df.shape[1]:  # If more columns than rows, transpose
+                    ratios_df = ratios_df.T
+                    self.logger.info("Transposed ratios_df for display")
+                
                 # Display latest year metrics only if the DataFrame is not empty
                 if not ratios_df.empty and len(ratios_df.columns) > 0:
                     latest_year = ratios_df.columns[-1]
@@ -12038,61 +12052,57 @@ class FinancialAnalyticsPlatform:
                         # Check for RNOA
                         if 'Return on Net Operating Assets (RNOA) %' in ratios_df.index:
                             rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %', latest_year]
-                            # --- NEW: Add a check for NaN ---
                             if pd.notna(rnoa):
                                 st.metric("RNOA", f"{rnoa:.1f}%", help="Return on Net Operating Assets")
                             else:
-                                st.metric("RNOA", "N/A", help="Value is Not a Number (NaN)")
+                                st.metric("RNOA", "N/A", help="Value is Not a Number (NaN) - Check 'Operating Income After Tax' and 'Net Operating Assets'")
                         else:
-                            st.metric("RNOA", "N/A", help="Not calculated")
+                            st.metric("RNOA", "N/A", help="Not calculated - Missing required data")
                     
                     with col2:
                         # Check for FLEV
                         if 'Financial Leverage (FLEV)' in ratios_df.index:
                             flev = ratios_df.loc['Financial Leverage (FLEV)', latest_year]
-                            # --- NEW: Add a check for NaN ---
                             if pd.notna(flev):
                                 st.metric("FLEV", f"{flev:.2f}", help="Financial Leverage")
                             else:
-                                st.metric("FLEV", "N/A", help="Value is Not a Number (NaN)")
+                                st.metric("FLEV", "N/A", help="Value is Not a Number (NaN) - Check 'Net Financial Assets' and 'Common Equity'")
                         else:
-                            st.metric("FLEV", "N/A", help="Not calculated")
+                            st.metric("FLEV", "N/A", help="Not calculated - Missing required data")
                     
                     with col3:
                         # Check for NBC
                         if 'Net Borrowing Cost (NBC) %' in ratios_df.index:
                             nbc = ratios_df.loc['Net Borrowing Cost (NBC) %', latest_year]
-                            # --- NEW: Add a check for NaN ---
                             if pd.notna(nbc):
                                 st.metric("NBC", f"{nbc:.1f}%", help="Net Borrowing Cost")
                             else:
-                                st.metric("NBC", "N/A", help="Value is Not a Number (NaN)")
+                                st.metric("NBC", "N/A", help="Value is Not a Number (NaN) - Check 'Net Financial Expense After Tax' and 'Net Financial Assets'")
                         else:
-                            st.metric("NBC", "N/A", help="Not calculated")
+                            st.metric("NBC", "N/A", help="Not calculated - Missing required data")
                     
                     with col4:
                         # Check for Spread
                         if 'Spread %' in ratios_df.index:
                             spread = ratios_df.loc['Spread %', latest_year]
-                            # --- NEW: Add a check for NaN ---
                             if pd.notna(spread):
                                 delta_color = "normal" if spread > 0 else "inverse"
                                 st.metric("Spread", f"{spread:.1f}%", delta_color=delta_color, help="RNOA - NBC")
                             else:
-                                st.metric("Spread", "N/A", help="Value is Not a Number (NaN)")
+                                st.metric("Spread", "N/A", help="Value is Not a Number (NaN) - Check RNOA and NBC")
                         else:
-                            st.metric("Spread", "N/A", help="Not calculated")
+                            st.metric("Spread", "N/A", help="Not calculated - Missing required data")
                 
-                # --- NEW: ROE DECOMPOSITION ANALYSIS SECTION ---
+                # --- UPDATED ROE DECOMPOSITION ANALYSIS SECTION ---
                 st.markdown("---")
                 st.subheader("🔬 ROE Decomposition Analysis")
                 st.info("This analysis breaks down Return on Equity (ROE) into its core drivers: Operating Performance (RNOA) and the effect of Financial Leverage.")
-                
+        
                 # Check if all required components are available for decomposition
                 required_components = ['Return on Equity (ROE) %', 'Return on Net Operating Assets (RNOA) %', 'Financial Leverage (FLEV)', 'Spread %']
                 if all(comp in ratios_df.index for comp in required_components):
                     
-                    # 1. Prepare data for chart and table
+                    # 1. Prepare data for chart and table with NaN handling
                     roe = ratios_df.loc['Return on Equity (ROE) %']
                     rnoa = ratios_df.loc['Return on Net Operating Assets (RNOA) %']
                     
@@ -12101,82 +12111,90 @@ class FinancialAnalyticsPlatform:
                     spread = ratios_df.loc['Spread %']
                     leverage_effect = flev * spread
                     
-                    # 2. Create the Decomposition Chart
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=ratios_df.columns,
-                        y=rnoa,
-                        name='Operating Return (RNOA)',
-                        marker_color='royalblue'
-                    ))
-                    fig.add_trace(go.Bar(
-                        x=ratios_df.columns,
-                        y=leverage_effect,
-                        name='Leverage Effect (FLEV x Spread)',
-                        marker_color='lightslategray'
-                    ))
-                    # Add the total ROE as a line to show the sum
-                    fig.add_trace(go.Scatter(
-                        x=ratios_df.columns,
-                        y=roe,
-                        mode='lines+markers',
-                        name='Total ROE',
-                        line=dict(color='firebrick', width=3)
-                    ))
-                
-                    fig.update_layout(
-                        barmode='relative',  # Stacked bars (positive and negative)
-                        title='<b>Drivers of Return on Equity (ROE)</b>',
-                        xaxis_title='Year',
-                        yaxis_title='Percentage (%)',
-                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        hovermode='x unified',
-                        height=450
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                    # 3. Display the Data Table
-                    with st.expander("View Decomposition Data Table"):
-                        decomp_data = {
-                            'Total ROE (%)': roe,
-                            'Operating Return (RNOA %)': rnoa,
-                            'Leverage Effect (%)': leverage_effect,
-                            'Financial Leverage (FLEV)': flev,
-                            'Spread (%)': spread
-                        }
-                        decomp_df = pd.DataFrame(decomp_data).T
-                        st.dataframe(
-                            decomp_df.style.format("{:.2f}", na_rep="-").background_gradient(
-                                cmap='RdYlGn', axis=1, subset=pd.IndexSlice[['Total ROE (%)', 'Spread (%)'], :]
-                            ),
-                            use_container_width=True
+                    # NEW: Valid mask to skip NaN periods
+                    valid_mask = roe.notna() & rnoa.notna() & leverage_effect.notna()
+                    
+                    if valid_mask.any():
+                        # 2. Create the Decomposition Chart (only for valid periods)
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=ratios_df.columns[valid_mask],
+                            y=rnoa[valid_mask],
+                            name='Operating Return (RNOA)',
+                            marker_color='royalblue'
+                        ))
+                        fig.add_trace(go.Bar(
+                            x=ratios_df.columns[valid_mask],
+                            y=leverage_effect[valid_mask],
+                            name='Leverage Effect (FLEV x Spread)',
+                            marker_color='lightslategray'
+                        ))
+                        # Add the total ROE as a line to show the sum
+                        fig.add_trace(go.Scatter(
+                            x=ratios_df.columns[valid_mask],
+                            y=roe[valid_mask],
+                            mode='lines+markers',
+                            name='Total ROE',
+                            line=dict(color='firebrick', width=3)
+                        ))
+                    
+                        fig.update_layout(
+                            barmode='relative',  # Stacked bars (positive and negative)
+                            title='<b>Drivers of Return on Equity (ROE)</b>',
+                            xaxis_title='Year',
+                            yaxis_title='Percentage (%)',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                            hovermode='x unified',
+                            height=450
                         )
+                        st.plotly_chart(fig, use_container_width=True)
                     
-                    # 4. Generate a dynamic key takeaway
-                    latest_roe = roe.iloc[-1]
-                    latest_rnoa = rnoa.iloc[-1]
-                    latest_leverage_effect = leverage_effect.iloc[-1]
-                    
-                    st.subheader("Key Takeaway")
-                    if abs(latest_rnoa) > abs(latest_leverage_effect):
-                        primary_driver = "core operations (RNOA)"
-                        secondary_driver = "financial leverage"
+                        # 3. Display the Data Table (with NaN as "-")
+                        with st.expander("View Decomposition Data Table"):
+                            decomp_data = {
+                                'Total ROE (%)': roe,
+                                'Operating Return (RNOA %)': rnoa,
+                                'Leverage Effect (%)': leverage_effect,
+                                'Financial Leverage (FLEV)': flev,
+                                'Spread (%)': spread
+                            }
+                            decomp_df = pd.DataFrame(decomp_data).T
+                            styled_df = decomp_df.style.format("{:.2f}", na_rep="-").background_gradient(
+                                cmap='RdYlGn', axis=1, subset=pd.IndexSlice[['Total ROE (%)', 'Spread (%)'], :]
+                            )
+                            st.dataframe(styled_df, use_container_width=True)
+                        
+                        # 4. Generate a dynamic key takeaway (handle NaN)
+                        latest_valid_idx = roe.last_valid_index()
+                        if latest_valid_idx is not None:
+                            latest_roe = roe[latest_valid_idx]
+                            latest_rnoa = rnoa[latest_valid_idx]
+                            latest_leverage_effect = leverage_effect[latest_valid_idx]
+                            
+                            if pd.notna(latest_roe) and pd.notna(latest_rnoa) and pd.notna(latest_leverage_effect):
+                                st.subheader("Key Takeaway")
+                                if abs(latest_rnoa) > abs(latest_leverage_effect):
+                                    primary_driver = "core operations (RNOA)"
+                                    secondary_driver = "financial leverage"
+                                else:
+                                    primary_driver = "financial leverage"
+                                    secondary_driver = "core operations (RNOA)"
+                                
+                                leverage_text = "positively contributing" if latest_leverage_effect > 0 else "negatively impacting"
+                                
+                                st.success(
+                                    f"For {latest_valid_idx}, the ROE of **{latest_roe:.2f}%** was primarily driven by **{primary_driver}**, "
+                                    f"which contributed **{latest_rnoa:.2f}%**. The use of **{secondary_driver}** is "
+                                    f"**{leverage_text}** to the total return, adding **{latest_leverage_effect:.2f}%**."
+                                )
+                            else:
+                                st.warning("Insufficient valid data for key takeaway analysis in the latest period.")
+                        else:
+                            st.warning("No valid periods for ROE decomposition analysis.")
                     else:
-                        primary_driver = "financial leverage"
-                        secondary_driver = "core operations (RNOA)"
-                    
-                    leverage_text = "positively contributing" if latest_leverage_effect > 0 else "negatively impacting"
-                    
-                    st.success(
-                        f"For the latest year, the ROE of **{latest_roe:.2f}%** was primarily driven by **{primary_driver}**, "
-                        f"which contributed **{latest_rnoa:.2f}%**. The use of **{secondary_driver}** is "
-                        f"**{leverage_text}** to the total return, adding **{latest_leverage_effect:.2f}%**."
-                    )
-                
+                        st.warning("No valid periods with complete data for ROE decomposition.")
                 else:
-                    st.warning("Could not perform ROE decomposition. Some required ratios (RNOA, FLEV, Spread) are missing.")
-                
-                # --- END OF NEW SECTION ---
+                    st.warning("Could not perform ROE decomposition. Some required ratios (ROE, RNOA, FLEV, Spread) are missing.")
                 
                 # Display full ratios table (This section is now correctly un-nested)
                 st.markdown("### Detailed Ratios Analysis")
@@ -13983,10 +14001,10 @@ class FinancialAnalyticsPlatform:
         col1, col2 = st.columns(2)
         with col1:
             selected_industry = st.selectbox(
-            "Select Industry",
-            list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
-            index=0,
-            key="industry_select_widget_main"  # Changed key name to avoid conflicts 
+                "Select Industry",
+                list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
+                index=0,
+                key="industry_select_widget_main_unique"  # FIXED: Made key unique
             )
     
         with col2:
@@ -13994,8 +14012,9 @@ class FinancialAnalyticsPlatform:
                 "Select Year for Analysis",
                 data.columns.tolist(),
                 index=len(data.columns)-1,
-                key="industry_year_select"
+                key="industry_year_select_unique"  # FIXED: Made key unique
             )
+
     
         # Calculate necessary ratios for comparison
         mappings = self.get_state('pn_mappings')

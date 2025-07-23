@@ -4975,7 +4975,7 @@ class EnhancedPenmanNissimAnalyzer:
     
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.0)")
+        self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.1)")
         self.logger.info("="*80)
         
         # Get reformulated statements (already cached)
@@ -5025,15 +5025,18 @@ class EnhancedPenmanNissimAnalyzer:
                     rnoa[mask] = (nopat[mask] / avg_noa[mask]) * 100
                     rnoa[~mask] = np.nan
                     
-                    # NEW: If all NaN, try alternative calculation
-                    if rnoa.isna().all():
+                    # UPDATED: Enhanced fallback - if still all NaN, use Net Income / Avg Assets as proxy
+                    if rnoa.isna().all() or (rnoa == 0).all():
                         if 'Net Income (Reported)' in ref_is.index and 'Total Assets' in ref_bs.index:
                             net_income = ref_is.loc['Net Income (Reported)']
                             total_assets = ref_bs.loc['Total Assets']
                             avg_assets = total_assets.rolling(window=2, min_periods=1).mean()
                             mask = (avg_assets != 0) & avg_assets.notna()
                             rnoa[mask] = (net_income[mask] / avg_assets[mask]) * 100
-                            calculation_status['warnings'].append('Used ROA as proxy for RNOA (standard RNOA failed)')
+                            calculation_status['warnings'].append('Used ROA (Net Income / Avg Assets) as proxy for RNOA (standard calculation failed or zero)')
+                            self.logger.warning("[PN-RATIOS-RNOA] Used ROA proxy for RNOA")
+                        else:
+                            calculation_status['warnings'].append('RNOA proxy failed: Missing Net Income or Total Assets')
                     
                     ratios = ratios.append(pd.Series(rnoa, name='Return on Net Operating Assets (RNOA) %'))
                     rnoa_calculated = True
@@ -5260,9 +5263,7 @@ class EnhancedPenmanNissimAnalyzer:
                     roe_calculated = True
                     calculation_status['successful'].append('ROE')
                     
-                    
-                    # Inside the ROE section, after calculating roe
-                    # ROE Decomposition: ROE = RNOA + (FLEV × Spread)
+                    # UPDATED ROE Decomposition: ROE = RNOA + (FLEV × Spread) with enhanced NaN handling and mismatch logic
                     if rnoa_calculated and flev_calculated:
                         rnoa_values = ratios.loc['Return on Net Operating Assets (RNOA) %']
                         flev_values = ratios.loc['Financial Leverage (FLEV)']
@@ -5271,19 +5272,33 @@ class EnhancedPenmanNissimAnalyzer:
                         calculated_roe = rnoa_values + (flev_values * spread_values)
                         ratios = ratios.append(pd.Series(calculated_roe, name='ROE (Calculated) %'))
                         
-                        # Check decomposition accuracy with NaN handling
+                        # UPDATED: Check decomposition accuracy with NaN handling and improved mismatch logic
                         valid_mask = roe.notna() & calculated_roe.notna()
                         if valid_mask.any():
                             roe_diff = (roe[valid_mask] - calculated_roe[valid_mask]).abs()
                             max_diff = roe_diff.max()
-                            metadata['roe_decomposition_diff'] = max_diff
+                            avg_diff = roe_diff.mean()
                             
-                            if max_diff > 1.0:
-                                calculation_status['warnings'].append(f'ROE decomposition mismatch: {max_diff:.2f}% (on {valid_mask.sum()} valid periods)')
+                            # NEW: Dynamic tolerance based on ROE magnitude (min 1.0, or 0.5% of mean ROE)
+                            roe_mean = roe[valid_mask].abs().mean()
+                            tolerance = max(1.0, 0.005 * roe_mean)  # 0.5% of mean ROE
+                            
+                            if max_diff > tolerance:
+                                # Log per-year mismatches
+                                mismatched_years = roe_diff[roe_diff > tolerance].index.tolist()
+                                mismatch_details = roe_diff[roe_diff > tolerance].to_dict()
+                                calculation_status['warnings'].append(
+                                    f'ROE decomposition mismatch: Max {max_diff:.2f}% (Avg {avg_diff:.2f}%) in years {mismatched_years}. Tolerance: {tolerance:.2f}. Details: {mismatch_details}'
+                                )
+                                self.logger.warning(f"[PN-RATIOS-ROE-DECOMP] Mismatch details: {mismatch_details}")
                             else:
                                 self.logger.info("[PN-RATIOS-ROE-DECOMP] Decomposition matches within tolerance")
+                            
+                            metadata['roe_decomposition_diff'] = max_diff
+                            metadata['roe_decomposition_avg_diff'] = avg_diff
                         else:
-                            calculation_status['warnings'].append('ROE decomposition: No valid periods for comparison')
+                            calculation_status['warnings'].append('ROE decomposition: No valid periods for comparison (all NaN)')
+                            self.logger.warning("[PN-RATIOS-ROE-DECOMP] No valid periods for decomposition check")
                         
                         self.logger.info(f"[PN-RATIOS-ROE-DECOMP] ROE decomposition check:")
                         self.logger.info(f"  Reported ROE: {roe.to_dict()}")
@@ -9038,29 +9053,39 @@ class FinancialAnalyticsPlatform:
         st.success("Configuration reset to defaults!")
 
     def _export_logs(self):
-        """Export application logs"""
+        """Export application logs as ZIP with error handling"""
         try:
             log_dir = Path("logs")
-            if log_dir.exists():
-                import zipfile
-                zip_buffer = io.BytesIO()
-
-                with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
-                    for log_file in log_dir.glob("*.log"):
-                        zip_file.write(log_file, log_file.name)
-                
-                zip_buffer.seek(0)
-                
-                st.download_button(
-                    label="Download Logs",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-                    mime="application/zip"
-                )
-            else:
-                st.warning("No log files found")
+            if not log_dir.exists():
+                st.warning("No log directory found. No logs to export.")
+                return
+            
+            log_files = list(log_dir.glob("*.log"))
+            if not log_files:
+                st.warning("No log files found in the directory.")
+                return
+            
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for log_file in log_files:
+                    zip_file.write(log_file, arcname=log_file.name)
+            
+            zip_buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Download Logs ZIP",
+                data=zip_buffer,
+                file_name=f"app_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                mime="application/zip",
+                key="download_logs_unique"  # FIXED: Unique key to avoid duplication
+            )
+            st.success(f"Exported {len(log_files)} log files!")
+            
+        except PermissionError:
+            st.error("Permission denied when accessing logs. Check file permissions.")
         except Exception as e:
-            st.error(f"Failed to export logs: {e}")
+            st.error(f"Failed to export logs: {str(e)}")
+            self.logger.error(f"Log export error: {e}", exc_info=True)
 
     @error_boundary()
     @critical_method
@@ -9852,13 +9877,10 @@ class FinancialAnalyticsPlatform:
         self.set_state('number_format_value', 
                       'Indian' if "Indian" in format_option else 'International')
 
-        with st.sidebar.expander("🔧 Advanced Options"):
-            debug_mode = st.sidebar.checkbox(
-                "Debug Mode",
-                value=self.config.get('app.debug', False),
-                help="Show detailed error information"
-            )
-            self.config.set('app.debug', debug_mode)
+            if st.sidebar.checkbox("Debug Mode", value=self.config.get('app.debug', False)):
+                self.config.set('app.debug', True)
+                if st.sidebar.button("Download Output Log"):
+                    self._export_logs()
             
           # In _render_sidebar (or a debug section)
             if st.sidebar.button("🗑️ Clear Cache & Reset App", key="clear_cache_reset"):

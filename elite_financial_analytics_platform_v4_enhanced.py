@@ -4977,7 +4977,45 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info("\n" + "="*80)
         self.logger.info("[PN-RATIOS-START] Starting Enhanced Ratio Calculations (V6.1)")
         self.logger.info("="*80)
-        
+        required_ratios = [
+                # Core Penman-Nissim Ratios
+                'Return on Net Operating Assets (RNOA) %',
+                'Operating Profit Margin (OPM) %',
+                'Net Operating Asset Turnover (NOAT)',
+                'Financial Leverage (FLEV)',
+                'Net Borrowing Cost (NBC) %',
+                'Spread %',
+                'Leverage Spread %',
+                'Return on Equity (ROE) %',
+                'ROE (Calculated) %',
+                
+                # Additional Performance Ratios
+                'Return on Assets (ROA) %',
+                'Gross Borrowing Rate %',
+                'Debt to Equity',
+                
+                # Growth Ratios
+                'Revenue Growth %',
+                'NOA Growth %',
+                'Net Income Growth %',
+                
+                # Efficiency Ratios
+                'Asset Turnover',
+                'Working Capital Turnover',
+                
+                # Liquidity Ratios
+                'Current Ratio',
+                'Quick Ratio',
+                'Cash Ratio',
+                
+                # Coverage Ratios
+                'Interest Coverage',
+                
+                # Profitability Margins
+                'Gross Profit Margin %',
+                'EBITDA Margin %',
+                'Net Profit Margin %'
+            ]
         # Get reformulated statements (already cached)
         ref_bs = self._reformulate_balance_sheet_enhanced(None)
         ref_is = self._reformulate_income_statement_enhanced(None)
@@ -5543,45 +5581,7 @@ class EnhancedPenmanNissimAnalyzer:
             
             self.logger.info("\n[PN-RATIOS-ENSURE] Ensuring all required ratios exist...")
             
-            required_ratios = [
-                # Core Penman-Nissim Ratios
-                'Return on Net Operating Assets (RNOA) %',
-                'Operating Profit Margin (OPM) %',
-                'Net Operating Asset Turnover (NOAT)',
-                'Financial Leverage (FLEV)',
-                'Net Borrowing Cost (NBC) %',
-                'Spread %',
-                'Leverage Spread %',
-                'Return on Equity (ROE) %',
-                'ROE (Calculated) %',
-                
-                # Additional Performance Ratios
-                'Return on Assets (ROA) %',
-                'Gross Borrowing Rate %',
-                'Debt to Equity',
-                
-                # Growth Ratios
-                'Revenue Growth %',
-                'NOA Growth %',
-                'Net Income Growth %',
-                
-                # Efficiency Ratios
-                'Asset Turnover',
-                'Working Capital Turnover',
-                
-                # Liquidity Ratios
-                'Current Ratio',
-                'Quick Ratio',
-                'Cash Ratio',
-                
-                # Coverage Ratios
-                'Interest Coverage',
-                
-                # Profitability Margins
-                'Gross Profit Margin %',
-                'EBITDA Margin %',
-                'Net Profit Margin %'
-            ]
+            
             
             for ratio_name in required_ratios:
                 if ratio_name not in ratios.index:

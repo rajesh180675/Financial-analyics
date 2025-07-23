@@ -4754,7 +4754,7 @@ class EnhancedPenmanNissimAnalyzer:
         self._cached_is = reformulated.T
         return self._cached_is
     
-    def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+   def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enhanced ratio calculations with comprehensive error handling and edge case management
         Version 6.0 - Complete rewrite with all fixes and enhancements
@@ -4770,7 +4770,7 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.info(f"[PN-RATIOS-DATA] Reformulated BS shape: {ref_bs.shape}")
         self.logger.info(f"[PN-RATIOS-DATA] Reformulated IS shape: {ref_is.shape}")
         
-        # Initialize ratios DataFrame with years as index
+        # Initialize ratios DataFrame with years as index (will transpose at end)
         ratios = pd.DataFrame(index=ref_bs.columns)
         metadata = {}
         
@@ -4993,7 +4993,8 @@ class EnhancedPenmanNissimAnalyzer:
             try:
                 if rnoa_calculated:
                     # Spread = RNOA - NBC
-                    spread = ratios.loc['Return on Net Operating Assets (RNOA) %'] - nbc
+                    # FIX: Access as column, not row, since we haven't transposed yet
+                    spread = ratios['Return on Net Operating Assets (RNOA) %'] - nbc
                     self.logger.info(f"[PN-RATIOS-SPREAD] Spread calculated: {spread.to_dict()}")
                     calculation_status['successful'].append('Spread')
                 else:
@@ -5029,9 +5030,10 @@ class EnhancedPenmanNissimAnalyzer:
                     
                     # ROE Decomposition: ROE = RNOA + (FLEV × Spread)
                     if rnoa_calculated and flev_calculated:
-                        rnoa_values = ratios.loc['Return on Net Operating Assets (RNOA) %']
-                        flev_values = ratios.loc['Financial Leverage (FLEV)']
-                        spread_values = ratios.loc['Spread %']
+                        # FIX: Access as columns since we haven't transposed yet
+                        rnoa_values = ratios['Return on Net Operating Assets (RNOA) %']
+                        flev_values = ratios['Financial Leverage (FLEV)']
+                        spread_values = ratios['Spread %']
                         
                         calculated_roe = rnoa_values + (flev_values * spread_values)
                         ratios['ROE (Calculated) %'] = calculated_roe
@@ -5268,8 +5270,8 @@ class EnhancedPenmanNissimAnalyzer:
             
             # Check for ratios with all NaN values
             nan_ratios = []
-            for ratio_name in ratios.index:
-                if ratios.loc[ratio_name].isna().all():
+            for ratio_name in ratios.columns:  # Changed from ratios.index
+                if ratios[ratio_name].isna().all():
                     nan_ratios.append(ratio_name)
             
             if nan_ratios:
@@ -5277,14 +5279,19 @@ class EnhancedPenmanNissimAnalyzer:
                 calculation_status['warnings'].append(f"All-NaN ratios: {len(nan_ratios)}")
             
             # Check for extreme values
-            for ratio_name in ratios.index:
-                series = ratios.loc[ratio_name].dropna()
+            for ratio_name in ratios.columns:  # Changed from ratios.index
+                series = ratios[ratio_name].dropna()
                 if len(series) > 0:
                     if series.abs().max() > 1000:
                         self.logger.warning(f"[PN-RATIOS-VALIDATION] Extreme values in {ratio_name}: max={series.max():.2f}")
                         calculation_status['warnings'].append(f"Extreme values in {ratio_name}")
             
-            # ========== 4. ENSURE ALL REQUIRED RATIOS EXIST ==========
+            # ========== 4. TRANSPOSE BEFORE ENSURING REQUIRED RATIOS ==========
+            
+            # Transpose the DataFrame NOW before the ensure section
+            ratios = ratios.T  # Now ratios has ratio names as index, years as columns
+            
+            # ========== 5. ENSURE ALL REQUIRED RATIOS EXIST ==========
             
             self.logger.info("\n[PN-RATIOS-ENSURE] Ensuring all required ratios exist...")
             
@@ -5331,24 +5338,24 @@ class EnhancedPenmanNissimAnalyzer:
             for ratio_name in required_ratios:
                 if ratio_name not in ratios.index:
                     self.logger.info(f"[PN-RATIOS-ENSURE] Adding missing ratio: {ratio_name}")
-                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ref_bs.columns)
+                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ratios.columns)
                     calculation_status['warnings'].append(f"Added missing ratio: {ratio_name}")
             
-            # ========== 5. CALCULATE RATIO TRENDS ==========
+            # ========== 6. CALCULATE RATIO TRENDS ==========
             
             self.logger.info("\n[PN-RATIOS-TRENDS] Analyzing ratio trends...")
             
             ratio_trends = self._analyze_ratio_trends(ratios)
             metadata['ratio_trends'] = ratio_trends
             
-            # ========== 6. CALCULATE RATIO QUALITY SCORES ==========
+            # ========== 7. CALCULATE RATIO QUALITY SCORES ==========
             
             self.logger.info("\n[PN-RATIOS-QUALITY] Calculating ratio quality scores...")
             
             quality_scores = self._calculate_ratio_quality_scores(ratios)
             metadata['ratio_quality_scores'] = quality_scores
             
-            # ========== 7. SUMMARY AND METADATA ==========
+            # ========== 8. SUMMARY AND METADATA ==========
             
             # Store calculation status
             metadata['calculation_status'] = calculation_status
@@ -5363,7 +5370,7 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info(f"  Successful calculations: {len(calculation_status['successful'])}")
             self.logger.info(f"  Failed calculations: {len(calculation_status['failed'])}")
             self.logger.info(f"  Warnings: {len(calculation_status['warnings'])}")
-            self.logger.info(f"  Key ratios: {list(ratios.index[:10])}")
+            self.logger.info(f"  Key ratios: {list(ratios.columns[:10])}")  # Changed to columns
             
             # Log all calculated ratios with their latest values
             self.logger.info("\n[PN-RATIOS-ALL] All Calculated Ratios (Latest Values):")
@@ -5389,9 +5396,7 @@ class EnhancedPenmanNissimAnalyzer:
         except Exception as e:
             self.logger.error(f"[PN-RATIOS-ERROR] Critical error in ratio calculation: {e}", exc_info=True)
             # Ensure we return at least an empty DataFrame with required ratios
-            for ratio_name in required_ratios:
-                if ratio_name not in ratios.index:
-                    ratios.loc[ratio_name] = pd.Series(np.nan, index=ref_bs.columns)
+            ratios = pd.DataFrame(index=required_ratios, columns=ref_bs.columns)
             metadata['critical_error'] = str(e)
         
         finally:
@@ -5401,8 +5406,8 @@ class EnhancedPenmanNissimAnalyzer:
             self.logger.info("\n[PN-RATIOS-END] Ratio Calculations Complete")
             self.logger.info("="*80 + "\n")
         
-        # Return transposed DataFrame (columns as years, rows as ratios)
-        return ratios.T
+        # Return DataFrame with years as columns, ratios as rows (already transposed)
+        return ratios
     
     def _analyze_ratio_trends(self, ratios: pd.DataFrame) -> Dict[str, Any]:
         """Analyze trends in key ratios"""

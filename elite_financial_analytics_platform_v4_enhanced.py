@@ -4754,7 +4754,7 @@ class EnhancedPenmanNissimAnalyzer:
         self._cached_is = reformulated.T
         return self._cached_is
     
-   def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enhanced ratio calculations with comprehensive error handling and edge case management
         Version 6.0 - Complete rewrite with all fixes and enhancements

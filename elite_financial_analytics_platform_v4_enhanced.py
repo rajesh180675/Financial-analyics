@@ -9445,10 +9445,13 @@ class FinancialAnalyticsPlatform:
     def run(self):
         """Main application entry point"""
         try:
-            # Check if app is already initialized to prevent duplicate renders
-            if 'app_running' in st.session_state:
+            # Check if app is already running to prevent duplicate renders
+            # Use hasattr to safely check for session state keys
+            if hasattr(st.session_state, 'app_running') and st.session_state.app_running:
                 return
-            st.session_state['app_running'] = True
+            
+            # Set the running flag
+            st.session_state.app_running = True
             
             if not hasattr(self, 'components') or self.components is None:
                 self.logger.warning("Components not initialized, attempting recovery")
@@ -9469,12 +9472,11 @@ class FinancialAnalyticsPlatform:
                 self._render_debug_footer()
             
             # Clear the running flag at the end
-            del st.session_state['app_running']
+            st.session_state.app_running = False
             
         except Exception as e:
             # Clear the running flag on error
-            if 'app_running' in st.session_state:
-                del st.session_state['app_running']
+            st.session_state.app_running = False
                 
             self.logger.error(f"Application error: {e}")
             st.error("An unexpected error occurred. Please refresh the page.")
@@ -12051,10 +12053,11 @@ class FinancialAnalyticsPlatform:
     @safe_state_access
     def _render_main_content(self):
         """Render main content area"""
-        # Add render guard
-        if 'main_content_rendered' in st.session_state:
+        # Use hasattr for safer session state checking
+        if hasattr(st.session_state, 'main_content_rendered') and st.session_state.main_content_rendered:
             return
-        st.session_state['main_content_rendered'] = True
+        
+        st.session_state.main_content_rendered = True
         
         try:
             if self.config.get('app.enable_ml_features', True):
@@ -12065,44 +12068,7 @@ class FinancialAnalyticsPlatform:
             
         finally:
             # Clear the flag after rendering
-            if 'main_content_rendered' in st.session_state:
-                del st.session_state['main_content_rendered']
-            
-    @safe_state_access
-    def _render_query_bar(self):
-        """Render natural language query bar"""
-        col1, col2 = st.columns([5, 1])
-    
-        with col1:
-            query = st.text_input(
-                "🔍 Ask a question about your financial data",
-                placeholder="e.g., What was the revenue growth last year?",
-                key="nl_query"
-            )
-    
-        with col2:
-            if st.button("Ask", type="primary", key="ask_button"):
-                if query and self.get_state('analysis_data') is not None:
-                    with st.spinner("Processing query..."):
-                        analysis = self.components['analyzer'].analyze_financial_statements(
-                            self.get_state('analysis_data')
-                        )
-                        
-                        result = self.nl_processor.process_query(
-                            query,
-                            self.get_state('analysis_data'),
-                            analysis
-                        )
-                        
-                        query_history = self.get_state('query_history', [])
-                        query_history.append({
-                            'query': query,
-                            'result': result,
-                            'timestamp': datetime.now()
-                        })
-                        self.set_state('query_history', query_history[-10:])
-                        
-                        self._display_query_result(result)
+            st.session_state.main_content_rendered = False
     
     def _display_query_result(self, result: Dict[str, Any]):
         """Display natural language query result"""
@@ -12230,11 +12196,12 @@ class FinancialAnalyticsPlatform:
     @safe_state_access
     def _render_analysis_interface(self):
         """Render main analysis interface"""
-        # Prevent duplicate renders
+        # Use hasattr for safer session state checking
         render_key = 'analysis_interface_rendered'
-        if render_key in st.session_state:
+        if hasattr(st.session_state, render_key) and getattr(st.session_state, render_key):
             return
-        st.session_state[render_key] = True
+        
+        setattr(st.session_state, render_key, True)
         
         try:
             data = self.get_state('analysis_data')
@@ -12282,8 +12249,7 @@ class FinancialAnalyticsPlatform:
                     
         finally:
             # Clear the render flag
-            if render_key in st.session_state:
-                del st.session_state[render_key]
+            setattr(st.session_state, render_key, False)
     
     @error_boundary()
     @safe_state_access

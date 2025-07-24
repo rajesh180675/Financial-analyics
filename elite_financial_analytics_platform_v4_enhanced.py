@@ -10234,54 +10234,235 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None
-
+            
+    def _parse_csv_file(self, file) -> Optional[pd.DataFrame]:
+        """Parse CSV file containing financial data"""
+        try:
+            self.logger.info("[PARSE-CSV] Starting CSV parsing")
+            
+            # Reset file pointer
+            file.seek(0)
+            
+            # Try different CSV reading strategies
+            strategies = [
+                {'sep': ',', 'header': 0, 'index_col': 0},
+                {'sep': ',', 'header': None, 'index_col': 0},
+                {'sep': ';', 'header': 0, 'index_col': 0},
+                {'sep': '\t', 'header': 0, 'index_col': 0},
+                {'sep': None, 'header': 0, 'index_col': 0, 'engine': 'python'}
+            ]
+            
+            df = None
+            for i, strategy in enumerate(strategies):
+                try:
+                    file.seek(0)
+                    df = pd.read_csv(file, **strategy)
+                    
+                    if df is not None and not df.empty and len(df.columns) > 0:
+                        if len(df) > 2 and len(df.columns) > 1:
+                            self.logger.info(f"[PARSE-CSV] Successfully parsed with strategy {i+1}")
+                            break
+                            
+                except Exception as e:
+                    self.logger.debug(f"[PARSE-CSV] Strategy {i+1} failed: {e}")
+                    continue
+            
+            if df is None or df.empty:
+                self.logger.error("[PARSE-CSV] All parsing strategies failed")
+                return None
+            
+            # Clean and standardize the DataFrame
+            df = self._clean_csv_data(df)
+            df = self._add_statement_type_prefixes(df)
+            
+            self.logger.info(f"[PARSE-CSV] Successfully parsed CSV with shape: {df.shape}")
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"[PARSE-CSV] Error parsing CSV file: {e}", exc_info=True)
+            return None
+    
+    def _clean_csv_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean and standardize CSV data"""
+        try:
+            if df.index.name is None or 'Unnamed' in str(df.index.name):
+                df.index.name = "Particulars"
+            
+            df.columns = [str(col).strip().replace('\n', ' ').replace('\t', ' ') for col in df.columns]
+            
+            # Handle year columns
+            year_pattern = re.compile(r'(20\d{2}|19\d{2}|FY\s*\d{4})')
+            new_columns = []
+            
+            for col in df.columns:
+                col_str = str(col)
+                year_match = year_pattern.search(col_str)
+                if year_match:
+                    year = year_match.group(1).replace('FY', '').strip()
+                    new_columns.append(f"{year}03")  # Assuming March year-end
+                else:
+                    new_columns.append(col_str)
+            
+            df.columns = new_columns
+            
+            # Convert to numeric
+            for col in df.columns:
+                df[col] = self._convert_to_numeric(df[col])
+            
+            df = df.dropna(how='all').dropna(axis=1, how='all')
+            df.index = [str(idx).strip() for idx in df.index]
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"[PARSE-CSV] Error cleaning CSV data: {e}")
+            return df
+    
+    def _convert_to_numeric(self, series: pd.Series) -> pd.Series:
+        """Convert series to numeric, handling various formats"""
+        try:
+            if series.dtype == 'object':
+                series = series.astype(str)
+                series = series.str.replace(',', '')
+                series = series.str.replace('₹', '')
+                series = series.str.replace('$', '')
+                series = series.str.replace(r'KATEX_INLINE_OPEN(.*?)KATEX_INLINE_CLOSE', r'-\1', regex=True)
+                series = series.replace({'-': np.nan, '--': np.nan, 'NA': np.nan, 'nil': 0, '': np.nan})
+            
+            series = pd.to_numeric(series, errors='coerce')
+            return series
+            
+        except Exception as e:
+            self.logger.debug(f"Error converting series to numeric: {e}")
+            return series
+    
+    def _add_statement_type_prefixes(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Add statement type prefixes to index based on content analysis"""
+        try:
+            new_index = []
+            
+            for idx in df.index:
+                idx_str = str(idx).lower()
+                
+                if any(kw in idx_str for kw in ['revenue', 'income', 'profit', 'loss', 'expense', 'cost', 'ebit', 'tax']):
+                    statement_type = 'ProfitLoss'
+                elif any(kw in idx_str for kw in ['assets', 'liabilities', 'equity', 'capital', 'borrowings']):
+                    statement_type = 'BalanceSheet'
+                elif any(kw in idx_str for kw in ['cash flow', 'operating activities', 'investing']):
+                    statement_type = 'CashFlow'
+                else:
+                    statement_type = 'Financial'
+                
+                if not str(idx).startswith(f"{statement_type}::"):
+                    new_index.append(f"{statement_type}::{str(idx).strip()}")
+                else:
+                    new_index.append(str(idx).strip())
+            
+            df.index = new_index
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"Error adding statement type prefixes: {e}")
+            return df
+        
     def _parse_excel_file(self, file) -> Optional[pd.DataFrame]:
-        """
-        Enhanced Excel file parser that handles both standard and complex formats
-        """
+        """Enhanced Excel file parser that preserves all columns"""
         try:
             self.logger.info("[PARSE-EXCEL] Starting enhanced Excel parsing")
             
-            # Try to read all sheets
+            # Read all sheets
             excel_file = pd.ExcelFile(file)
             sheet_names = excel_file.sheet_names
-            
             self.logger.info(f"[PARSE-EXCEL] Found {len(sheet_names)} sheets: {sheet_names}")
             
             all_dataframes = []
             
             for sheet_name in sheet_names:
                 try:
-                    # Read with different strategies
-                    # Strategy 1: Try with header detection
-                    df = pd.read_excel(file, sheet_name=sheet_name)
+                    # First, read the raw data to understand structure
+                    df_raw = pd.read_excel(file, sheet_name=sheet_name, header=None)
                     
-                    if df.empty or len(df.columns) < 2:
-                        # Strategy 2: Try without header
-                        df = pd.read_excel(file, sheet_name=sheet_name, header=None)
+                    self.logger.info(f"[PARSE-EXCEL] Sheet '{sheet_name}' raw shape: {df_raw.shape}")
                     
-                    if not df.empty:
-                        # Detect statement type
-                        statement_type = self._detect_statement_type_from_sheet(sheet_name, df)
+                    if df_raw.empty:
+                        continue
+                    
+                    # Log first few rows to understand structure
+                    self.logger.debug(f"[PARSE-EXCEL] First 5 rows of {sheet_name}:")
+                    for i in range(min(5, len(df_raw))):
+                        self.logger.debug(f"Row {i}: {df_raw.iloc[i].tolist()[:5]}...")  # First 5 cols
+                    
+                    # Find header row
+                    header_row = self._find_header_row_excel_enhanced(df_raw)
+                    
+                    if header_row is not None:
+                        self.logger.info(f"[PARSE-EXCEL] Found header at row {header_row}")
                         
-                        # Process based on type
-                        if 'Unnamed' in str(df.columns[0]) or df.columns[0] == 0:
-                            # Needs header detection
-                            header_row = self._find_header_row_excel(df)
-                            if header_row is not None:
-                                df.columns = df.iloc[header_row]
-                                df = df.iloc[header_row + 1:].reset_index(drop=True)
-                                df = df.set_index(df.columns[0])
+                        # Extract headers and data
+                        headers = df_raw.iloc[header_row].tolist()
+                        data_df = df_raw.iloc[header_row + 1:].copy()
                         
-                        # Add statement type prefix
-                        df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+                        # Set the first column as index
+                        data_df.columns = headers
                         
-                        # Clean data
-                        df = self._clean_excel_data(df)
+                        # Find the metric name column (usually first non-numeric column)
+                        metric_col_idx = 0
+                        for i, col in enumerate(headers):
+                            if pd.isna(col) or str(col).strip() == '':
+                                continue
+                            # Check if this column contains mostly text
+                            sample_values = df_raw.iloc[header_row + 1:header_row + 6, i]
+                            if sample_values.dtype == 'object':
+                                metric_col_idx = i
+                                break
                         
-                        if not df.empty:
-                            all_dataframes.append(df)
-                            self.logger.info(f"[PARSE-EXCEL] Processed {len(df)} rows from sheet {sheet_name}")
+                        # Set index
+                        if metric_col_idx < len(data_df.columns):
+                            data_df = data_df.set_index(data_df.columns[metric_col_idx])
+                        
+                        # Clean column names - preserve year information
+                        clean_columns = []
+                        for col in data_df.columns:
+                            if pd.isna(col):
+                                clean_columns.append(f"Column_{len(clean_columns)}")
+                            else:
+                                # Check if it's a date/year
+                                col_str = str(col).strip()
+                                if re.search(r'\d{4}', col_str):  # Contains a year
+                                    # Extract just the year/date part
+                                    year_match = re.search(r'(\d{6}|\d{4})', col_str)
+                                    if year_match:
+                                        clean_columns.append(year_match.group(1))
+                                    else:
+                                        clean_columns.append(col_str)
+                                else:
+                                    clean_columns.append(col_str)
+                        
+                        data_df.columns = clean_columns
+                        
+                        # Remove the index column from columns if it got duplicated
+                        if data_df.index.name in data_df.columns:
+                            data_df = data_df.drop(columns=[data_df.index.name])
+                        
+                    else:
+                        # Fallback: use first row as header
+                        self.logger.warning(f"[PARSE-EXCEL] No clear header found, using row 0")
+                        data_df = pd.read_excel(file, sheet_name=sheet_name)
+                    
+                    # Detect statement type
+                    statement_type = self._detect_statement_type_from_sheet(sheet_name, data_df)
+                    
+                    # Add statement type prefix to index
+                    if not data_df.empty:
+                        data_df.index = [f"{statement_type}::{str(idx).strip()}" for idx in data_df.index]
+                        
+                        # Clean numeric data
+                        data_df = self._clean_excel_data(data_df)
+                        
+                        if not data_df.empty:
+                            all_dataframes.append(data_df)
+                            self.logger.info(f"[PARSE-EXCEL] Processed {len(data_df)} rows from sheet {sheet_name}")
+                            self.logger.info(f"[PARSE-EXCEL] Columns: {list(data_df.columns)}")
                             
                 except Exception as e:
                     self.logger.warning(f"[PARSE-EXCEL] Error processing sheet {sheet_name}: {e}")
@@ -10291,26 +10472,55 @@ class FinancialAnalyticsPlatform:
             if all_dataframes:
                 combined_df = pd.concat(all_dataframes, axis=0)
                 
-                # Remove duplicates if any
+                # Remove duplicates
                 if combined_df.index.duplicated().any():
                     combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
                 
                 self.logger.info(f"[PARSE-EXCEL] Successfully parsed {len(combined_df)} total rows")
+                self.logger.info(f"[PARSE-EXCEL] Final columns: {list(combined_df.columns)}")
+                
                 return combined_df
             else:
-                # Fallback to simple parsing
-                df = pd.read_excel(file)
-                if not df.empty:
-                    # Try to detect statement type from content
-                    statement_type = self._detect_statement_type_excel(df)
-                    df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
-                    return self._clean_excel_data(df)
-                
                 return None
                 
         except Exception as e:
-            self.logger.error(f"[PARSE-EXCEL] Error parsing Excel file: {e}")
+            self.logger.error(f"[PARSE-EXCEL] Error parsing Excel file: {e}", exc_info=True)
             return None
+    
+    def _find_header_row_excel_enhanced(self, df: pd.DataFrame) -> Optional[int]:
+        """Enhanced header detection for Excel files"""
+        self.logger.debug("[PARSE-EXCEL] Searching for header row")
+        
+        for i in range(min(20, len(df))):
+            row = df.iloc[i]
+            
+            # Count cells that look like dates/years
+            date_count = 0
+            for val in row:
+                if pd.notna(val):
+                    val_str = str(val).strip()
+                    
+                    # Check for year patterns
+                    if re.search(r'(20\d{2}|19\d{2})', val_str):
+                        date_count += 1
+                        
+                    # Check for date-like numbers (YYYYMM format)
+                    try:
+                        if isinstance(val, (int, float)) and len(str(int(val))) == 6:
+                            val_int = int(val)
+                            year = val_int // 100
+                            month = val_int % 100
+                            if 1900 <= year <= 2100 and 1 <= month <= 12:
+                                date_count += 1
+                    except:
+                        pass
+            
+            if date_count >= 2:  # At least 2 date-like values
+                self.logger.info(f"[PARSE-EXCEL] Found header row at index {i} with {date_count} date patterns")
+                return i
+        
+        self.logger.warning("[PARSE-EXCEL] No clear header row found")
+        return None
 
     def _find_header_row_excel(self, df: pd.DataFrame) -> Optional[int]:
         """Find header row in Excel data - enhanced version"""
@@ -10685,55 +10895,34 @@ class FinancialAnalyticsPlatform:
             return df
         
     def _clean_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Clean and prepare dataframe for analysis with robust column preservation"""
+        """Clean and prepare dataframe for analysis - preserve all data columns"""
         try:
+            self.logger.info(f"[CLEAN] Starting with shape: {df.shape}, columns: {list(df.columns)[:5]}...")
+            
             cleaned_df = self._standardize_dataframe(df)
-    
-            # --- MODIFIED: More conservative 'Unnamed' column removal ---
-            unnamed_cols_to_check = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
+            
+            # Only remove truly empty unnamed columns
             cols_to_drop = []
-    
-            if unnamed_cols_to_check:
-                # Only remove unnamed columns if we won't end up with zero columns
-                for col in unnamed_cols_to_check:
-                    # Only drop if it's truly unnamed AND doesn't contain year pattern AND we have other columns
-                    if (not re.search(r'(20\d{4}|19\d{4}|20\d{2}|19\d{2})', str(col)) and 
-                        len(cleaned_df.columns) - len(cols_to_drop) > 1):  # Ensure we keep at least 1 column
+            for col in cleaned_df.columns:
+                if 'Unnamed' in str(col):
+                    # Check if this column has any non-null data
+                    if cleaned_df[col].notna().sum() == 0:
                         cols_to_drop.append(col)
-                
-                # Safety check: don't drop ALL columns
-                if len(cols_to_drop) >= len(cleaned_df.columns):
-                    self.logger.warning("Attempted to drop all columns - keeping unnamed columns with data")
-                    cols_to_drop = []
-                
-                # Drop only the safe-to-drop columns
-                if cols_to_drop:
-                    cleaned_df = cleaned_df.drop(columns=cols_to_drop)
-                    self.logger.info(f"Removed {len(cols_to_drop)} truly unnamed columns")
-                else:
-                    self.logger.info("No unnamed columns removed - all appear to contain data")
-    
-            # If we still have no columns, this means the original data was malformed
-            if len(cleaned_df.columns) == 0:
-                self.logger.error("No columns remaining after cleaning - attempting data recovery")
-                return self._attempt_data_recovery(df)
-    
-            # --- Rest of the numeric conversion logic (retained) ---
+                    else:
+                        self.logger.info(f"[CLEAN] Keeping 'Unnamed' column {col} - contains data")
+            
+            if cols_to_drop:
+                cleaned_df = cleaned_df.drop(columns=cols_to_drop)
+                self.logger.info(f"[CLEAN] Removed {len(cols_to_drop)} empty unnamed columns")
+            
+            # Convert numeric columns
             for col in cleaned_df.columns:
                 try:
-                    cleaned_df[col] = cleaned_df[col].replace({
-                        '-': np.nan,
-                        '': np.nan,
-                        'NA': np.nan,
-                        'None': np.nan
-                    })
-                    # This conversion is more robust for financial data
-                    cleaned_df[col] = pd.to_numeric(
-                        cleaned_df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''),
-                        errors='coerce'
-                    )
+                    cleaned_df[col] = self._convert_to_numeric(cleaned_df[col])
                 except Exception as e:
                     self.logger.warning(f"Could not convert column {col} to numeric: {e}")
+            
+            self.logger.info(f"[CLEAN] Final shape: {cleaned_df.shape}, columns: {list(cleaned_df.columns)}")
             
             return cleaned_df
             

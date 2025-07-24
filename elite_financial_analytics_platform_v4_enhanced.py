@@ -10158,7 +10158,7 @@ class FinancialAnalyticsPlatform:
         
     def _parse_single_file(self, file) -> Optional[pd.DataFrame]:
         """
-        Enhanced parser that correctly handles multi-statement financial files
+        Enhanced parser that correctly handles multi-statement financial files including Google Sheets XLSX
         """
         try:
             file_ext = Path(file.name).suffix.lower()
@@ -10173,14 +10173,7 @@ class FinancialAnalyticsPlatform:
                 try:
                     tables = pd.read_html(file, match='.+', header=None)
                     self.logger.info(f"Found {len(tables)} tables in {file.name}")
-                    # Add:
-                    self.logger.info(f"[DEBUG] Found {len(tables)} tables in {file.name}")
-                    for i, table in enumerate(tables[:3]):  # Check first 3 tables
-                        self.logger.info(f"[DEBUG] Table {i} shape: {table.shape}")
-                        if table.shape[1] > 0:
-                            # Log last few columns
-                            last_cols = table.iloc[0, -3:].tolist() if table.shape[1] >= 3 else table.iloc[0].tolist()
-                            self.logger.info(f"[DEBUG] Table {i} last columns sample: {last_cols}")
+                    
                     if not tables:
                         raise ValueError("No tables found")
                     
@@ -10217,11 +10210,23 @@ class FinancialAnalyticsPlatform:
                     self.logger.warning(f"Multi-table parsing failed: {e}, trying fallback method")
                     return self._parse_single_table_fallback(file)
             
-            # For other file types, use existing logic
+            # For CSV files
             elif file_ext == '.csv':
                 return self._parse_csv_file(file)
+            
+            # For Excel files - ENHANCED WITH GOOGLE SHEETS SUPPORT
             elif file_ext == '.xlsx':
-                return self._parse_excel_file(file)
+                # First check if it's a Google Sheets consolidated file
+                file.seek(0)  # Reset file pointer
+                if self._detect_google_sheets_xlsx(file):
+                    self.logger.info("[PARSE] Detected Google Sheets XLSX format")
+                    file.seek(0)  # Reset file pointer again
+                    return self._parse_google_sheets_xlsx(file)
+                else:
+                    # Standard XLSX parsing
+                    file.seek(0)  # Reset file pointer
+                    return self._parse_excel_file(file)
+            
             else:
                 self.logger.error(f"Unsupported file type: {file_ext}")
                 return None
@@ -10229,6 +10234,169 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error parsing {file.name}: {e}")
             return None
+
+    def _parse_excel_file(self, file) -> Optional[pd.DataFrame]:
+    """
+    Enhanced Excel file parser that handles both standard and complex formats
+    """
+    try:
+        self.logger.info("[PARSE-EXCEL] Starting enhanced Excel parsing")
+        
+        # Try to read all sheets
+        excel_file = pd.ExcelFile(file)
+        sheet_names = excel_file.sheet_names
+        
+        self.logger.info(f"[PARSE-EXCEL] Found {len(sheet_names)} sheets: {sheet_names}")
+        
+        all_dataframes = []
+        
+        for sheet_name in sheet_names:
+            try:
+                # Read with different strategies
+                # Strategy 1: Try with header detection
+                df = pd.read_excel(file, sheet_name=sheet_name)
+                
+                if df.empty or len(df.columns) < 2:
+                    # Strategy 2: Try without header
+                    df = pd.read_excel(file, sheet_name=sheet_name, header=None)
+                
+                if not df.empty:
+                    # Detect statement type
+                    statement_type = self._detect_statement_type_from_sheet(sheet_name, df)
+                    
+                    # Process based on type
+                    if 'Unnamed' in str(df.columns[0]) or df.columns[0] == 0:
+                        # Needs header detection
+                        header_row = self._find_header_row_excel(df)
+                        if header_row is not None:
+                            df.columns = df.iloc[header_row]
+                            df = df.iloc[header_row + 1:].reset_index(drop=True)
+                            df = df.set_index(df.columns[0])
+                    
+                    # Add statement type prefix
+                    df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+                    
+                    # Clean data
+                    df = self._clean_excel_data(df)
+                    
+                    if not df.empty:
+                        all_dataframes.append(df)
+                        self.logger.info(f"[PARSE-EXCEL] Processed {len(df)} rows from sheet {sheet_name}")
+                        
+            except Exception as e:
+                self.logger.warning(f"[PARSE-EXCEL] Error processing sheet {sheet_name}: {e}")
+                continue
+        
+        # Combine all dataframes
+        if all_dataframes:
+            combined_df = pd.concat(all_dataframes, axis=0)
+            
+            # Remove duplicates if any
+            if combined_df.index.duplicated().any():
+                combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+            
+            self.logger.info(f"[PARSE-EXCEL] Successfully parsed {len(combined_df)} total rows")
+            return combined_df
+        else:
+            # Fallback to simple parsing
+            df = pd.read_excel(file)
+            if not df.empty:
+                # Try to detect statement type from content
+                statement_type = self._detect_statement_type_excel(df)
+                df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+                return self._clean_excel_data(df)
+            
+            return None
+            
+    except Exception as e:
+        self.logger.error(f"[PARSE-EXCEL] Error parsing Excel file: {e}")
+        return None
+
+    def _find_header_row_excel(self, df: pd.DataFrame) -> Optional[int]:
+        """Find header row in Excel data"""
+        for i in range(min(10, len(df))):
+            row = df.iloc[i]
+            # Check if row contains year patterns
+            year_count = sum(1 for val in row if pd.notna(val) and re.search(r'20\d{2}|19\d{2}', str(val)))
+            if year_count >= 2:
+                return i
+        return None
+    
+    def _clean_excel_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Clean Excel data - convert to numeric"""
+        for col in df.columns:
+            if col != df.index.name:  # Don't convert the index column
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace(',', '').str.replace('(', '-').str.replace(')', ''),
+                    errors='coerce'
+                )
+        
+        # Remove empty rows and columns
+        df = df.dropna(how='all').dropna(axis=1, how='all')
+        
+        return df
+    
+    def _detect_statement_type_excel(self, df: pd.DataFrame) -> str:
+        """Detect statement type from Excel content"""
+        # Convert DataFrame to string for analysis
+        content_str = ' '.join([str(val) for val in df.values.flatten()[:200] if pd.notna(val)]).lower()
+        
+        if any(term in content_str for term in ['cash flow', 'operating activities', 'investing']):
+            return 'CashFlow'
+        elif any(term in content_str for term in ['profit', 'loss', 'revenue', 'income statement']):
+            return 'ProfitLoss'
+        elif any(term in content_str for term in ['assets', 'liabilities', 'balance sheet']):
+            return 'BalanceSheet'
+        else:
+            return 'Financial'
+
+    def _validate_parsed_google_sheets_data(self, df: pd.DataFrame) -> bool:
+        """
+        Validate that the parsed Google Sheets data has the expected structure
+        """
+        if df.empty:
+            self.logger.error("[VALIDATE] DataFrame is empty")
+            return False
+        
+        # Check for required statement types
+        statement_types = set()
+        for idx in df.index:
+            if '::' in str(idx):
+                statement_type = str(idx).split('::')[0]
+                statement_types.add(statement_type)
+        
+        self.logger.info(f"[VALIDATE] Found statement types: {statement_types}")
+        
+        # We should have at least 2 statement types
+        if len(statement_types) < 2:
+            self.logger.warning(f"[VALIDATE] Only found {len(statement_types)} statement types")
+        
+        # Check for reasonable number of metrics
+        metrics_per_type = {}
+        for st in statement_types:
+            count = sum(1 for idx in df.index if str(idx).startswith(f"{st}::"))
+            metrics_per_type[st] = count
+        
+        self.logger.info(f"[VALIDATE] Metrics per statement type: {metrics_per_type}")
+        
+        # Check for year columns
+        year_pattern = re.compile(r'^\d{6}$')  # YYYYMM format
+        year_columns = [col for col in df.columns if year_pattern.match(str(col))]
+        
+        if len(year_columns) < 2:
+            self.logger.warning(f"[VALIDATE] Only found {len(year_columns)} year columns")
+            return False
+        
+        self.logger.info(f"[VALIDATE] Found {len(year_columns)} year columns: {year_columns}")
+        
+        # Check for data completeness
+        non_null_count = df.notna().sum().sum()
+        total_cells = df.size
+        completeness = (non_null_count / total_cells) * 100 if total_cells > 0 else 0
+        
+        self.logger.info(f"[VALIDATE] Data completeness: {completeness:.1f}%")
+        
+        return True
     
     def _identify_statement_type_from_table(self, table: pd.DataFrame) -> Optional[str]:
         """
@@ -10722,6 +10890,326 @@ class FinancialAnalyticsPlatform:
             self.logger.info(f"Preserved {len(type_rows)} rows for {stmt_type}")
         
         return merged_df
+
+    def _detect_google_sheets_xlsx(self, file) -> bool:
+        """
+        Detect if an XLSX file is a Google Sheets consolidated financial statement
+        """
+        try:
+            # Read the first sheet to check structure
+            df = pd.read_excel(file, sheet_name=0, nrows=10)
+            
+            # Google Sheets consolidated files typically have specific patterns
+            # Check for multiple statement indicators in one sheet
+            content_str = ' '.join([str(val) for val in df.values.flatten() if pd.notna(val)]).lower()
+            
+            # Look for indicators of consolidated statements
+            has_balance_sheet = any(term in content_str for term in ['balance sheet', 'assets', 'liabilities'])
+            has_profit_loss = any(term in content_str for term in ['profit', 'loss', 'income statement', 'p&l'])
+            has_cash_flow = any(term in content_str for term in ['cash flow', 'operating activities'])
+            
+            # If we find indicators of multiple statements, it's likely a consolidated file
+            statement_count = sum([has_balance_sheet, has_profit_loss, has_cash_flow])
+            
+            self.logger.info(f"[PARSE-DETECT] Google Sheets detection - Statements found: {statement_count}")
+            
+            return statement_count >= 2
+            
+        except Exception as e:
+            self.logger.debug(f"Not a Google Sheets consolidated file: {e}")
+            return False
+    
+    def _parse_google_sheets_xlsx(self, file) -> pd.DataFrame:
+        """
+        Parse Google Sheets XLSX file containing consolidated financial statements
+        """
+        self.logger.info("[PARSE-GSHEET] Starting Google Sheets XLSX parsing")
+        
+        try:
+            # Read all sheets in the file
+            excel_file = pd.ExcelFile(file)
+            sheet_names = excel_file.sheet_names
+            self.logger.info(f"[PARSE-GSHEET] Found {len(sheet_names)} sheets: {sheet_names}")
+            
+            all_dataframes = []
+            
+            # Process each sheet
+            for sheet_name in sheet_names:
+                self.logger.info(f"[PARSE-GSHEET] Processing sheet: {sheet_name}")
+                
+                # Read the entire sheet first to understand its structure
+                df_raw = pd.read_excel(file, sheet_name=sheet_name, header=None)
+                
+                if df_raw.empty:
+                    self.logger.warning(f"[PARSE-GSHEET] Sheet {sheet_name} is empty, skipping")
+                    continue
+                
+                # Detect statement type from sheet name or content
+                statement_type = self._detect_statement_type_from_sheet(sheet_name, df_raw)
+                
+                # Parse the sheet based on detected structure
+                parsed_df = self._parse_google_sheet_structure(df_raw, statement_type, sheet_name)
+                
+                if parsed_df is not None and not parsed_df.empty:
+                    all_dataframes.append(parsed_df)
+                    self.logger.info(f"[PARSE-GSHEET] Successfully parsed {len(parsed_df)} rows from {sheet_name}")
+            
+            # Combine all dataframes
+            if all_dataframes:
+                combined_df = pd.concat(all_dataframes, axis=0)
+                self.logger.info(f"[PARSE-GSHEET] Combined {len(all_dataframes)} sheets into {len(combined_df)} total rows")
+                
+                # Ensure no duplicate indices
+                if combined_df.index.duplicated().any():
+                    self.logger.warning("[PARSE-GSHEET] Found duplicate indices, making unique")
+                    combined_df = self._make_indices_unique(combined_df)
+                
+                return combined_df
+            else:
+                self.logger.error("[PARSE-GSHEET] No valid data found in any sheet")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            self.logger.error(f"[PARSE-GSHEET] Error parsing Google Sheets XLSX: {e}", exc_info=True)
+            # Fallback to standard XLSX parsing
+            return self._parse_excel_file(file)
+    
+    def _detect_statement_type_from_sheet(self, sheet_name: str, df: pd.DataFrame) -> str:
+        """
+        Detect financial statement type from sheet name or content
+        """
+        sheet_lower = sheet_name.lower()
+        
+        # First try sheet name
+        if any(term in sheet_lower for term in ['balance', 'bs', 'position']):
+            return 'BalanceSheet'
+        elif any(term in sheet_lower for term in ['profit', 'loss', 'p&l', 'pl', 'income']):
+            return 'ProfitLoss'
+        elif any(term in sheet_lower for term in ['cash', 'flow', 'cf']):
+            return 'CashFlow'
+        
+        # If sheet name is not clear, analyze content
+        content_str = ' '.join([str(val) for val in df.values.flatten()[:100] if pd.notna(val)]).lower()
+        
+        # Count keywords for each statement type
+        bs_score = sum(1 for term in ['assets', 'liabilities', 'equity', 'current assets', 'total assets'] 
+                       if term in content_str)
+        pl_score = sum(1 for term in ['revenue', 'profit', 'loss', 'income', 'expense', 'ebit'] 
+                       if term in content_str)
+        cf_score = sum(1 for term in ['cash flow', 'operating activities', 'investing', 'financing'] 
+                       if term in content_str)
+        
+        # Return the type with highest score
+        scores = {'BalanceSheet': bs_score, 'ProfitLoss': pl_score, 'CashFlow': cf_score}
+        statement_type = max(scores, key=scores.get)
+        
+        self.logger.info(f"[PARSE-GSHEET] Detected {statement_type} from content analysis (scores: {scores})")
+        
+        return statement_type
+    
+    def _parse_google_sheet_structure(self, df: pd.DataFrame, statement_type: str, sheet_name: str) -> pd.DataFrame:
+        """
+        Parse the specific structure of a Google Sheets financial statement
+        """
+        self.logger.info(f"[PARSE-GSHEET-STRUCT] Parsing {statement_type} from sheet: {sheet_name}")
+        
+        # Step 1: Find the header row (contains years)
+        header_row_idx = self._find_header_row_google_sheets(df)
+        
+        if header_row_idx is None:
+            self.logger.error(f"[PARSE-GSHEET-STRUCT] Could not find header row in {sheet_name}")
+            return None
+        
+        self.logger.info(f"[PARSE-GSHEET-STRUCT] Found header row at index {header_row_idx}")
+        
+        # Step 2: Extract year columns
+        year_columns = self._extract_year_columns_google_sheets(df, header_row_idx)
+        
+        if not year_columns:
+            self.logger.error(f"[PARSE-GSHEET-STRUCT] No year columns found in {sheet_name}")
+            return None
+        
+        self.logger.info(f"[PARSE-GSHEET-STRUCT] Found {len(year_columns)} year columns: {list(year_columns.keys())}")
+        
+        # Step 3: Find the metrics column (usually the first column)
+        metrics_col_idx = self._find_metrics_column(df, header_row_idx)
+        
+        if metrics_col_idx is None:
+            self.logger.error(f"[PARSE-GSHEET-STRUCT] Could not find metrics column in {sheet_name}")
+            return None
+        
+        # Step 4: Extract the data
+        parsed_data = {}
+        
+        # Iterate through rows after header
+        for row_idx in range(header_row_idx + 1, len(df)):
+            # Get the metric name
+            metric_name = df.iloc[row_idx, metrics_col_idx]
+            
+            # Skip empty rows or non-string metrics
+            if pd.isna(metric_name) or not isinstance(metric_name, str):
+                continue
+            
+            # Clean the metric name
+            metric_name = str(metric_name).strip()
+            
+            # Skip if it's a section header or total line (you can customize this)
+            if metric_name.upper() == metric_name or metric_name.startswith('---'):
+                continue
+            
+            # Add statement type prefix
+            full_metric_name = f"{statement_type}::{metric_name}"
+            
+            # Extract values for each year
+            row_data = {}
+            for year, col_idx in year_columns.items():
+                try:
+                    value = df.iloc[row_idx, col_idx]
+                    
+                    # Clean and convert the value
+                    if pd.notna(value):
+                        # Handle string values with commas, parentheses, etc.
+                        if isinstance(value, str):
+                            # Remove currency symbols, commas, spaces
+                            value_clean = value.replace(',', '').replace('₹', '').replace('$', '').strip()
+                            
+                            # Handle parentheses (negative numbers)
+                            if value_clean.startswith('(') and value_clean.endswith(')'):
+                                value_clean = '-' + value_clean[1:-1]
+                            
+                            # Handle special cases
+                            if value_clean in ['-', '--', 'NA', 'N/A', 'nil', 'Nil']:
+                                value = 0
+                            else:
+                                try:
+                                    value = float(value_clean)
+                                except ValueError:
+                                    value = 0
+                        else:
+                            value = float(value)
+                    else:
+                        value = 0
+                    
+                    row_data[year] = value
+                    
+                except Exception as e:
+                    self.logger.debug(f"Error parsing value at row {row_idx}, col {col_idx}: {e}")
+                    row_data[year] = 0
+            
+            # Add to parsed data if we have valid data
+            if any(v != 0 for v in row_data.values()):
+                parsed_data[full_metric_name] = row_data
+        
+        # Convert to DataFrame
+        if parsed_data:
+            result_df = pd.DataFrame.from_dict(parsed_data, orient='index')
+            
+            # Sort columns (years) chronologically
+            result_df = result_df.reindex(sorted(result_df.columns), axis=1)
+            
+            self.logger.info(f"[PARSE-GSHEET-STRUCT] Successfully parsed {len(result_df)} metrics with {len(result_df.columns)} years")
+            
+            return result_df
+        else:
+            self.logger.warning(f"[PARSE-GSHEET-STRUCT] No valid data found in {sheet_name}")
+            return pd.DataFrame()
+    
+    def _find_header_row_google_sheets(self, df: pd.DataFrame) -> Optional[int]:
+        """
+        Find the row containing year headers in Google Sheets format
+        """
+        # Look for rows containing year patterns
+        for idx in range(min(20, len(df))):  # Check first 20 rows
+            row = df.iloc[idx]
+            year_count = 0
+            
+            for val in row:
+                if pd.notna(val):
+                    val_str = str(val)
+                    # Check for year patterns (YYYY, YYYY-YY, FY YYYY, etc.)
+                    if re.search(r'(20\d{2}|19\d{2}|FY\s*\d{4}|\d{4}-\d{2})', val_str):
+                        year_count += 1
+            
+            # If we find at least 2 year patterns, this is likely the header row
+            if year_count >= 2:
+                self.logger.debug(f"[PARSE-GSHEET] Found {year_count} year patterns in row {idx}")
+                return idx
+        
+        return None
+    
+    def _extract_year_columns_google_sheets(self, df: pd.DataFrame, header_row_idx: int) -> Dict[str, int]:
+        """
+        Extract year column mappings from the header row
+        """
+        year_columns = {}
+        header_row = df.iloc[header_row_idx]
+        
+        for col_idx, val in enumerate(header_row):
+            if pd.notna(val):
+                val_str = str(val).strip()
+                
+                # Extract year using various patterns
+                year_match = re.search(r'(20\d{2}|19\d{2})', val_str)
+                
+                if year_match:
+                    year = year_match.group(1)
+                    
+                    # Handle fiscal year formats
+                    if 'FY' in val_str.upper():
+                        # Assume fiscal year ends in March (03)
+                        year_key = f"{year}03"
+                    else:
+                        # For calendar year, assume year-end (12) or March (03) based on your data
+                        year_key = f"{year}03"  # Adjust this based on your fiscal year convention
+                    
+                    year_columns[year_key] = col_idx
+                    self.logger.debug(f"[PARSE-GSHEET] Mapped column {col_idx} to year {year_key}")
+        
+        return year_columns
+    
+    def _find_metrics_column(self, df: pd.DataFrame, header_row_idx: int) -> Optional[int]:
+        """
+        Find the column containing metric names (usually the first non-empty column)
+        """
+        # Check each column to find the one with text metrics
+        for col_idx in range(min(5, len(df.columns))):  # Check first 5 columns
+            # Count non-empty text values in this column (after header)
+            text_count = 0
+            
+            for row_idx in range(header_row_idx + 1, min(header_row_idx + 10, len(df))):
+                val = df.iloc[row_idx, col_idx]
+                if pd.notna(val) and isinstance(val, str) and len(val.strip()) > 0:
+                    text_count += 1
+            
+            # If we find multiple text values, this is likely the metrics column
+            if text_count >= 3:
+                self.logger.debug(f"[PARSE-GSHEET] Found metrics column at index {col_idx}")
+                return col_idx
+        
+        # Default to first column if not found
+        return 0
+    
+    def _make_indices_unique(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Make duplicate indices unique by appending version numbers
+        """
+        if not df.index.duplicated().any():
+            return df
+        
+        new_index = []
+        seen_indices = {}
+        
+        for idx in df.index:
+            if idx in seen_indices:
+                seen_indices[idx] += 1
+                new_idx = f"{idx}_v{seen_indices[idx]}"
+            else:
+                seen_indices[idx] = 0
+                new_idx = idx
+            new_index.append(new_idx)
+        
+        df.index = new_index
+        return df
 
     def _verify_cash_flow_preservation(self, original_data: pd.DataFrame, processed_data: pd.DataFrame) -> bool:
         """Verify that cash flow items are preserved during processing"""

@@ -4416,7 +4416,7 @@ class EnhancedPenmanNissimAnalyzer:
         df = self._df_clean
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V5)")
+        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V5 - Enhanced)")
         self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
@@ -4451,15 +4451,158 @@ class EnhancedPenmanNissimAnalyzer:
             current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
             current_liabilities = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
             
-            # Cash and investments
-            cash = self._get_safe_series(df, 'Cash and Cash Equivalents', default_zero=True)
-            if (cash == 0).all():
-                # Try alternative name
-                cash = self._get_safe_series(df, 'Cash', default_zero=True)
+            # ===== ENHANCED FINANCIAL ASSETS IDENTIFICATION =====
+            self.logger.info("\n[PN-BS] Starting Enhanced Financial Assets Identification")
             
-            investments = self._get_safe_series(df, 'Investments', default_zero=True)
-            if (investments == 0).all():
-                investments = self._get_safe_series(df, 'Short-term Investments', default_zero=True)
+            # 1. Cash and cash equivalents
+            cash = pd.Series(0, index=df.columns)
+            cash_items = ['Cash and Cash Equivalents', 'Cash & Cash Equivalents', 'Cash', 
+                          'Cash and Equivalents', 'Cash & Equivalents']
+            for item in cash_items:
+                try:
+                    cash_series = self._get_safe_series(df, item, default_zero=True)
+                    if (cash_series > 0).any():
+                        cash = cash_series
+                        metadata['cash_source'] = item
+                        self.logger.info(f"[PN-BS] Found cash from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 2. Bank balances (separate from cash)
+            bank_balances = pd.Series(0, index=df.columns)
+            bank_items = ['Bank Balances Other Than Cash and Cash Equivalents', 
+                          'Bank Balances', 'Other Bank Balances',
+                          'Bank Deposits', 'Term Deposits']
+            for item in bank_items:
+                try:
+                    bank_series = self._get_safe_series(df, item, default_zero=True)
+                    if (bank_series > 0).any():
+                        bank_balances = bank_series
+                        metadata['bank_balances_source'] = item
+                        self.logger.info(f"[PN-BS] Found bank balances from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 3. Current investments
+            current_investments = pd.Series(0, index=df.columns)
+            curr_inv_items = ['Current Investments', 'Short-term Investments', 
+                              'Marketable Securities', 'Short Term Investments',
+                              'Temporary Investments', 'Trading Securities']
+            for item in curr_inv_items:
+                try:
+                    inv_series = self._get_safe_series(df, item, default_zero=True)
+                    if (inv_series > 0).any():
+                        current_investments = inv_series
+                        metadata['current_investments_source'] = item
+                        self.logger.info(f"[PN-BS] Found current investments from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 4. Long-term investments
+            long_term_investments = pd.Series(0, index=df.columns)
+            lt_inv_items = ['Investments - Long-term', 'Long-term Investments', 
+                            'Non-current Investments', 'Investment Securities',
+                            'Long Term Investments', 'Available-for-Sale Securities',
+                            'Held-to-Maturity Securities']
+            for item in lt_inv_items:
+                try:
+                    inv_series = self._get_safe_series(df, item, default_zero=True)
+                    if (inv_series > 0).any():
+                        long_term_investments = inv_series
+                        metadata['long_term_investments_source'] = item
+                        self.logger.info(f"[PN-BS] Found long-term investments from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 5. Short-term loans (given by company)
+            short_term_loans = pd.Series(0, index=df.columns)
+            st_loan_items = ['Loans - Short-term', 'Short-term Loans', 'Current Loans',
+                             'Loans and Advances - Short-term', 'Short Term Loans Given']
+            for item in st_loan_items:
+                try:
+                    loan_series = self._get_safe_series(df, item, default_zero=True)
+                    if (loan_series > 0).any():
+                        short_term_loans = loan_series
+                        metadata['short_term_loans_source'] = item
+                        self.logger.info(f"[PN-BS] Found short-term loans from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 6. Long-term loans (given by company)
+            long_term_loans = pd.Series(0, index=df.columns)
+            lt_loan_items = ['Loans - Long - Term', 'Loans - Long-term', 'Long-term Loans',
+                             'Non-current Loans', 'Loans and Advances - Long-term',
+                             'Long Term Loans Given']
+            for item in lt_loan_items:
+                try:
+                    loan_series = self._get_safe_series(df, item, default_zero=True)
+                    if (loan_series > 0).any():
+                        long_term_loans = loan_series
+                        metadata['long_term_loans_source'] = item
+                        self.logger.info(f"[PN-BS] Found long-term loans from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 7. Other financial assets - short term
+            other_fin_assets_st = pd.Series(0, index=df.columns)
+            other_st_items = ['Others Financial Assets - Short-term', 
+                              'Other Financial Assets - Short-term',
+                              'Other Current Financial Assets',
+                              'Derivative Financial Assets - Current',
+                              'Financial Instruments - Current']
+            for item in other_st_items:
+                try:
+                    other_series = self._get_safe_series(df, item, default_zero=True)
+                    if (other_series > 0).any():
+                        other_fin_assets_st = other_series
+                        metadata['other_fin_assets_st_source'] = item
+                        self.logger.info(f"[PN-BS] Found other short-term financial assets from: {item}")
+                        break
+                except:
+                    continue
+            
+            # 8. Other financial assets - long term
+            other_fin_assets_lt = pd.Series(0, index=df.columns)
+            other_lt_items = ['Others Financial Assets - Long-term',
+                              'Other Financial Assets - Long-term',
+                              'Other Non-current Financial Assets',
+                              'Derivative Financial Assets - Non-current',
+                              'Financial Instruments - Non-current']
+            for item in other_lt_items:
+                try:
+                    other_series = self._get_safe_series(df, item, default_zero=True)
+                    if (other_series > 0).any():
+                        other_fin_assets_lt = other_series
+                        metadata['other_fin_assets_lt_source'] = item
+                        self.logger.info(f"[PN-BS] Found other long-term financial assets from: {item}")
+                        break
+                except:
+                    continue
+            
+            # Total financial assets calculation
+            financial_assets = (cash + bank_balances + current_investments + long_term_investments + 
+                               short_term_loans + long_term_loans + other_fin_assets_st + other_fin_assets_lt)
+            
+            # Log financial assets breakdown
+            self.logger.info("\n[PN-BS] Financial Assets Breakdown:")
+            self.logger.info(f"  Cash and Equivalents: {cash.sum():,.0f}")
+            self.logger.info(f"  Bank Balances: {bank_balances.sum():,.0f}")
+            self.logger.info(f"  Current Investments: {current_investments.sum():,.0f}")
+            self.logger.info(f"  Long-term Investments: {long_term_investments.sum():,.0f}")
+            self.logger.info(f"  Short-term Loans: {short_term_loans.sum():,.0f}")
+            self.logger.info(f"  Long-term Loans: {long_term_loans.sum():,.0f}")
+            self.logger.info(f"  Other ST Financial Assets: {other_fin_assets_st.sum():,.0f}")
+            self.logger.info(f"  Other LT Financial Assets: {other_fin_assets_lt.sum():,.0f}")
+            self.logger.info(f"  Total Financial Assets: {financial_assets.sum():,.0f}")
+            
+            # ===== DEBT IDENTIFICATION =====
+            self.logger.info("\n[PN-BS] Starting Debt Identification")
             
             # CRITICAL: Proper debt identification
             short_term_debt = pd.Series(0, index=df.columns)
@@ -4471,7 +4614,9 @@ class EnhancedPenmanNissimAnalyzer:
             # Short-term debt
             st_debt_items = [
                 'Short-term Debt', 'Short Term Borrowings', 'Current Borrowings',
-                'Short-term Borrowings', 'Current Debt', 'Short Term Debt'
+                'Short-term Borrowings', 'Current Debt', 'Short Term Debt',
+                'Current Portion of Long-term Debt', 'Notes Payable',
+                'Bank Overdrafts', 'Commercial Paper'
             ]
             
             for item in st_debt_items:
@@ -4489,7 +4634,9 @@ class EnhancedPenmanNissimAnalyzer:
             # Long-term debt
             lt_debt_items = [
                 'Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings',
-                'Long-term Borrowings', 'Non-current Debt', 'Long Term Debt'
+                'Long-term Borrowings', 'Non-current Debt', 'Long Term Debt',
+                'Bonds Payable', 'Debentures', 'Term Loans',
+                'Finance Lease Obligations - Non-current'
             ]
             
             for item in lt_debt_items:
@@ -4510,10 +4657,12 @@ class EnhancedPenmanNissimAnalyzer:
             if not debt_found:
                 self.logger.warning("[PN-BS] No explicit debt found - company may be debt-free")
                 metadata['debt_status'] = 'debt_free'
+            else:
+                metadata['debt_status'] = 'leveraged'
+                self.logger.info(f"[PN-BS] Total Debt: {total_debt.sum():,.0f}")
             
-            # Financial items classification
-            financial_assets = cash + investments
-            financial_liabilities = total_debt  # Only actual debt
+            # Financial liabilities (only actual debt, not operational liabilities)
+            financial_liabilities = total_debt
             
             # Net financial position
             net_financial_assets = financial_assets - financial_liabilities
@@ -4541,29 +4690,68 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Net Operating Assets'] = net_operating_assets
             reformulated['Net Financial Assets'] = net_financial_assets
             reformulated['Common Equity'] = common_equity
+            
+            # Detailed financial assets breakdown
             reformulated['Cash and Equivalents'] = cash
+            reformulated['Bank Balances'] = bank_balances
+            reformulated['Current Investments'] = current_investments
+            reformulated['Long-term Investments'] = long_term_investments
+            reformulated['Short-term Loans'] = short_term_loans
+            reformulated['Long-term Loans'] = long_term_loans
+            reformulated['Other Financial Assets ST'] = other_fin_assets_st
+            reformulated['Other Financial Assets LT'] = other_fin_assets_lt
+            
+            # Debt breakdown
             reformulated['Total Debt'] = total_debt
             reformulated['Short-term Debt'] = short_term_debt
             reformulated['Long-term Debt'] = long_term_debt
             
             # Validation check - handle NaN
             check = net_operating_assets + net_financial_assets - common_equity
-            check = check.fillna(0)  # NEW: Fill NaN for check
+            check = check.fillna(0)  # Fill NaN for check
             metadata['balance_check'] = check.abs().max()
             metadata['balance_check_pct'] = (check.abs() / common_equity.abs().replace(0, np.nan)).max() * 100 if (common_equity != 0).any() else 0
             
-            self.logger.info(f"[PN-BS] Balance check: NOA + NFA - CE = {check.to_dict()}")
+            self.logger.info(f"\n[PN-BS] Balance check: NOA + NFA - CE = {check.to_dict()}")
             self.logger.info(f"[PN-BS] Maximum absolute difference: {metadata['balance_check']:.2f}")
             self.logger.info(f"[PN-BS] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
             
-            # Summary statistics - handle NaN
+            # Additional validation - components breakdown
+            self.logger.info("\n[PN-BS] Component Validation:")
+            fa_ratio = (financial_assets / total_assets * 100).mean()
+            oa_ratio = (operating_assets / total_assets * 100).mean()
+            self.logger.info(f"  Financial Assets as % of Total Assets (avg): {fa_ratio:.1f}%")
+            self.logger.info(f"  Operating Assets as % of Total Assets (avg): {oa_ratio:.1f}%")
+            
+            if financial_liabilities.sum() > 0:
+                debt_equity_ratio = (total_debt / common_equity).mean()
+                self.logger.info(f"  Debt-to-Equity Ratio (avg): {debt_equity_ratio:.2f}")
+            
+            # Summary statistics
             self.logger.info("\n[PN-BS-SUMMARY] Balance Sheet Reformulation Summary:")
             self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}" if not total_assets.isna().all() else "N/A")
+            self.logger.info(f"  - Operating Assets: {operating_assets.sum():,.0f}" if not operating_assets.isna().all() else "N/A")
+            self.logger.info(f"  - Financial Assets: {financial_assets.sum():,.0f}" if not financial_assets.isna().all() else "N/A")
             self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}" if not total_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  - Operating Liabilities: {operating_liabilities.sum():,.0f}" if not operating_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  - Financial Liabilities: {financial_liabilities.sum():,.0f}" if not financial_liabilities.isna().all() else "N/A")
             self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}" if not total_equity.isna().all() else "N/A")
             self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}" if not net_operating_assets.isna().all() else "N/A")
             self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}" if not net_financial_assets.isna().all() else "N/A")
             self.logger.info(f"  Total Debt: {total_debt.sum():,.0f}" if not total_debt.isna().all() else "N/A")
+            
+            # Store metadata
+            metadata['financial_assets_components'] = {
+                'cash': cash.sum(),
+                'bank_balances': bank_balances.sum(),
+                'current_investments': current_investments.sum(),
+                'long_term_investments': long_term_investments.sum(),
+                'short_term_loans': short_term_loans.sum(),
+                'long_term_loans': long_term_loans.sum(),
+                'other_st': other_fin_assets_st.sum(),
+                'other_lt': other_fin_assets_lt.sum(),
+                'total': financial_assets.sum()
+            }
             
         except Exception as e:
             self.logger.error(f"[PN-BS-ERROR] Balance sheet reformulation failed: {e}", exc_info=True)

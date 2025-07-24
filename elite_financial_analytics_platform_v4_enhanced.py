@@ -10313,13 +10313,36 @@ class FinancialAnalyticsPlatform:
             return None
 
     def _find_header_row_excel(self, df: pd.DataFrame) -> Optional[int]:
-        """Find header row in Excel data"""
-        for i in range(min(10, len(df))):
+        """Find header row in Excel data - enhanced version"""
+        self.logger.debug("Searching for header row in Excel data")
+        
+        for i in range(min(15, len(df))):  # Check first 15 rows
             row = df.iloc[i]
-            # Check if row contains year patterns
-            year_count = sum(1 for val in row if pd.notna(val) and re.search(r'20\d{2}|19\d{2}', str(val)))
-            if year_count >= 2:
+            
+            # Count year patterns in this row
+            year_count = 0
+            for val in row:
+                if pd.notna(val):
+                    val_str = str(val).strip()
+                    # Look for various year formats
+                    if re.search(r'(20\d{2}|19\d{2}|FY\s*\d{4}|\d{4}-\d{2})', val_str):
+                        year_count += 1
+            
+            # Also check for month patterns (like "Mar-2023")
+            month_year_count = 0
+            for val in row:
+                if pd.notna(val):
+                    val_str = str(val).strip()
+                    if re.search(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[-\s]*\d{4}', val_str, re.IGNORECASE):
+                        month_year_count += 1
+            
+            total_date_patterns = year_count + month_year_count
+            
+            if total_date_patterns >= 2:
+                self.logger.info(f"Found header row at index {i} with {total_date_patterns} date patterns")
                 return i
+        
+        self.logger.warning("No clear header row found")
         return None
     
     def _clean_excel_data(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -10666,25 +10689,36 @@ class FinancialAnalyticsPlatform:
         try:
             cleaned_df = self._standardize_dataframe(df)
     
-            # --- MODIFIED: Intelligent 'Unnamed' column removal ---
-            # 1. Identify all columns that might be unnamed
+            # --- MODIFIED: More conservative 'Unnamed' column removal ---
             unnamed_cols_to_check = [col for col in cleaned_df.columns if 'Unnamed' in str(col)]
             cols_to_drop = []
     
             if unnamed_cols_to_check:
-                # 2. Loop through candidates and decide which ones to drop
+                # Only remove unnamed columns if we won't end up with zero columns
                 for col in unnamed_cols_to_check:
-                    # Only drop the column if it's "Unnamed" AND it does NOT contain a year pattern.
-                    # This protects columns like 'Unnamed: 10_level_0 >> 202503' from being dropped.
-                    if not re.search(r'(20\d{4}|19\d{4}|20\d{2}|19\d{2})', str(col)):
+                    # Only drop if it's truly unnamed AND doesn't contain year pattern AND we have other columns
+                    if (not re.search(r'(20\d{4}|19\d{4}|20\d{2}|19\d{2})', str(col)) and 
+                        len(cleaned_df.columns) - len(cols_to_drop) > 1):  # Ensure we keep at least 1 column
                         cols_to_drop.append(col)
                 
-                # 3. Drop only the columns that are truly unnamed and not year-related
+                # Safety check: don't drop ALL columns
+                if len(cols_to_drop) >= len(cleaned_df.columns):
+                    self.logger.warning("Attempted to drop all columns - keeping unnamed columns with data")
+                    cols_to_drop = []
+                
+                # Drop only the safe-to-drop columns
                 if cols_to_drop:
                     cleaned_df = cleaned_df.drop(columns=cols_to_drop)
                     self.logger.info(f"Removed {len(cols_to_drop)} truly unnamed columns")
-            
-            # --- Original robust numeric conversion logic (retained) ---
+                else:
+                    self.logger.info("No unnamed columns removed - all appear to contain data")
+    
+            # If we still have no columns, this means the original data was malformed
+            if len(cleaned_df.columns) == 0:
+                self.logger.error("No columns remaining after cleaning - attempting data recovery")
+                return self._attempt_data_recovery(df)
+    
+            # --- Rest of the numeric conversion logic (retained) ---
             for col in cleaned_df.columns:
                 try:
                     cleaned_df[col] = cleaned_df[col].replace({
@@ -10706,6 +10740,58 @@ class FinancialAnalyticsPlatform:
         except Exception as e:
             self.logger.error(f"Error cleaning dataframe: {e}")
             return df
+    
+    def _attempt_data_recovery(self, original_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Attempt to recover data when all columns were removed during cleaning
+        """
+        self.logger.info("Attempting data recovery from original DataFrame")
+        
+        try:
+            # Create a copy of the original data
+            recovery_df = original_df.copy()
+            
+            # If all columns are unnamed, try to find a header row within the data
+            if all('Unnamed' in str(col) for col in recovery_df.columns):
+                self.logger.info("All columns are unnamed - searching for header row")
+                
+                # Look for a row that might contain years (header row)
+                header_row_idx = None
+                for idx in range(min(10, len(recovery_df))):
+                    row_values = recovery_df.iloc[idx].astype(str)
+                    year_count = sum(1 for val in row_values if re.search(r'(20\d{2}|19\d{2})', str(val)))
+                    
+                    if year_count >= 2:  # Found a row with at least 2 years
+                        header_row_idx = idx
+                        self.logger.info(f"Found potential header row at index {idx}")
+                        break
+                
+                if header_row_idx is not None:
+                    # Use this row as column headers
+                    new_columns = recovery_df.iloc[header_row_idx].astype(str).tolist()
+                    recovery_df.columns = new_columns
+                    recovery_df = recovery_df.iloc[header_row_idx + 1:]  # Remove header row from data
+                    
+                    # Clean the new column names
+                    recovery_df.columns = [str(col).strip() for col in recovery_df.columns]
+                    
+                    self.logger.info(f"Recovery successful - new columns: {list(recovery_df.columns)}")
+                else:
+                    # No header row found, create generic column names
+                    recovery_df.columns = [f"Column_{i}" for i in range(len(recovery_df.columns))]
+                    self.logger.info("No header row found - using generic column names")
+            
+            # Remove completely empty columns
+            recovery_df = recovery_df.dropna(how='all', axis=1)
+            
+            return recovery_df
+            
+        except Exception as e:
+            self.logger.error(f"Data recovery failed: {e}")
+            # Return original data with generic column names as last resort
+            recovery_df = original_df.copy()
+            recovery_df.columns = [f"Column_{i}" for i in range(len(recovery_df.columns))]
+            return recovery_df
 
     def _trace_cash_flow_items(self, df: pd.DataFrame, stage: str) -> None:
         """Debug helper to trace cash flow items through processing"""

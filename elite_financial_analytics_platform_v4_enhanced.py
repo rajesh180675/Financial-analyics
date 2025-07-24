@@ -10236,81 +10236,81 @@ class FinancialAnalyticsPlatform:
             return None
 
     def _parse_excel_file(self, file) -> Optional[pd.DataFrame]:
-    """
-    Enhanced Excel file parser that handles both standard and complex formats
-    """
-    try:
-        self.logger.info("[PARSE-EXCEL] Starting enhanced Excel parsing")
-        
-        # Try to read all sheets
-        excel_file = pd.ExcelFile(file)
-        sheet_names = excel_file.sheet_names
-        
-        self.logger.info(f"[PARSE-EXCEL] Found {len(sheet_names)} sheets: {sheet_names}")
-        
-        all_dataframes = []
-        
-        for sheet_name in sheet_names:
-            try:
-                # Read with different strategies
-                # Strategy 1: Try with header detection
-                df = pd.read_excel(file, sheet_name=sheet_name)
-                
-                if df.empty or len(df.columns) < 2:
-                    # Strategy 2: Try without header
-                    df = pd.read_excel(file, sheet_name=sheet_name, header=None)
-                
-                if not df.empty:
-                    # Detect statement type
-                    statement_type = self._detect_statement_type_from_sheet(sheet_name, df)
+        """
+        Enhanced Excel file parser that handles both standard and complex formats
+        """
+        try:
+            self.logger.info("[PARSE-EXCEL] Starting enhanced Excel parsing")
+            
+            # Try to read all sheets
+            excel_file = pd.ExcelFile(file)
+            sheet_names = excel_file.sheet_names
+            
+            self.logger.info(f"[PARSE-EXCEL] Found {len(sheet_names)} sheets: {sheet_names}")
+            
+            all_dataframes = []
+            
+            for sheet_name in sheet_names:
+                try:
+                    # Read with different strategies
+                    # Strategy 1: Try with header detection
+                    df = pd.read_excel(file, sheet_name=sheet_name)
                     
-                    # Process based on type
-                    if 'Unnamed' in str(df.columns[0]) or df.columns[0] == 0:
-                        # Needs header detection
-                        header_row = self._find_header_row_excel(df)
-                        if header_row is not None:
-                            df.columns = df.iloc[header_row]
-                            df = df.iloc[header_row + 1:].reset_index(drop=True)
-                            df = df.set_index(df.columns[0])
-                    
-                    # Add statement type prefix
-                    df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
-                    
-                    # Clean data
-                    df = self._clean_excel_data(df)
+                    if df.empty or len(df.columns) < 2:
+                        # Strategy 2: Try without header
+                        df = pd.read_excel(file, sheet_name=sheet_name, header=None)
                     
                     if not df.empty:
-                        all_dataframes.append(df)
-                        self.logger.info(f"[PARSE-EXCEL] Processed {len(df)} rows from sheet {sheet_name}")
+                        # Detect statement type
+                        statement_type = self._detect_statement_type_from_sheet(sheet_name, df)
                         
-            except Exception as e:
-                self.logger.warning(f"[PARSE-EXCEL] Error processing sheet {sheet_name}: {e}")
-                continue
-        
-        # Combine all dataframes
-        if all_dataframes:
-            combined_df = pd.concat(all_dataframes, axis=0)
+                        # Process based on type
+                        if 'Unnamed' in str(df.columns[0]) or df.columns[0] == 0:
+                            # Needs header detection
+                            header_row = self._find_header_row_excel(df)
+                            if header_row is not None:
+                                df.columns = df.iloc[header_row]
+                                df = df.iloc[header_row + 1:].reset_index(drop=True)
+                                df = df.set_index(df.columns[0])
+                        
+                        # Add statement type prefix
+                        df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+                        
+                        # Clean data
+                        df = self._clean_excel_data(df)
+                        
+                        if not df.empty:
+                            all_dataframes.append(df)
+                            self.logger.info(f"[PARSE-EXCEL] Processed {len(df)} rows from sheet {sheet_name}")
+                            
+                except Exception as e:
+                    self.logger.warning(f"[PARSE-EXCEL] Error processing sheet {sheet_name}: {e}")
+                    continue
             
-            # Remove duplicates if any
-            if combined_df.index.duplicated().any():
-                combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
-            
-            self.logger.info(f"[PARSE-EXCEL] Successfully parsed {len(combined_df)} total rows")
-            return combined_df
-        else:
-            # Fallback to simple parsing
-            df = pd.read_excel(file)
-            if not df.empty:
-                # Try to detect statement type from content
-                statement_type = self._detect_statement_type_excel(df)
-                df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
-                return self._clean_excel_data(df)
-            
+            # Combine all dataframes
+            if all_dataframes:
+                combined_df = pd.concat(all_dataframes, axis=0)
+                
+                # Remove duplicates if any
+                if combined_df.index.duplicated().any():
+                    combined_df = combined_df[~combined_df.index.duplicated(keep='first')]
+                
+                self.logger.info(f"[PARSE-EXCEL] Successfully parsed {len(combined_df)} total rows")
+                return combined_df
+            else:
+                # Fallback to simple parsing
+                df = pd.read_excel(file)
+                if not df.empty:
+                    # Try to detect statement type from content
+                    statement_type = self._detect_statement_type_excel(df)
+                    df.index = [f"{statement_type}::{str(idx).strip()}" for idx in df.index]
+                    return self._clean_excel_data(df)
+                
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"[PARSE-EXCEL] Error parsing Excel file: {e}")
             return None
-            
-    except Exception as e:
-        self.logger.error(f"[PARSE-EXCEL] Error parsing Excel file: {e}")
-        return None
 
     def _find_header_row_excel(self, df: pd.DataFrame) -> Optional[int]:
         """Find header row in Excel data"""

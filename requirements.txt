@@ -20,3 +20,4 @@ python-levenshtein
 sentence_transformers
 bleach
 py7zr
+uuid

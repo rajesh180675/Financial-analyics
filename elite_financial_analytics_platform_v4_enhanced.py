@@ -12061,7 +12061,7 @@ class FinancialAnalyticsPlatform:
         
         try:
             if self.config.get('app.enable_ml_features', True):
-                self._render_query_bar()
+               
             
             # Just call _render_analysis_interface - it handles both cases
             self._render_analysis_interface()

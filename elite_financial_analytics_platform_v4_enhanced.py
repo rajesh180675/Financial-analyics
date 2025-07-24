@@ -12060,7 +12060,7 @@ class FinancialAnalyticsPlatform:
         st.session_state.main_content_rendered = True
         
         try:
-            if self.config.get('app.enable_ml_features', True):
+            
                
             
             # Just call _render_analysis_interface - it handles both cases

@@ -4578,7 +4578,7 @@ class EnhancedPenmanNissimAnalyzer:
         self._cached_bs = reformulated.T
         return self._cached_bs
 
-   def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enhanced Income Statement Reformulation with proper tax allocation
         Version 6.3 - Simplified exceptional items handling (always treated as non-operating)

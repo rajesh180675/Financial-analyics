@@ -9439,17 +9439,18 @@ class FinancialAnalyticsPlatform:
             self.logger.error(f"Log export preparation error: {e}", exc_info=True)
             self.set_state('log_download_data', None)
 
-    
     @error_boundary()
     @critical_method
     def run(self):
         """Main application entry point"""
         try:
-            # Check if app is already initialized to prevent duplicate renders
-            if 'app_running' in st.session_state:
-                return
-            st.session_state['app_running'] = True
-            
+            st.set_page_config(
+                page_title="Elite Financial Analytics Platform v5.1",
+                page_icon="💹",
+                layout="wide",
+                initial_sidebar_state="expanded"
+            )
+
             if not hasattr(self, 'components') or self.components is None:
                 self.logger.warning("Components not initialized, attempting recovery")
                 self._auto_recovery_attempt()
@@ -9468,14 +9469,7 @@ class FinancialAnalyticsPlatform:
             if self.config.get('app.debug', False):
                 self._render_debug_footer()
             
-            # Clear the running flag at the end
-            del st.session_state['app_running']
-            
         except Exception as e:
-            # Clear the running flag on error
-            if 'app_running' in st.session_state:
-                del st.session_state['app_running']
-                
             self.logger.error(f"Application error: {e}")
             st.error("An unexpected error occurred. Please refresh the page.")
             
@@ -12047,26 +12041,16 @@ class FinancialAnalyticsPlatform:
         elif company_name == "Nestle India":
             st.warning("Benchmark data for Nestle India coming soon")
             
-    
     @safe_state_access
     def _render_main_content(self):
         """Render main content area"""
-        # Add render guard
-        if 'main_content_rendered' in st.session_state:
-            return
-        st.session_state['main_content_rendered'] = True
-        
-        try:
-            if self.config.get('app.enable_ml_features', True):
-                self._render_query_bar()
-            
-            # Just call _render_analysis_interface - it handles both cases
+        if self.config.get('app.enable_ml_features', True):
+            self._render_query_bar()
+    
+        if self.get_state('analysis_data') is not None:
             self._render_analysis_interface()
-            
-        finally:
-            # Clear the flag after rendering
-            if 'main_content_rendered' in st.session_state:
-                del st.session_state['main_content_rendered']
+        else:
+            self._render_welcome_screen()
             
     @safe_state_access
     def _render_query_bar(self):
@@ -12226,64 +12210,50 @@ class FinancialAnalyticsPlatform:
             if st.button("European Retail", key="sample_eu"):
                 self._load_sample_data("European Retail (IFRS)")
                 
-   
     @safe_state_access
     def _render_analysis_interface(self):
         """Render main analysis interface"""
-        # Prevent duplicate renders
-        render_key = 'analysis_interface_rendered'
-        if render_key in st.session_state:
+        data = self.get_state('analysis_data')
+    
+        if data is None:
+            self._render_welcome_screen()
             return
-        st.session_state[render_key] = True
-        
-        try:
-            data = self.get_state('analysis_data')
-            
-            if data is None:
-                self._render_welcome_screen()
-                return
-            
-            # Create a single container for all content
-            with st.container():
-                tabs = st.tabs([
-                    "📊 Overview",
-                    "📈 Financial Ratios", 
-                    "📉 Trends & Forecasting",
-                    "🎯 Penman-Nissim",
-                    "🏭 Industry Comparison",
-                    "🔍 Data Explorer",
-                    "📄 Reports",
-                    "🤖 ML Insights"
-                ])
-            
-                with tabs[0]:
-                    self._render_overview_tab(data)
-            
-                with tabs[1]:
-                    self._render_ratios_tab(data)
-            
-                with tabs[2]:
-                    self._render_trends_tab(data)
-            
-                with tabs[3]:
-                    self._render_penman_nissim_tab_enhanced(data)
-            
-                with tabs[4]:
-                    self._render_industry_tab(data)
-            
-                with tabs[5]:
-                    self._render_data_explorer_tab(data)
-            
-                with tabs[6]:
-                    self._render_reports_tab(data)
-            
-                with tabs[7]:
-                    self._render_ml_insights_tab(data)
-                    
-        finally:
-            # Clear the render flag
-            if render_key in st.session_state:
-                del st.session_state[render_key]
+    
+        tabs = st.tabs([
+            "📊 Overview",
+            "📈 Financial Ratios", 
+            "📉 Trends & Forecasting",
+            "🎯 Penman-Nissim",
+            "🏭 Industry Comparison",
+            "🔍 Data Explorer",
+            "📄 Reports",
+            "🤖 ML Insights"
+        ])
+    
+        with tabs[0]:
+            self._render_overview_tab(data)
+    
+        with tabs[1]:
+            self._render_ratios_tab(data)
+    
+        with tabs[2]:
+            self._render_trends_tab(data)
+    
+        with tabs[3]:
+            # Using the new enhanced method
+            self._render_penman_nissim_tab_enhanced(data)
+    
+        with tabs[4]:
+            self._render_industry_tab(data)
+    
+        with tabs[5]:
+            self._render_data_explorer_tab(data)
+    
+        with tabs[6]:
+            self._render_reports_tab(data)
+    
+        with tabs[7]:
+            self._render_ml_insights_tab(data)
     
     @error_boundary()
     @safe_state_access
@@ -15173,116 +15143,110 @@ class FinancialAnalyticsPlatform:
                 current_mappings.update(bank_mappings)
                 st.success("Applied Bank template!")
                 
-    
     @error_boundary()
     @safe_state_access
     def _render_industry_tab(self, data: pd.DataFrame):
         """Render industry comparison tab"""
+        st.header("🏭 Industry Comparison")
+        st.info("Compare your company's performance against industry benchmarks.")
         
-        # Create a single container to ensure single render
-        industry_container = st.container()
+        # Generate a unique suffix for this render
+        unique_suffix = str(uuid.uuid4())[:8]
         
-        with industry_container:
-            st.header("🏭 Industry Comparison")
-            st.info("Compare your company's performance against industry benchmarks.")
-            
-            # Generate a unique suffix for this render
-            unique_suffix = str(uuid.uuid4())[:8]
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                selected_industry = st.selectbox(
-                    "Select Industry",
-                    list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
-                    index=0,
-                    key=f"industry_comparison_industry_select_{unique_suffix}"
-                )
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_industry = st.selectbox(
+                "Select Industry",
+                list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
+                index=0,
+                key=f"industry_comparison_industry_select_{unique_suffix}"
+            )
     
-            with col2:
-                analysis_year = st.selectbox(
-                    "Select Year for Analysis",
-                    data.columns.tolist(),
-                    index=len(data.columns)-1,
-                    key=f"industry_comparison_year_select_{unique_suffix}"
-                )
+        with col2:
+            analysis_year = st.selectbox(
+                "Select Year for Analysis",
+                data.columns.tolist(),
+                index=len(data.columns)-1,
+                key=f"industry_comparison_year_select_{unique_suffix}"
+            )
     
-            # Calculate necessary ratios for comparison
-            mappings = self.get_state('pn_mappings')
-            if not mappings:
-                st.warning("Please configure Penman-Nissim mappings first for accurate industry comparison.")
-                return
+        # Calculate necessary ratios for comparison
+        mappings = self.get_state('pn_mappings')
+        if not mappings:
+            st.warning("Please configure Penman-Nissim mappings first for accurate industry comparison.")
+            return
+            
+        analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
+        results = analyzer.calculate_all()
+    
+        if 'ratios' not in results or 'error' in results['ratios']:
+            st.error("Could not calculate required ratios for comparison.")
+            return
+    
+        ratios = results['ratios']
+    
+        # Get company's metrics for the selected year
+        company_metrics = {
+            'RNOA': ratios.loc['Return on Net Operating Assets (RNOA) %', analysis_year],
+            'OPM': ratios.loc['Operating Profit Margin (OPM) %', analysis_year],
+            'NOAT': ratios.loc['Net Operating Asset Turnover (NOAT)', analysis_year],
+            'NBC': ratios.loc['Net Borrowing Cost (NBC) %', analysis_year],
+            'FLEV': ratios.loc['Financial Leverage (FLEV)', analysis_year],
+        }
+    
+        # Calculate composite score
+        score_data = CoreIndustryBenchmarks.calculate_composite_score(company_metrics, selected_industry)
+    
+        st.subheader("Performance Scorecard")
+    
+        if 'error' in score_data:
+            st.error(score_data['error'])
+            return
+    
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Composite Score", f"{score_data['composite_score']:.1f}/100")
+        with col2:
+            st.metric("Performance Level", score_data['interpretation'])
+    
+        # Detailed metric comparison
+        st.subheader("Detailed Metric Comparison")
+    
+        for metric, value in company_metrics.items():
+            if not pd.isna(value):
+                benchmark = CoreIndustryBenchmarks.BENCHMARKS[selected_industry][metric]
+                percentile = score_data['metric_scores'][metric]
                 
-            analyzer = EnhancedPenmanNissimAnalyzer(data, mappings)
-            results = analyzer.calculate_all()
-    
-            if 'ratios' not in results or 'error' in results['ratios']:
-                st.error("Could not calculate required ratios for comparison.")
-                return
-    
-            ratios = results['ratios']
-    
-            # Get company's metrics for the selected year
-            company_metrics = {
-                'RNOA': ratios.loc['Return on Net Operating Assets (RNOA) %', analysis_year],
-                'OPM': ratios.loc['Operating Profit Margin (OPM) %', analysis_year],
-                'NOAT': ratios.loc['Net Operating Asset Turnover (NOAT)', analysis_year],
-                'NBC': ratios.loc['Net Borrowing Cost (NBC) %', analysis_year],
-                'FLEV': ratios.loc['Financial Leverage (FLEV)', analysis_year],
-            }
-    
-            # Calculate composite score
-            score_data = CoreIndustryBenchmarks.calculate_composite_score(company_metrics, selected_industry)
-    
-            st.subheader("Performance Scorecard")
-    
-            if 'error' in score_data:
-                st.error(score_data['error'])
-                return
-    
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric("Composite Score", f"{score_data['composite_score']:.1f}/100")
-            with col2:
-                st.metric("Performance Level", score_data['interpretation'])
-    
-            # Detailed metric comparison
-            st.subheader("Detailed Metric Comparison")
-    
-            for metric, value in company_metrics.items():
-                if not pd.isna(value):
-                    benchmark = CoreIndustryBenchmarks.BENCHMARKS[selected_industry][metric]
-                    percentile = score_data['metric_scores'][metric]
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.write(f"**{metric}**")
-                    
-                    with col2:
-                        st.metric("Company Value", f"{value:.2f}")
-                    
-                    with col3:
-                        st.metric("Industry Average", f"{benchmark['mean']:.2f}")
-                    
-                    with col4:
-                        st.metric("Industry Percentile", f"{percentile:.0f}th")
-                    
-                    # Gauge chart for percentile
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number",
-                        value = percentile,
-                        title = {'text': f"{metric} Percentile"},
-                        gauge = {
-                            'axis': {'range': [None, 100]},
-                            'bar': {'color': "darkblue"},
-                            'steps' : [
-                                {'range': [0, 25], 'color': "red"},
-                                {'range': [25, 75], 'color': "yellow"},
-                                {'range': [75, 100], 'color': "green"}],
-                        }
-                    ))
-                    fig.update_layout(height=250)
-                    st.plotly_chart(fig, use_container_width=True)
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.write(f"**{metric}**")
+                
+                with col2:
+                    st.metric("Company Value", f"{value:.2f}")
+                
+                with col3:
+                    st.metric("Industry Average", f"{benchmark['mean']:.2f}")
+                
+                with col4:
+                    st.metric("Industry Percentile", f"{percentile:.0f}th")
+                
+                # Gauge chart for percentile
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number",
+                    value = percentile,
+                    title = {'text': f"{metric} Percentile"},
+                    gauge = {
+                        'axis': {'range': [None, 100]},
+                        'bar': {'color': "darkblue"},
+                        'steps' : [
+                            {'range': [0, 25], 'color': "red"},
+                            {'range': [25, 75], 'color': "yellow"},
+                            {'range': [75, 100], 'color': "green"}],
+                    }
+                ))
+                fig.update_layout(height=250)
+                st.plotly_chart(fig, use_container_width=True)
     
     @error_boundary()
     @safe_state_access
@@ -15547,7 +15511,7 @@ class FinancialAnalyticsPlatform:
 def main():
     """Main application entry point with comprehensive error handling"""
     try:
-        # Set page config only once at the very beginning
+        # Set page config first
         st.set_page_config(
             page_title="Elite Financial Analytics Platform v5.1",
             page_icon="💹",
@@ -15555,70 +15519,60 @@ def main():
             initial_sidebar_state="expanded"
         )
         
-        # Initialize app state
-        if 'app_instance' not in st.session_state:
-            st.session_state.app_instance = None
+        # Create and run the application with enhanced error handling
+        try:
+            app = FinancialAnalyticsPlatform()
+            app.run()
+        except KeyError as e:
+            # Handle session state key errors specifically
+            st.error("🔧 Session state error detected. Reinitializing...")
             
-        # Create app instance if needed
-        if st.session_state.app_instance is None:
-            try:
-                st.session_state.app_instance = FinancialAnalyticsPlatform()
-            except Exception as e:
-                st.error(f"Failed to initialize application: {str(e)}")
-                if st.button("🔄 Retry Initialization"):
-                    st.session_state.clear()
-                    st.rerun()
-                return
-        
-        # Run the app
-        st.session_state.app_instance.run()
+            # Clear problematic state and reinitialize
+            if 'initialized' in st.session_state:
+                del st.session_state['initialized']
+            
+            # Try again
+            app = FinancialAnalyticsPlatform()
+            app.run()
             
     except Exception as e:
-        # Check for specific Streamlit errors
-        error_msg = str(e)
-        if "can only be called once per app" in error_msg:
-            # Page config already set, ignore and continue
-            if st.session_state.app_instance is None:
-                st.session_state.app_instance = FinancialAnalyticsPlatform()
-            st.session_state.app_instance.run()
-        else:
-            # Critical error handling
-            logging.critical(f"Fatal application error: {e}", exc_info=True)
+        # Critical error handling
+        logging.critical(f"Fatal application error: {e}", exc_info=True)
+        
+        st.error("🚨 A critical error occurred.")
+        
+        # Show debug info if available
+        if st.session_state.get('show_debug_info', False):
+            st.exception(e)
             
-            st.error("🚨 A critical error occurred.")
-            
-            # Show debug info if available
-            if st.session_state.get('show_debug_info', False):
-                st.exception(e)
+            with st.expander("🔧 Debug Information"):
+                st.write("**Error Details:**")
+                st.code(traceback.format_exc())
                 
-                with st.expander("🔧 Debug Information"):
-                    st.write("**Error Details:**")
-                    st.code(traceback.format_exc())
-                    
-                    st.write("**Session State Keys:**")
-                    st.json(list(st.session_state.keys()))
-            
-            # Recovery options
-            st.subheader("🔄 Recovery Options")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("🔄 Refresh Page", key="refresh_page_btn"):
-                    st.rerun()
-            
-            with col2:
-                if st.button("🗑️ Clear Cache", key="clear_cache_btn"):
-                    st.cache_data.clear()
-                    st.cache_resource.clear()
-                    st.success("Cache cleared!")
-            
-            with col3:
-                if st.button("🏠 Reset Application", key="reset_app_btn"):
-                    # Clear all session state
-                    for key in list(st.session_state.keys()):
-                        del st.session_state[key]
-                    st.rerun()
+                st.write("**Session State Keys:**")
+                st.json(list(st.session_state.keys()))
+        
+        # Recovery options
+        st.subheader("🔄 Recovery Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔄 Refresh Page", key="refresh_page_btn"):
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache", key="clear_cache_btn"):
+                st.cache_data.clear()
+                st.cache_resource.clear()
+                st.success("Cache cleared!")
+        
+        with col3:
+            if st.button("🏠 Reset Application", key="reset_app_btn"):
+                # Clear all session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.rerun()
 
 if __name__ == "__main__":
     # Configure Python path and environment

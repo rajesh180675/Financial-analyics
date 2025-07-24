@@ -63,6 +63,7 @@ from fuzzywuzzy import fuzz
 import zipfile
 import tempfile
 import shutil
+import uuid
 
 # Optional imports
 try:
@@ -15148,14 +15149,17 @@ class FinancialAnalyticsPlatform:
         """Render industry comparison tab"""
         st.header("🏭 Industry Comparison")
         st.info("Compare your company's performance against industry benchmarks.")
-    
+        
+        # Generate a unique suffix for this render
+        unique_suffix = str(uuid.uuid4())[:8]
+        
         col1, col2 = st.columns(2)
         with col1:
             selected_industry = st.selectbox(
-            "Select Industry",
-            list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
-            index=0,
-            key="industry_select_widget_main"  # Changed key name to avoid conflicts 
+                "Select Industry",
+                list(CoreIndustryBenchmarks.BENCHMARKS.keys()),
+                index=0,
+                key=f"industry_comparison_industry_select_{unique_suffix}"
             )
     
         with col2:
@@ -15163,7 +15167,7 @@ class FinancialAnalyticsPlatform:
                 "Select Year for Analysis",
                 data.columns.tolist(),
                 index=len(data.columns)-1,
-                key="industry_year_select"
+                key=f"industry_comparison_year_select_{unique_suffix}"
             )
     
         # Calculate necessary ratios for comparison

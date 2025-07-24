@@ -12060,7 +12060,9 @@ class FinancialAnalyticsPlatform:
         st.session_state.main_content_rendered = True
         
         try:
-            
+            if self.config.get('app.enable_ml_features', True):
+                self._render_query_bar()
+                      
                
             
             # Just call _render_analysis_interface - it handles both cases
@@ -12070,8 +12072,8 @@ class FinancialAnalyticsPlatform:
             # Clear the flag after rendering
             st.session_state.main_content_rendered = False
 
-   @safe_state_access
-  def _render_query_bar(self):
+    @safe_state_access
+    def _render_query_bar(self):
       """Render natural language query bar"""
       col1, col2 = st.columns([5, 1])
   

@@ -13921,9 +13921,13 @@ class FinancialAnalyticsPlatform:
                 
     #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
-        """Enhanced mapping interface with save/load functionality - COMPLETE VERSION"""
+        """Enhanced mapping interface with save/load functionality - COMPLETE VERSION WITH FIXED JSON IMPORT/EXPORT"""
         
-       
+        import json
+        import time
+        import traceback
+        import re
+        from datetime import datetime
         
         try:
             st.subheader("🎯 Penman-Nissim Mapping Configuration")
@@ -13968,7 +13972,7 @@ class FinancialAnalyticsPlatform:
                     if st.button("🔄 Reset Mapping Interface", key="reset_mapping_loop"):
                         for key in ['temp_pn_mappings', 'show_import_dialog', 'import_processed', 
                                    'pn_active_template', 'template_upload', 'template_upload_form',
-                                   'import_just_completed', 'show_save_dialog']:
+                                   'import_just_completed', 'show_save_dialog', 'show_export_dialog']:
                             if key in st.session_state:
                                 del st.session_state[key]
                         st.rerun()
@@ -13979,7 +13983,7 @@ class FinancialAnalyticsPlatform:
                 st.success("✅ Template imported successfully! Review and apply your mappings below.")
                 st.session_state.import_just_completed = False
             
-            # Template Selection UI
+            # Template Selection UI - CORRECTED VERSION
             st.markdown("### 📋 Mapping Templates")
             
             templates = template_manager.get_all_templates()
@@ -13997,26 +14001,33 @@ class FinancialAnalyticsPlatform:
             except ValueError:
                 default_index = 0
         
-            # Template management buttons
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            # Template dropdown
+            selected_template = st.selectbox(
+                "Select Mapping Template",
+                template_options,
+                index=default_index,
+                key="pn_template_selector",
+                help="Choose a saved template or create a new mapping"
+            )
+            
+            # Template action buttons - IMPROVED LAYOUT
+            st.markdown("#### Template Actions")
+            col1, col2, col3, col4, col5 = st.columns(5)
             
             with col1:
-                selected_template = st.selectbox(
-                    "Select Mapping Template",
-                    template_options,
-                    index=default_index,
-                    key="pn_template_selector",
-                    help="Choose a saved template or create a new mapping"
-                )
-            
-            with col2:
-                if st.button("💾 Save", key="save_mapping_template", 
+                if st.button("💾 Save Template", key="save_mapping_template", 
                               disabled=('temp_pn_mappings' not in st.session_state or len(current_mappings) == 0)):
                     st.session_state.show_save_dialog = True
             
-            with col3:
-                if st.button("📥 Import", key="import_template_btn"):
+            with col2:
+                if st.button("📥 Import JSON", key="import_json_btn"):
                     st.session_state.show_import_dialog = True
+                    
+            with col3:
+                if st.button("📤 Export JSON", key="export_json_btn", 
+                             disabled=len(current_mappings) == 0):
+                    # Always allow export if there are current mappings
+                    st.session_state.show_export_dialog = True
             
             with col4:
                 if selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name]:
@@ -14024,39 +14035,93 @@ class FinancialAnalyticsPlatform:
                         try:
                             if template_manager.delete_template(selected_template):
                                 st.success(f"Deleted template: {selected_template}")
+                                # Reset to default template after deletion
+                                st.session_state.pn_active_template = "🆕 Create New Mapping"
                                 st.rerun()
                             else:
                                 st.error("Failed to delete template")
                         except Exception as e:
                             st.error(f"Error deleting template: {e}")
             
-            # Export functionality (separate row)
-            if templates and selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name]:
-                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-                with col2:
-                    if st.button("📤 Export", key="export_template_btn"):
-                        try:
-                            template_data = template_manager.load_template(selected_template)
-                            template_json = {
-                                "name": selected_template,
-                                "mappings": template_data,
-                                "exported_at": datetime.now().isoformat(),
-                                "description": f"Exported template for {selected_template}",
-                                "version": "1.0"
-                            }
-                            
-                            json_str = json.dumps(template_json, indent=2)
-                            st.download_button(
-                                label="💾 Download JSON",
-                                data=json_str,
-                                file_name=f"{selected_template.replace(' ', '_')}_template.json",
-                                mime="application/json",
-                                key="download_template"
-                            )
-                            st.success("✅ Template ready for download!")
-                        except Exception as e:
-                            st.error(f"Failed to export template: {e}")
-        
+            with col5:
+                if st.button("🔄 Refresh", key="refresh_templates"):
+                    # Force refresh templates list
+                    st.rerun()
+    
+            # FIXED: Export Dialog - NEW ADDITION
+            if st.session_state.get('show_export_dialog', False):
+                with st.form("export_template_form"):
+                    st.markdown("### 📤 Export Mapping Template")
+                    
+                    # Get current mappings for export
+                    export_mappings = st.session_state.get('temp_pn_mappings', {})
+                    
+                    if len(export_mappings) > 0:
+                        st.write(f"**Ready to export {len(export_mappings)} mappings**")
+                        
+                        # Show preview of mappings
+                        with st.expander("Preview Mappings to Export", expanded=False):
+                            for source, target in sorted(export_mappings.items()):
+                                st.text(f"{target} ← {source}")
+                        
+                        # Export filename
+                        company_name = self.get_state('company_name', 'Company') if hasattr(self, 'get_state') else 'Company'
+                        default_filename = f"{company_name}_mappings_{datetime.now().strftime('%Y%m%d_%H%M')}"
+                        
+                        filename = st.text_input(
+                            "Export Filename (without .json)",
+                            value=default_filename,
+                            help="Choose a filename for your exported template"
+                        )
+                        
+                        template_description = st.text_area(
+                            "Description (Optional)",
+                            value=f"Exported mappings for {company_name}",
+                            help="Describe this mapping template"
+                        )
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.form_submit_button("📤 Export JSON", type="primary"):
+                                try:
+                                    template_json = {
+                                        "name": filename,
+                                        "description": template_description,
+                                        "mappings": export_mappings,
+                                        "exported_at": datetime.now().isoformat(),
+                                        "company": company_name,
+                                        "version": "1.0",
+                                        "mapping_count": len(export_mappings)
+                                    }
+                                    
+                                    json_str = json.dumps(template_json, indent=2)
+                                    
+                                    # Create download button
+                                    st.download_button(
+                                        label="💾 Download JSON File",
+                                        data=json_str,
+                                        file_name=f"{filename}.json",
+                                        mime="application/json",
+                                        key="download_json_template",
+                                        help="Click to download your mapping template"
+                                    )
+                                    
+                                    st.success("✅ JSON template ready for download!")
+                                    st.session_state.show_export_dialog = False
+                                    
+                                except Exception as e:
+                                    st.error(f"Failed to create export: {e}")
+                        
+                        with col2:
+                            if st.form_submit_button("Cancel"):
+                                st.session_state.show_export_dialog = False
+                                st.rerun()
+                    else:
+                        st.warning("No mappings to export. Please create some mappings first.")
+                        if st.form_submit_button("Close"):
+                            st.session_state.show_export_dialog = False
+                            st.rerun()
+    
             # Check if the user has changed the selection
             if selected_template != st.session_state.pn_active_template:
                 st.session_state.pn_active_template = selected_template
@@ -14072,6 +14137,7 @@ class FinancialAnalyticsPlatform:
                         st.error(f"Failed to create auto-mapping: {e}")
                         st.session_state.temp_pn_mappings = {}
                 elif selected_template == vst_template_name:
+                    # Load VST template (keeping the existing VST mappings)
                     vst_mappings = {
                         'BalanceSheet::Total Assets': 'Total Assets', 
                         'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
@@ -14087,9 +14153,9 @@ class FinancialAnalyticsPlatform:
                         'BalanceSheet::Other Equity': 'Retained Earnings',
                         'BalanceSheet::Total Current Liabilities': 'Current Liabilities', 
                         'BalanceSheet::Trade payables': 'Accounts Payable',
-                        'BalanceSheet::Other Current Liabilities': 'Short-term Debt', 
+                        'BalanceSheet::Other Current Liabilities': 'Other Current Liabilities',  # FIXED
                         'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                        'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt', 
+                        'BalanceSheet::Other Non-Current Liabilities': 'Other Non-current Liabilities',  # FIXED
                         'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
                         'ProfitLoss::Revenue From Operations(Net)': 'Revenue', 
                         'ProfitLoss::Revenue From Operations': 'Revenue',
@@ -14127,7 +14193,7 @@ class FinancialAnalyticsPlatform:
             validation = pn_mapper.validate_mappings(current_mappings)
             unmapped = [item for item in source_metrics if item not in current_mappings]
             
-            # Save Dialog
+            # Save Dialog (keep existing)
             if st.session_state.get('show_save_dialog', False):
                 with st.form("save_template_form"):
                     st.markdown("### 💾 Save Mapping Template")
@@ -14174,46 +14240,37 @@ class FinancialAnalyticsPlatform:
                             st.session_state.show_save_dialog = False
                             st.rerun()
             
-            # Import Dialog with improved error handling
+            # FIXED: Import Dialog with better state management
             if st.session_state.get('show_import_dialog', False):
                 st.markdown("---")
                 st.markdown("### 📥 Import Mapping Template")
                 
-                import_container = st.container()
+                # Use a unique key for the file uploader to avoid conflicts
+                uploaded_file = st.file_uploader(
+                    "Upload Mapping Template (JSON)",
+                    type=['json'],
+                    key=f"json_import_uploader_{int(time.time())}",  # Unique key
+                    help="Upload a previously exported mapping template JSON file",
+                    accept_multiple_files=False
+                )
                 
-                with import_container:
-                    col1, col2 = st.columns([3, 1])
-                    
-                    with col1:
-                        uploaded_file = st.file_uploader(
-                            "Upload Mapping Template (JSON)",
-                            type=['json'],
-                            key="template_upload_widget",
-                            help="Upload a previously saved mapping template"
-                        )
-                    
-                    with col2:
-                        st.write("")  # Spacer
-                        st.write("")  # Spacer
-                        if st.button("❌ Cancel Import", key="cancel_import_btn"):
-                            st.session_state.show_import_dialog = False
-                            if 'template_upload_widget' in st.session_state:
-                                del st.session_state['template_upload_widget']
-                            st.rerun()
-                    
+                col1, col2 = st.columns([1, 1])
+                
+                with col1:
                     if uploaded_file is not None:
-                        st.info(f"📄 Selected file: {uploaded_file.name} ({uploaded_file.size} bytes)")
-                        
-                        if st.button("✅ Process Import", key="process_import_btn", type="primary"):
+                        if st.button("✅ Import Template", key="process_json_import", type="primary"):
                             try:
+                                # Read and process the JSON file
                                 file_content = uploaded_file.read()
                                 template_data = json.loads(file_content)
                                 
+                                # Validate JSON structure
                                 if 'mappings' not in template_data:
                                     st.error("❌ Invalid template format: missing 'mappings' key")
                                 else:
                                     imported_mappings = template_data['mappings']
                                     
+                                    # Filter mappings to only include those in current data
                                     valid_mappings = {}
                                     invalid_count = 0
                                     
@@ -14223,38 +14280,42 @@ class FinancialAnalyticsPlatform:
                                         else:
                                             invalid_count += 1
                                     
+                                    # Apply the mappings
                                     st.session_state.temp_pn_mappings = valid_mappings
                                     st.session_state.show_import_dialog = False
                                     st.session_state.import_just_completed = True
                                     st.session_state.pn_mapping_state['import_count'] += 1
                                     st.session_state.pn_mapping_state['last_import_time'] = time.time()
                                     
-                                    if 'template_upload_widget' in st.session_state:
-                                        del st.session_state['template_upload_widget']
-                                    
+                                    # Show success message
                                     success_msg = f"✅ Successfully imported {len(valid_mappings)} mappings!"
                                     if invalid_count > 0:
                                         success_msg += f" ({invalid_count} mappings skipped - not found in current data)"
                                     
                                     st.success(success_msg)
                                     
+                                    # Show template info
                                     if 'name' in template_data:
-                                        st.info(f"Template: {template_data['name']}")
+                                        st.info(f"📋 Template: {template_data['name']}")
                                     if 'description' in template_data:
-                                        st.info(f"Description: {template_data['description']}")
+                                        st.info(f"📝 Description: {template_data['description']}")
+                                    if 'exported_at' in template_data:
+                                        st.info(f"📅 Created: {template_data['exported_at']}")
                                     
-                                    time.sleep(1.5)
+                                    time.sleep(2)  # Show messages briefly
                                     st.rerun()
                                     
                             except json.JSONDecodeError as e:
                                 st.error(f"❌ Invalid JSON format: {str(e)}")
-                                try:
-                                    st.code(file_content[:500].decode('utf-8', errors='ignore') + "...")
-                                except:
-                                    st.code(str(file_content)[:500] + "...")
                             except Exception as e:
                                 st.error(f"❌ Error importing template: {str(e)}")
-                                st.exception(e)
+                    else:
+                        st.info("👆 Please select a JSON file to import")
+                
+                with col2:
+                    if st.button("❌ Cancel Import", key="cancel_json_import"):
+                        st.session_state.show_import_dialog = False
+                        st.rerun()
             
             # Helper function to safely calculate selectbox index
             def safe_selectbox_index(current_source, candidates, source_metrics, current_mappings):
@@ -14476,8 +14537,8 @@ class FinancialAnalyticsPlatform:
                         'BalanceSheet::Trade payables': 'Accounts Payable',
                         'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
                         'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                        'BalanceSheet::Other Current Liabilities': 'Accrued Expenses',
-                        'BalanceSheet::Other Non-Current Liabilities': 'Deferred Revenue',
+                        'BalanceSheet::Other Current Liabilities': 'Other Current Liabilities',
+                        'BalanceSheet::Other Non-Current Liabilities': 'Other Non-current Liabilities',
                         'ProfitLoss::Revenue From Operations': 'Revenue',
                         'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
                         'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
@@ -14944,11 +15005,11 @@ class FinancialAnalyticsPlatform:
                             self.set_state('pn_mappings', current_mappings)
                         
                         if selected_template in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)"]:
-                            st.info("💡 Tip: Click '💾 Save Current' to save this mapping for future use!")
+                            st.info("💡 Tip: Click '💾 Save Template' to save this mapping for future use!")
                         
                         # Clean up temp state
                         for key in ['temp_pn_mappings', 'pn_unmapped', 'last_template', 
-                                   'show_save_dialog', 'show_import_dialog']:
+                                   'show_save_dialog', 'show_import_dialog', 'show_export_dialog']:
                             if key in st.session_state:
                                 del st.session_state[key]
                         

@@ -13921,602 +13921,567 @@ class FinancialAnalyticsPlatform:
                 
     #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
-        """Enhanced mapping interface with save/load functionality - FIXED VERSION"""
+        """Enhanced mapping interface with save/load functionality - COMPLETE REFACTOR"""
         st.subheader("🎯 Penman-Nissim Mapping Configuration")
         
-        # Initialize template manager
+        # Initialize components with error handling
+        try:
+            template_manager = self._get_or_initialize_template_manager()
+            pn_mapper = EnhancedPenmanNissimMapper()
+            source_metrics = [str(m) for m in data.index.tolist()]
+        except Exception as e:
+            st.error(f"Failed to initialize mapping components: {str(e)}")
+            return None
+        
+        # Initialize mapping state with robust defaults
+        self._initialize_mapping_state()
+        
+        # Anti-loop protection with enhanced checking
+        if self._check_action_loop():
+            return None
+        
+        # Get current mappings safely
+        current_mappings = st.session_state.get('temp_pn_mappings', {})
+        
+        # Validate current mappings
+        validation = pn_mapper.validate_mappings(current_mappings)
+        unmapped = [m for m in source_metrics if m not in current_mappings]
+        
+        # Template Selection UI
+        self._render_template_selection(template_manager, source_metrics, pn_mapper)
+        
+        # Save/Import Dialogs
+        if st.session_state.get('show_save_dialog', False):
+            self._render_save_dialog(template_manager, source_metrics, data)
+        
+        if st.session_state.get('show_import_dialog', False):
+            self._render_import_dialog(source_metrics)
+        
+        # Main Mapping Interface
+        st.markdown("### 🔧 Metric Mappings")
+        tabs = st.tabs(["🔴 Essential", "🟡 Important", "🟢 Optional", "❓ Unmapped"])
+        
+        # Render each tab with proper error handling
+        with tabs[0]:
+            self._render_mapping_category_safe('essential', pn_mapper, source_metrics, 
+                                              current_mappings, validation)
+        
+        with tabs[1]:
+            self._render_mapping_category_safe('important', pn_mapper, source_metrics, 
+                                              current_mappings, validation)
+        
+        with tabs[2]:
+            self._render_mapping_category_safe('optional', pn_mapper, source_metrics, 
+                                              current_mappings, validation)
+        
+        with tabs[3]:
+            self._render_unmapped_tab(unmapped, current_mappings)
+        
+        # Quick Actions
+        self._render_quick_actions(source_metrics, data, current_mappings)
+        
+        # Apply Mappings
+        st.markdown("---")
+        if self._render_apply_section(pn_mapper, current_mappings):
+            return current_mappings
+        
+        return None
+    
+    def safe_selectbox_index(self, current_source: Optional[str], 
+                            candidates: List[str], 
+                            source_metrics: List[str], 
+                            current_mappings: Dict[str, str]) -> Tuple[List[str], int]:
+        """
+        Safely calculate selectbox index with comprehensive error handling.
+        
+        Args:
+            current_source: Currently selected source metric
+            candidates: List of candidate matches
+            source_metrics: All available source metrics
+            current_mappings: Current mapping dictionary
+        
+        Returns:
+            Tuple of (options list, safe index)
+        """
+        try:
+            # Get available sources (not already mapped except current)
+            available_sources = []
+            for source in source_metrics:
+                if source not in current_mappings or source == current_source:
+                    available_sources.append(source)
+            
+            # Remove duplicates while preserving order
+            candidates_set = set(candidates)
+            additional_sources = [s for s in available_sources if s not in candidates_set]
+            
+            # Build options list
+            options = ['(Not mapped)'] + candidates + additional_sources
+            
+            # Remove any duplicates from options while preserving order
+            seen = set()
+            unique_options = []
+            for opt in options:
+                if opt not in seen:
+                    seen.add(opt)
+                    unique_options.append(opt)
+            
+            options = unique_options
+            
+            # Calculate safe index
+            if current_source and current_source in options:
+                try:
+                    index = options.index(current_source)
+                    # Validate index is within bounds
+                    if 0 <= index < len(options):
+                        return options, index
+                except ValueError:
+                    pass
+            
+            # Default to 0 (Not mapped)
+            return options, 0
+            
+        except Exception as e:
+            # Fallback to minimal safe options
+            self.logger.error(f"Error in safe_selectbox_index: {str(e)}")
+            return ['(Not mapped)'] + list(source_metrics), 0
+    
+    def _get_or_initialize_template_manager(self):
+        """Get or create template manager with error handling"""
         if 'template_manager' not in st.session_state:
-            st.session_state.template_manager = MappingTemplateManager()
-        
-        template_manager = st.session_state.template_manager
-        
-        # Initialize enhanced mapper
-        pn_mapper = EnhancedPenmanNissimMapper()
-        
-        # Get source metrics
-        source_metrics = [str(m) for m in data.index.tolist()]
-        
-        # Add debug helper
-        if st.checkbox("Show available metrics for debugging", key="show_debug_metrics"):
-            self._debug_show_available_metrics(data)
-        
-        # Initialize mapping state if not exists
+            try:
+                st.session_state.template_manager = MappingTemplateManager()
+            except Exception as e:
+                st.error(f"Failed to initialize template manager: {str(e)}")
+                # Return a dummy manager that won't crash
+                return type('DummyManager', (), {
+                    'get_all_templates': lambda: {},
+                    'save_template': lambda *args, **kwargs: False,
+                    'load_template': lambda name: {},
+                    'delete_template': lambda name: False
+                })()
+        return st.session_state.template_manager
+    
+    def _initialize_mapping_state(self):
+        """Initialize mapping state with all required fields"""
         if 'pn_mapping_state' not in st.session_state:
             st.session_state.pn_mapping_state = {
                 'initialized': False,
                 'import_count': 0,
-                'last_import_time': None
+                'last_import_time': None,
+                'last_action_time': None,
+                'action_count': 0,
+                'last_error': None
             }
         
-        # Loop detection
+        # Ensure temp_pn_mappings exists
+        if 'temp_pn_mappings' not in st.session_state:
+            st.session_state.temp_pn_mappings = {}
+    
+    def _check_action_loop(self) -> bool:
+        """Check for action loops with enhanced detection"""
         current_time = time.time()
-        if st.session_state.pn_mapping_state.get('last_import_time'):
-            time_since_import = current_time - st.session_state.pn_mapping_state['last_import_time']
-            if time_since_import < 1.0:  # Less than 1 second
-                st.error("Import loop detected! Please refresh the page.")
-                if st.button("🔄 Reset Mapping Interface", key="reset_mapping_loop"):
-                    for key in ['temp_pn_mappings', 'show_import_dialog', 'import_processed', 
-                               'pn_active_template', 'template_upload', 'template_upload_form',
-                               'import_just_completed', 'show_save_dialog']:
-                        if key in st.session_state:
-                            del st.session_state[key]
-                    st.rerun()
-                return None
+        state = st.session_state.pn_mapping_state
         
-        # Handle import completion flag
-        if st.session_state.get('import_just_completed', False):
-            st.success("✅ Template imported successfully! Review and apply your mappings below.")
-            st.session_state.import_just_completed = False
+        # Check rapid actions
+        if state.get('last_action_time'):
+            time_diff = current_time - state['last_action_time']
+            if time_diff < 0.5:  # Less than 500ms
+                state['action_count'] = state.get('action_count', 0) + 1
+                
+                if state['action_count'] > 5:  # More than 5 rapid actions
+                    st.error("⚠️ Rapid action loop detected. Please wait a moment.")
+                    if st.button("🔄 Reset Interface", key="reset_loop"):
+                        self._reset_mapping_interface()
+                        st.rerun()
+                    return True
+            else:
+                state['action_count'] = 0
         
-        # Template Selection UI
+        state['last_action_time'] = current_time
+        return False
+    
+    def _render_mapping_category_safe(self, category: str, pn_mapper, source_metrics: List[str], 
+                                     current_mappings: Dict[str, str], validation: dict):
+        """Safely render mapping category with comprehensive error handling"""
+        try:
+            # Category configuration
+            category_config = {
+                'essential': {
+                    'info': "These mappings are **required** for basic analysis",
+                    'missing_key': 'missing_essential',
+                    'emoji': '⚠️'
+                },
+                'important': {
+                    'info': "These mappings **improve accuracy**",
+                    'missing_key': 'missing_important', 
+                    'emoji': '⚠️'
+                },
+                'optional': {
+                    'info': "These mappings provide **additional insights**",
+                    'missing_key': None,
+                    'emoji': ''
+                }
+            }
+            
+            config = category_config.get(category, category_config['optional'])
+            st.info(config['info'])
+            
+            # Get targets for this category
+            targets = pn_mapper.required_mappings.get(category, [])
+            if category == 'optional':
+                targets = targets[:10]  # Limit optional mappings
+            
+            # Get missing items for this category
+            missing_items = validation.get(config['missing_key'], []) if config['missing_key'] else []
+            
+            # Render each target mapping
+            for target in targets:
+                try:
+                    self._render_single_mapping(
+                        target=target,
+                        category=category,
+                        source_metrics=source_metrics,
+                        current_mappings=current_mappings,
+                        pn_mapper=pn_mapper,
+                        is_missing=target in missing_items,
+                        emoji=config['emoji']
+                    )
+                except Exception as e:
+                    st.error(f"Error rendering mapping for {target}: {str(e)}")
+                    self.logger.error(f"Mapping render error: {str(e)}")
+                    
+        except Exception as e:
+            st.error(f"Error rendering {category} mappings: {str(e)}")
+            self.logger.error(f"Category render error: {str(e)}")
+    
+    def _render_single_mapping(self, target: str, category: str, source_metrics: List[str],
+                              current_mappings: Dict[str, str], pn_mapper, 
+                              is_missing: bool = False, emoji: str = ""):
+        """Render a single mapping selectbox with robust error handling"""
+        try:
+            # Find current source for this target
+            current_source = None
+            for source, mapped_target in current_mappings.items():
+                if mapped_target == target:
+                    current_source = source
+                    break
+            
+            # Find candidates for this target
+            candidates = self._find_mapping_candidates_safe(
+                target, source_metrics, pn_mapper.template
+            )
+            
+            # Get safe options and index
+            options, default_index = self.safe_selectbox_index(
+                current_source, candidates, source_metrics, current_mappings
+            )
+            
+            # Create unique key for this selectbox
+            selectbox_key = f"pn_map_{category}_{target}".replace(" ", "_").replace("/", "_")
+            
+            # Render selectbox
+            label = f"**{target}**"
+            if is_missing and emoji:
+                label += f" {emoji}"
+            
+            selected = st.selectbox(
+                label,
+                options,
+                index=default_index,
+                key=selectbox_key,
+                help=f"Map source data to {target}"
+            )
+            
+            # Update mappings based on selection
+            self._update_mapping_safe(selected, target, current_mappings)
+            
+        except Exception as e:
+            st.error(f"Error with {target} mapping: {str(e)}")
+            self.logger.error(f"Single mapping error for {target}: {str(e)}")
+    
+    def _find_mapping_candidates_safe(self, target: str, source_metrics: List[str], 
+                                     template: dict) -> List[str]:
+        """Find mapping candidates with error handling"""
+        try:
+            candidates = []
+            target_patterns = template.get(target, [target])
+            
+            # Ensure target_patterns is a list
+            if isinstance(target_patterns, str):
+                target_patterns = [target_patterns]
+            
+            for source in source_metrics:
+                try:
+                    source_clean = source.split('::')[-1] if '::' in source else source
+                    for pattern in target_patterns:
+                        if pattern.lower() in source_clean.lower():
+                            candidates.append(source)
+                            break
+                except Exception:
+                    continue
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_candidates = []
+            for c in candidates:
+                if c not in seen:
+                    seen.add(c)
+                    unique_candidates.append(c)
+            
+            return unique_candidates[:15]  # Limit to prevent UI overload
+            
+        except Exception as e:
+            self.logger.error(f"Error finding candidates for {target}: {str(e)}")
+            return []
+    
+    def _update_mapping_safe(self, selected: str, target: str, current_mappings: Dict[str, str]):
+        """Update mappings with error handling"""
+        try:
+            if selected != '(Not mapped)':
+                # Remove any previous mapping for this target
+                to_remove = []
+                for src, tgt in current_mappings.items():
+                    if tgt == target and src != selected:
+                        to_remove.append(src)
+                
+                for src in to_remove:
+                    del current_mappings[src]
+                
+                # Add new mapping
+                current_mappings[selected] = target
+            else:
+                # Remove mapping if user selects '(Not mapped)'
+                to_remove = []
+                for src, tgt in current_mappings.items():
+                    if tgt == target:
+                        to_remove.append(src)
+                
+                for src in to_remove:
+                    del current_mappings[src]
+            
+            # Update session state
+            st.session_state.temp_pn_mappings = current_mappings
+            
+        except Exception as e:
+            st.error(f"Error updating mapping: {str(e)}")
+            self.logger.error(f"Mapping update error: {str(e)}")
+    
+    def _render_template_selection(self, template_manager, source_metrics, pn_mapper):
+        """Render template selection with error handling"""
         st.markdown("### 📋 Mapping Templates")
         
-        templates = template_manager.get_all_templates()
-        
-        # Add quick templates to the main list
-        vst_template_name = "VST Industries (Quick Template)"
-        template_options = ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name] + list(templates.keys())
-    
-        # Use session state to preserve the dropdown selection
-        if 'pn_active_template' not in st.session_state:
-            st.session_state.pn_active_template = "🆕 Create New Mapping"
-    
         try:
-            default_index = template_options.index(st.session_state.pn_active_template)
-        except ValueError:
-            default_index = 0
-    
-        col1, col2, col3 = st.columns([2, 1, 1])
-        with col1:
-            selected_template = st.selectbox(
-                "Select Mapping Template",
-                template_options,
-                index=default_index,
-                key="pn_template_selector",
-                help="Choose a saved template or create a new mapping"
-            )
-    
-        # Check if the user has changed the selection
-        if selected_template != st.session_state.pn_active_template:
-            st.session_state.pn_active_template = selected_template
+            templates = template_manager.get_all_templates()
+            vst_template_name = "VST Industries (Quick Template)"
+            template_options = ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", 
+                              vst_template_name] + list(templates.keys())
             
-            # Load the template when dropdown changes
-            if selected_template == "🆕 Create New Mapping":
+            if 'pn_active_template' not in st.session_state:
+                st.session_state.pn_active_template = "🆕 Create New Mapping"
+            
+            # Safe index calculation
+            try:
+                default_index = template_options.index(st.session_state.pn_active_template)
+            except ValueError:
+                default_index = 0
+                st.session_state.pn_active_template = template_options[0]
+            
+            col1, col2, col3 = st.columns([2, 1, 1])
+            
+            with col1:
+                selected_template = st.selectbox(
+                    "Select Mapping Template",
+                    template_options,
+                    index=default_index,
+                    key="pn_template_selector",
+                    help="Choose a saved template or create a new mapping"
+                )
+            
+            # Handle template change
+            if selected_template != st.session_state.pn_active_template:
+                st.session_state.pn_active_template = selected_template
+                self._handle_template_selection_safe(selected_template, source_metrics, 
+                                                   pn_mapper, template_manager)
+                st.rerun()
+            
+            with col2:
+                if st.button("💾 Save", key="save_mapping_template", 
+                            disabled=not st.session_state.get('temp_pn_mappings')):
+                    st.session_state.show_save_dialog = True
+            
+            with col3:
+                deletable = selected_template not in ["🆕 Create New Mapping", 
+                                                     "🤖 Auto-Map (Default)", 
+                                                     vst_template_name]
+                if deletable and st.button("🗑️ Delete", key="delete_template"):
+                    if template_manager.delete_template(selected_template):
+                        st.success(f"Deleted: {selected_template}")
+                        st.session_state.pn_active_template = "🆕 Create New Mapping"
+                        st.rerun()
+                        
+        except Exception as e:
+            st.error(f"Error in template selection: {str(e)}")
+            self.logger.error(f"Template selection error: {str(e)}")
+    
+    def _handle_template_selection_safe(self, template, source_metrics, pn_mapper, template_manager):
+        """Handle template selection with error handling"""
+        try:
+            if template == "🆕 Create New Mapping":
                 st.session_state.temp_pn_mappings = {}
-            elif selected_template == "🤖 Auto-Map (Default)":
-                mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(source_metrics, pn_mapper.template)
-                st.session_state.temp_pn_mappings = mappings
-            elif selected_template == vst_template_name:
-                vst_mappings = {
-                    'BalanceSheet::Total Assets': 'Total Assets', 'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
-                    'BalanceSheet::Total Current Assets': 'Current Assets', 'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables', 'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment', 'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
-                    'BalanceSheet::Total Equity': 'Total Equity', 'BalanceSheet::Equity': 'Total Equity',
-                    'BalanceSheet::Share Capital': 'Share Capital', 'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities', 'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Other Current Liabilities': 'Short-term Debt', 'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                    'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt', 'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue', 'ProfitLoss::Revenue From Operations': 'Revenue',
-                    'ProfitLoss::Profit Before Tax': 'Income Before Tax', 'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Current Tax': 'Tax Expense', 'ProfitLoss::Profit/Loss For The Period': 'Net Income',
-                    'ProfitLoss::Profit After Tax': 'Net Income', 'ProfitLoss::Finance Costs': 'Interest Expense',
-                    'ProfitLoss::Finance Cost': 'Interest Expense', 'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
-                    'ProfitLoss::Other Expenses': 'Operating Expenses', 'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold', 'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow', 'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure', 'CashFlow::Capital Expenditure': 'Capital Expenditure'
-                }
-                applied_mappings = {source: target for source, target in vst_mappings.items() if source in source_metrics}
-                st.session_state.temp_pn_mappings = applied_mappings
+            
+            elif template == "🤖 Auto-Map (Default)":
+                mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(
+                    source_metrics, pn_mapper.template
+                )
+                st.session_state.temp_pn_mappings = mappings or {}
+            
+            elif template == "VST Industries (Quick Template)":
+                self._apply_vst_template_safe(source_metrics)
+            
             else:
-                loaded_mappings = template_manager.load_template(selected_template)
-                st.session_state.temp_pn_mappings = {k: v for k, v in loaded_mappings.items() if k in source_metrics}
-    
-            st.rerun()
-        
-        with col2:
-            if st.button("💾 Save Current", key="save_mapping_template", 
-                         disabled=('temp_pn_mappings' not in st.session_state)):
-                st.session_state.show_save_dialog = True
-        
-        with col3:
-            if selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)"] and \
-               st.button("🗑️ Delete Template", key="delete_template"):
-                if template_manager.delete_template(selected_template):
-                    st.success(f"Deleted template: {selected_template}")
-                    st.rerun()
+                loaded_mappings = template_manager.load_template(template)
+                if loaded_mappings:
+                    valid_mappings = {k: v for k, v in loaded_mappings.items() 
+                                    if k in source_metrics}
+                    st.session_state.temp_pn_mappings = valid_mappings
                 else:
-                    st.error("Failed to delete template")
-        
-        # Save Dialog
-        if st.session_state.get('show_save_dialog', False):
-            with st.form("save_template_form"):
-                st.markdown("### 💾 Save Mapping Template")
-                
-                template_name = st.text_input(
-                    "Template Name",
-                    value=f"{self.get_state('company_name', 'Company')}_{datetime.now().strftime('%Y%m%d')}",
-                    help="Give your mapping template a memorable name"
-                )
-                
-                template_description = st.text_area(
-                    "Description (Optional)",
-                    help="Describe when to use this template"
-                )
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.form_submit_button("💾 Save", type="primary"):
-                        if template_name and 'temp_pn_mappings' in st.session_state:
-                            if template_manager.save_template(
-                                name=template_name,
-                                mappings=st.session_state.temp_pn_mappings,
-                                description=template_description,
-                                company=self.get_state('company_name', ''),
-                                metadata={
-                                    'source_count': len(source_metrics),
-                                    'data_structure': str(data.index[:5].tolist())
-                                }
-                            ):
-                                st.success(f"✅ Saved template: {template_name}")
-                                st.session_state.show_save_dialog = False
-                                st.rerun()
-                            else:
-                                st.error("Failed to save template")
-                
-                with col2:
-                    if st.form_submit_button("Cancel"):
-                        st.session_state.show_save_dialog = False
-                        st.rerun()
-        
-        # FIXED Import Dialog with proper state management
-        if st.session_state.get('show_import_dialog', False):
-            st.markdown("---")
-            st.markdown("### 📥 Import Mapping Template")
-            
-            # Use a container to control the import section
-            import_container = st.container()
-            
-            with import_container:
-                # Create columns for better layout
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    uploaded_file = st.file_uploader(
-                        "Upload Mapping Template (JSON)",
-                        type=['json'],
-                        key="template_upload_widget",
-                        help="Upload a previously saved mapping template"
-                    )
-                
-                with col2:
-                    st.write("")  # Spacer
-                    st.write("")  # Spacer
-                    if st.button("❌ Cancel Import", key="cancel_import_btn"):
-                        st.session_state.show_import_dialog = False
-                        # Clear the file uploader
-                        if 'template_upload_widget' in st.session_state:
-                            del st.session_state['template_upload_widget']
-                        st.rerun()
-                
-                if uploaded_file is not None:
-                    # Show file info
-                    st.info(f"📄 Selected file: {uploaded_file.name} ({uploaded_file.size} bytes)")
+                    st.warning(f"Could not load template: {template}")
+                    st.session_state.temp_pn_mappings = {}
                     
-                    # Process button
-                    if st.button("✅ Process Import", key="process_import_btn", type="primary"):
-                        try:
-                            # Read and parse the file
-                            file_content = uploaded_file.read()
-                            template_data = json.loads(file_content)
-                            
-                            # Validate template structure
-                            if 'mappings' not in template_data:
-                                st.error("❌ Invalid template format: missing 'mappings' key")
-                            else:
-                                # Extract mappings
-                                imported_mappings = template_data['mappings']
-                                
-                                # Filter to only include mappings for current source metrics
-                                valid_mappings = {}
-                                invalid_count = 0
-                                
-                                for source, target in imported_mappings.items():
-                                    if source in source_metrics:
-                                        valid_mappings[source] = target
-                                    else:
-                                        invalid_count += 1
-                                
-                                # Apply the valid mappings
-                                st.session_state.temp_pn_mappings = valid_mappings
-                                st.session_state.show_import_dialog = False
-                                st.session_state.import_just_completed = True
-                                st.session_state.pn_mapping_state['import_count'] += 1
-                                st.session_state.pn_mapping_state['last_import_time'] = time.time()
-                                
-                                # Clear the file uploader widget state
-                                if 'template_upload_widget' in st.session_state:
-                                    del st.session_state['template_upload_widget']
-                                
-                                # Show success message
-                                success_msg = f"✅ Successfully imported {len(valid_mappings)} mappings!"
-                                if invalid_count > 0:
-                                    success_msg += f" ({invalid_count} mappings skipped - not found in current data)"
-                                
-                                st.success(success_msg)
-                                
-                                # Show template info if available
-                                if 'name' in template_data:
-                                    st.info(f"Template: {template_data['name']}")
-                                if 'description' in template_data:
-                                    st.info(f"Description: {template_data['description']}")
-                                
-                                # Wait briefly for user to see the message
-                                time.sleep(1.5)
-                                
-                                # Rerun to refresh the interface
-                                st.rerun()
-                                
-                        except json.JSONDecodeError as e:
-                            st.error(f"❌ Invalid JSON format: {str(e)}")
-                            st.code(file_content[:500].decode('utf-8', errors='ignore') + "...")
-                        except Exception as e:
-                            st.error(f"❌ Error importing template: {str(e)}")
-                            st.exception(e)
-        
-        # Helper function to safely calculate selectbox index
-        def safe_selectbox_index(current_source, candidates, source_metrics, current_mappings):
-            """Safely calculate selectbox index with bounds checking"""
-            available_sources = [s for s in source_metrics if s not in current_mappings or s == current_source]
-            options = ['(Not mapped)'] + candidates + [s for s in available_sources if s not in candidates]
-            
-            if current_source and current_source in options:
-                return options, options.index(current_source)
-            else:
-                return options, 0
-        
-        # Mapping interface with categories
-        st.markdown("### 🔧 Metric Mappings")
-        tabs = st.tabs(["🔴 Essential Mappings", "🟡 Important Mappings", "🟢 Optional Mappings", "❓ Unmapped Items"])
-        
-        with tabs[0]:
-            st.info("These mappings are **required** for basic Penman-Nissim analysis")
-            
-            for target in pn_mapper.required_mappings['essential']:
-                # Find current mapping
-                current_source = None
-                for source, mapped_target in current_mappings.items():
-                    if mapped_target == target:
-                        current_source = source
-                        break
-                
-                # Find best candidates
-                candidates = []
-                target_patterns = pn_mapper.template.get(target, [target])
-                
-                for source in source_metrics:
-                    source_clean = source.split('::')[-1] if '::' in source else source
-                    for pattern in target_patterns:
-                        if pattern.lower() in source_clean.lower():
-                            candidates.append(source)
-                            break
-                
-                # Get options and index safely
-                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
-                
-                selected = st.selectbox(
-                    f"**{target}**" + (" ⚠️" if target in validation['missing_essential'] else ""),
-                    options,
-                    index=default_index,
-                    key=f"pn_map_essential_{target}",
-                    help=f"Common patterns: {', '.join(target_patterns[:3])}"
-                )
-                
-                # Update mappings immediately when changed
-                if selected != '(Not mapped)':
-                    # Remove any previous mapping for this target
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target and src != selected:
-                            del current_mappings[src]
-                    current_mappings[selected] = target
-                else:
-                    # Remove mapping if user selects '(Not mapped)'
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target:
-                            del current_mappings[src]
-                
-                # Update session state immediately
-                st.session_state.temp_pn_mappings = current_mappings
-        
-        with tabs[1]:
-            st.info("These mappings **improve accuracy** but aren't strictly required")
-            
-            for target in pn_mapper.required_mappings['important']:
-                # Find current mapping
-                current_source = None
-                for source, mapped_target in current_mappings.items():
-                    if mapped_target == target:
-                        current_source = source
-                        break
-                
-                # Find best candidates
-                candidates = []
-                target_patterns = pn_mapper.template.get(target, [target])
-                
-                for source in source_metrics:
-                    source_clean = source.split('::')[-1] if '::' in source else source
-                    for pattern in target_patterns:
-                        if pattern.lower() in source_clean.lower():
-                            candidates.append(source)
-                            break
-                
-                # Get options and index safely
-                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
-                
-                selected = st.selectbox(
-                    f"**{target}**" + (" ⚠️" if target in validation['missing_important'] else ""),
-                    options,
-                    index=default_index,
-                    key=f"pn_map_important_{target}",
-                    help=f"Common patterns: {', '.join(target_patterns[:3])}"
-                )
-                
-                # Update mappings immediately when changed
-                if selected != '(Not mapped)':
-                    # Remove any previous mapping for this target
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target and src != selected:
-                            del current_mappings[src]
-                    current_mappings[selected] = target
-                else:
-                    # Remove mapping if user selects '(Not mapped)'
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target:
-                            del current_mappings[src]
-                
-                # Update session state immediately
-                st.session_state.temp_pn_mappings = current_mappings
-        
-        with tabs[2]:
-            st.info("These mappings provide **additional insights**")
-            
-            for target in pn_mapper.required_mappings['optional']:
-                # Find current mapping
-                current_source = None
-                for source, mapped_target in current_mappings.items():
-                    if mapped_target == target:
-                        current_source = source
-                        break
-                
-                # Find best candidates
-                candidates = []
-                target_patterns = pn_mapper.template.get(target, [target])
-                
-                for source in source_metrics:
-                    source_clean = source.split('::')[-1] if '::' in source else source
-                    for pattern in target_patterns:
-                        if pattern.lower() in source_clean.lower():
-                            candidates.append(source)
-                            break
-                
-                # Limit candidates for optional mappings
-                candidates = candidates[:10]
-                
-                # Get options and index safely
-                options, default_index = safe_selectbox_index(current_source, candidates, source_metrics, current_mappings)
-                
-                selected = st.selectbox(
-                    f"{target}",
-                    options,
-                    index=default_index,
-                    key=f"pn_map_optional_{target}"
-                )
-                
-                # Update mappings immediately when changed
-                if selected != '(Not mapped)':
-                    # Remove any previous mapping for this target
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target and src != selected:
-                            del current_mappings[src]
-                    current_mappings[selected] = target
-                else:
-                    # Remove mapping if user selects '(Not mapped)'
-                    for src, tgt in list(current_mappings.items()):
-                        if tgt == target:
-                            del current_mappings[src]
-                
-                # Update session state immediately
-                st.session_state.temp_pn_mappings = current_mappings
-        
-        with tabs[3]:
-            st.info("Items that couldn't be automatically mapped")
-            
-            # Show unmapped items that aren't already mapped
-            truly_unmapped = [item for item in unmapped if item not in current_mappings]
-            
-            if truly_unmapped:
-                st.write(f"**{len(truly_unmapped)} unmapped items**")
-                
-                # Group by type
-                balance_sheet_items = [item for item in truly_unmapped if 'BalanceSheet::' in item]
-                pl_items = [item for item in truly_unmapped if 'ProfitLoss::' in item]
-                cf_items = [item for item in truly_unmapped if 'CashFlow::' in item]
-                other_items = [item for item in truly_unmapped if item not in balance_sheet_items + pl_items + cf_items]
-                
-                if balance_sheet_items:
-                    with st.expander(f"Balance Sheet Items ({len(balance_sheet_items)})"):
-                        for item in balance_sheet_items[:20]:
-                            st.text(f"• {item.split('::')[-1]}")
-                        if len(balance_sheet_items) > 20:
-                            st.text(f"... and {len(balance_sheet_items) - 20} more")
-                
-                if pl_items:
-                    with st.expander(f"P&L Items ({len(pl_items)})"):
-                        for item in pl_items[:20]:
-                            st.text(f"• {item.split('::')[-1]}")
-                        if len(pl_items) > 20:
-                            st.text(f"... and {len(pl_items) - 20} more")
-                
-                if cf_items:
-                    with st.expander(f"Cash Flow Items ({len(cf_items)})"):
-                        for item in cf_items[:20]:
-                            st.text(f"• {item.split('::')[-1]}")
-                        if len(cf_items) > 20:
-                            st.text(f"... and {len(cf_items) - 20} more")
-                
-                if other_items:
-                    with st.expander(f"Other Items ({len(other_items)})"):
-                        for item in other_items[:20]:
-                            st.text(f"• {item}")
-                        if len(other_items) > 20:
-                            st.text(f"... and {len(other_items) - 20} more")
-            else:
-                st.success("All items have been mapped!")
-        
-        # Quick Template Buttons
-        st.markdown("### ⚡ Quick Templates")
+        except Exception as e:
+            st.error(f"Error loading template: {str(e)}")
+            st.session_state.temp_pn_mappings = {}
+    
+    def _render_quick_actions(self, source_metrics, data, current_mappings):
+        """Render quick action buttons"""
+        st.markdown("### ⚡ Quick Actions")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            if st.button("📋 Load VST Template", key="pn_vst_template_quick", 
-                         help="Load pre-configured template for VST Industries"):
-                
-                vst_correct_mappings = {
-                    # Balance Sheet mappings
-                    'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
-                    'BalanceSheet::Total Equity': 'Total Equity',
-                    'BalanceSheet::Equity': 'Total Equity',
-                    'BalanceSheet::Total Current Assets': 'Current Assets',
-                    'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
-                    'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
-                    'BalanceSheet::Trade Receivables': 'Trade Receivables',
-                    'BalanceSheet::Trade receivables': 'Trade Receivables',
-                    'BalanceSheet::Inventories': 'Inventory',
-                    'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
-                    'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
-                    'BalanceSheet::Share Capital': 'Share Capital',
-                    'BalanceSheet::Other Equity': 'Retained Earnings',
-                    'BalanceSheet::Trade Payables': 'Accounts Payable',
-                    'BalanceSheet::Trade payables': 'Accounts Payable',
-                    'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
-                    'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
-                    'BalanceSheet::Other Current Liabilities': 'Accrued Expenses',
-                    'BalanceSheet::Other Non-Current Liabilities': 'Deferred Revenue',
-                    
-                    # P&L mappings
-                    'ProfitLoss::Revenue From Operations': 'Revenue',
-                    'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
-                    'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
-                    'ProfitLoss::Profit Before Tax': 'Income Before Tax',
-                    'ProfitLoss::Tax Expense': 'Tax Expense',
-                    'ProfitLoss::Current Tax': 'Tax Expense',
-                    'ProfitLoss::Profit After Tax': 'Net Income',
-                    'ProfitLoss::Profit/Loss For The Period': 'Net Income',
-                    'ProfitLoss::Finance Cost': 'Interest Expense',
-                    'ProfitLoss::Finance Costs': 'Interest Expense',
-                    'ProfitLoss::Interest': 'Interest Expense',
-                    'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
-                    'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
-                    'ProfitLoss::Other Expenses': 'Operating Expenses',
-                    'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
-                    'ProfitLoss::Other Income': 'Interest Income',
-                    
-                    # Cash Flow mappings
-                    'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
-                    'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchased of Fixed Assets': 'Capital Expenditure',
-                    'CashFlow::Purchase of Investments': 'Capital Expenditure',
-                    'CashFlow::Capital Expenditure': 'Capital Expenditure',
-                }
-                
-                # Apply only mappings that match current data
-                applied_mappings = {}
-                for source in source_metrics:
-                    if source in vst_correct_mappings:
-                        applied_mappings[source] = vst_correct_mappings[source]
-                    else:
-                        source_clean = source.split('::')[-1] if '::' in source else source
-                        for vst_key, target in vst_correct_mappings.items():
-                            vst_clean = vst_key.split('::')[-1] if '::' in vst_key else vst_key
-                            if source_clean.lower() == vst_clean.lower():
-                                applied_mappings[source] = target
-                                break
-                
-                st.session_state.temp_pn_mappings = applied_mappings
-                st.success(f"Loaded VST Industries template with {len(applied_mappings)} mappings!")
-                
-                with st.expander("View Applied Mappings"):
-                    for source, target in sorted(applied_mappings.items(), key=lambda x: x[1]):
-                        st.text(f"{target} ← {source}")
-                
-                st.rerun()
-        
-        # Quick actions
-        st.markdown("### Quick Actions")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            if st.button("🤖 Auto-Complete", key="pn_auto_complete", 
-                         help="Auto-map remaining unmapped items"):
-                remaining_mappings, _ = PenmanNissimMappingTemplates.create_smart_mapping(
-                    unmapped, 
-                    pn_mapper.template
-                )
-                current_mappings.update(remaining_mappings)
-                st.session_state.temp_pn_mappings = current_mappings
-                st.success("Auto-completed missing mappings!")
+            if st.button("📋 VST Template", key="pn_vst_quick"):
+                self._apply_vst_template_safe(source_metrics)
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Reset Current", key="pn_reset_current"):
+            if st.button("💼 Clear All", key="pn_clear_all"):
                 st.session_state.temp_pn_mappings = {}
-                st.session_state.pn_unmapped = source_metrics
+                st.success("Cleared all mappings!")
                 st.rerun()
         
         with col3:
-            if st.button("📥 Import", key="import_template"):
-                st.session_state.show_import_dialog = True
+            if st.button("🔍 Auto-Detect", key="auto_detect"):
+                self._auto_detect_mappings_safe(data, current_mappings)
         
         with col4:
-            if st.button("📤 Export", key="export_template", 
-                         disabled=not current_mappings):
-                export_data = {
-                    'name': f"export_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-                    'mappings': current_mappings,
-                    'created_at': datetime.now().isoformat(),
-                    'company': self.get_state('company_name', ''),
-                    'version': '1.0'
-                }
-                
-                st.download_button(
-                    label="📥 Download Mapping Template",
-                    data=json.dumps(export_data, indent=2),
-                    file_name=f"pn_mapping_{datetime.now().strftime('%Y%m%d')}.json",
-                    mime="application/json"
-            )
-     
+            if st.button("❓ Help", key="pn_help"):
+                self._show_mapping_help()
+    
+    def _apply_vst_template_safe(self, source_metrics):
+        """Apply VST template with error handling"""
+        try:
+            vst_mappings = {
+                'BalanceSheet::Total Assets': 'Total Assets',
+                'BalanceSheet::Total Equity and Liabilities': 'Total Assets',
+                'BalanceSheet::Total Current Assets': 'Current Assets',
+                'BalanceSheet::Cash and Cash Equivalents': 'Cash and Cash Equivalents',
+                'BalanceSheet::Trade receivables': 'Trade Receivables',
+                'BalanceSheet::Trade Receivables': 'Trade Receivables',
+                'BalanceSheet::Inventories': 'Inventory',
+                'BalanceSheet::Property Plant and Equipment': 'Property Plant Equipment',
+                'BalanceSheet::Fixed Assets': 'Property Plant Equipment',
+                'BalanceSheet::Total Equity': 'Total Equity',
+                'BalanceSheet::Equity': 'Total Equity',
+                'BalanceSheet::Share Capital': 'Share Capital',
+                'BalanceSheet::Other Equity': 'Retained Earnings',
+                'BalanceSheet::Total Current Liabilities': 'Current Liabilities',
+                'BalanceSheet::Trade payables': 'Accounts Payable',
+                'BalanceSheet::Trade Payables': 'Accounts Payable',
+                'BalanceSheet::Other Current Liabilities': 'Short-term Debt',
+                'BalanceSheet::Short Term Borrowings': 'Short-term Debt',
+                'BalanceSheet::Other Non-Current Liabilities': 'Long-term Debt',
+                'BalanceSheet::Long Term Borrowings': 'Long-term Debt',
+                'ProfitLoss::Revenue From Operations(Net)': 'Revenue',
+                'ProfitLoss::Revenue From Operations': 'Revenue',
+                'ProfitLoss::Profit Before Tax': 'Income Before Tax',
+                'ProfitLoss::Tax Expense': 'Tax Expense',
+                'ProfitLoss::Current Tax': 'Tax Expense',
+                'ProfitLoss::Profit/Loss For The Period': 'Net Income',
+                'ProfitLoss::Profit After Tax': 'Net Income',
+                'ProfitLoss::Finance Costs': 'Interest Expense',
+                'ProfitLoss::Finance Cost': 'Interest Expense',
+                'ProfitLoss::Employee Benefit Expenses': 'Operating Expenses',
+                'ProfitLoss::Other Expenses': 'Operating Expenses',
+                'ProfitLoss::Depreciation and Amortisation Expenses': 'Depreciation',
+                'ProfitLoss::Cost of Materials Consumed': 'Cost of Goods Sold',
+                'ProfitLoss::Profit Before Exceptional Items and Tax': 'Operating Income',
+                'CashFlow::Net CashFlow From Operating Activities': 'Operating Cash Flow',
+                'CashFlow::Net Cash from Operating Activities': 'Operating Cash Flow',
+                'CashFlow::Purchase of Fixed Assets': 'Capital Expenditure',
+                'CashFlow::Purchase of Investments': 'Capital Expenditure',
+                'CashFlow::Capital Expenditure': 'Capital Expenditure'
+            }
+            
+            # Apply only valid mappings
+            applied = {}
+            for source, target in vst_mappings.items():
+                if source in source_metrics:
+                    applied[source] = target
+            
+            st.session_state.temp_pn_mappings = applied
+            st.success(f"Applied VST template: {len(applied)} mappings")
+            
+        except Exception as e:
+            st.error(f"Error applying VST template: {str(e)}")
+    
+    def _render_apply_section(self, pn_mapper, current_mappings) -> bool:
+        """Render apply button and handle application"""
+        col1, col2, col3 = st.columns([2, 1, 2])
+        
+        with col2:
+            if st.button("✅ Apply Mappings", type="primary", key="apply_mappings",
+                        use_container_width=True):
+                try:
+                    validation = pn_mapper.validate_mappings(current_mappings)
+                    
+                    if validation['is_valid']:
+                        self.set_state('pn_mappings', current_mappings)
+                        
+                        # Cleanup
+                        for key in ['temp_pn_mappings', 'show_save_dialog', 
+                                  'show_import_dialog', 'pn_unmapped']:
+                            if key in st.session_state:
+                                del st.session_state[key]
+                        
+                        st.success(f"✅ Applied {len(current_mappings)} mappings!")
+                        time.sleep(0.5)
+                        st.rerun()
+                        return True
+                    else:
+                        st.error("❌ Please complete essential mappings")
+                        if validation.get('missing_essential'):
+                            with st.expander("Missing Essential Items", expanded=True):
+                                for item in validation['missing_essential']:
+                                    st.write(f"• {item}")
+                        return False
+                        
+                except Exception as e:
+                    st.error(f"Error applying mappings: {str(e)}")
+                    return False
+        
+        return False
+    
+    def _reset_mapping_interface(self):
+        """Reset the entire mapping interface"""
+        keys_to_reset = [
+            'temp_pn_mappings', 'pn_mapping_state', 'pn_active_template',
+            'show_save_dialog', 'show_import_dialog', 'template_upload_widget'
+        ]
+        
+        for key in keys_to_reset:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        st.success("Interface reset successfully!")
                         
     def _generate_pn_insights_enhanced(self, results: Dict[str, Any]) -> List[str]:
         """Generate enhanced insights from Penman-Nissim analysis"""

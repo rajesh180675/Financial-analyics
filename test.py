@@ -13921,7 +13921,9 @@ class FinancialAnalyticsPlatform:
                 
     #---- render enhanced nissim mapping
     def _render_enhanced_penman_nissim_mapping(self, data: pd.DataFrame) -> Optional[Dict[str, str]]:
-        """Enhanced mapping interface with save/load functionality - IMPROVED VERSION"""
+        """Enhanced mapping interface with save/load functionality - COMPLETE VERSION"""
+        
+       
         
         try:
             st.subheader("🎯 Penman-Nissim Mapping Configuration")
@@ -13995,7 +13997,9 @@ class FinancialAnalyticsPlatform:
             except ValueError:
                 default_index = 0
         
-            col1, col2, col3 = st.columns([2, 1, 1])
+            # Template management buttons
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            
             with col1:
                 selected_template = st.selectbox(
                     "Select Mapping Template",
@@ -14004,6 +14008,54 @@ class FinancialAnalyticsPlatform:
                     key="pn_template_selector",
                     help="Choose a saved template or create a new mapping"
                 )
+            
+            with col2:
+                if st.button("💾 Save", key="save_mapping_template", 
+                              disabled=('temp_pn_mappings' not in st.session_state or len(current_mappings) == 0)):
+                    st.session_state.show_save_dialog = True
+            
+            with col3:
+                if st.button("📥 Import", key="import_template_btn"):
+                    st.session_state.show_import_dialog = True
+            
+            with col4:
+                if selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name]:
+                    if st.button("🗑️ Delete", key="delete_template"):
+                        try:
+                            if template_manager.delete_template(selected_template):
+                                st.success(f"Deleted template: {selected_template}")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete template")
+                        except Exception as e:
+                            st.error(f"Error deleting template: {e}")
+            
+            # Export functionality (separate row)
+            if templates and selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name]:
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+                with col2:
+                    if st.button("📤 Export", key="export_template_btn"):
+                        try:
+                            template_data = template_manager.load_template(selected_template)
+                            template_json = {
+                                "name": selected_template,
+                                "mappings": template_data,
+                                "exported_at": datetime.now().isoformat(),
+                                "description": f"Exported template for {selected_template}",
+                                "version": "1.0"
+                            }
+                            
+                            json_str = json.dumps(template_json, indent=2)
+                            st.download_button(
+                                label="💾 Download JSON",
+                                data=json_str,
+                                file_name=f"{selected_template.replace(' ', '_')}_template.json",
+                                mime="application/json",
+                                key="download_template"
+                            )
+                            st.success("✅ Template ready for download!")
+                        except Exception as e:
+                            st.error(f"Failed to export template: {e}")
         
             # Check if the user has changed the selection
             if selected_template != st.session_state.pn_active_template:
@@ -14074,23 +14126,6 @@ class FinancialAnalyticsPlatform:
             current_mappings = st.session_state.get('temp_pn_mappings', {})
             validation = pn_mapper.validate_mappings(current_mappings)
             unmapped = [item for item in source_metrics if item not in current_mappings]
-            
-            with col2:
-                if st.button("💾 Save Current", key="save_mapping_template", 
-                              disabled=('temp_pn_mappings' not in st.session_state or len(current_mappings) == 0)):
-                    st.session_state.show_save_dialog = True
-            
-            with col3:
-                if selected_template not in ["🆕 Create New Mapping", "🤖 Auto-Map (Default)", vst_template_name] and \
-                   st.button("🗑️ Delete Template", key="delete_template"):
-                    try:
-                        if template_manager.delete_template(selected_template):
-                            st.success(f"Deleted template: {selected_template}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete template")
-                    except Exception as e:
-                        st.error(f"Error deleting template: {e}")
             
             # Save Dialog
             if st.session_state.get('show_save_dialog', False):
@@ -14233,7 +14268,8 @@ class FinancialAnalyticsPlatform:
                     else:
                         return options, 0
                 except Exception as e:
-                    self.logger.error(f"Error in safe_selectbox_index: {e}")
+                    if hasattr(self, 'logger'):
+                        self.logger.error(f"Error in safe_selectbox_index: {e}")
                     return ['(Not mapped)'], 0
             
             # Mapping interface with categories

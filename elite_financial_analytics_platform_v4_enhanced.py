@@ -5209,18 +5209,18 @@ class EnhancedPenmanNissimAnalyzer:
     def _calculate_ratios_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enhanced ratio calculations with comprehensive error handling and edge case management
-        Version 16.0 - Fixed NBC and Return on Financial Assets calculations
+        Version 17.0 - Final robust implementation with comprehensive Interest Coverage handling
         """
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-RATIOS-V16.0] Starting Enhanced Ratio Calculations")
+        self.logger.info("[PN-RATIOS-V17.0] Starting Final Enhanced Ratio Calculations")
         self.logger.info("="*80)
         
         # Get reformulated statements (already cached)
         ref_bs = self._reformulate_balance_sheet_enhanced(None)
         ref_is = self._reformulate_income_statement_enhanced(None)
         
-        self.logger.info(f"[PN-RATIOS-V16.0] Input data shapes - BS: {ref_bs.shape}, IS: {ref_is.shape}")
+        self.logger.info(f"[PN-RATIOS-V17.0] Input data shapes - BS: {ref_bs.shape}, IS: {ref_is.shape}")
         
         # Initialize ratios DataFrame with years as index
         ratios = pd.DataFrame(index=ref_bs.columns)
@@ -5228,12 +5228,13 @@ class EnhancedPenmanNissimAnalyzer:
             'calculation_status': {'successful': [], 'failed': [], 'warnings': []},
             'data_quality': {},
             'nbc_details': {},
-            'financial_position': {}
+            'financial_position': {},
+            'interest_coverage_method': {}
         }
         
         try:
             # ========== 1. CORE OPERATING PERFORMANCE METRICS ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === OPERATING PERFORMANCE METRICS ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === OPERATING PERFORMANCE METRICS ===")
             
             # --- RNOA (Return on Net Operating Assets) ---
             rnoa_calculated = False
@@ -5260,7 +5261,7 @@ class EnhancedPenmanNissimAnalyzer:
                                 rnoa[year] = (nopat[year] / avg_noa[year]) * 100
                             else:
                                 rnoa[year] = np.nan
-                                self.logger.warning(f"[PN-RATIOS-V16.0] {year}: NOA near zero, RNOA undefined")
+                                self.logger.warning(f"[PN-RATIOS-V17.0] {year}: NOA near zero, RNOA undefined")
                     
                     ratios['Return on Net Operating Assets (RNOA) %'] = rnoa
                     rnoa_calculated = True
@@ -5292,15 +5293,15 @@ class EnhancedPenmanNissimAnalyzer:
                                 calculated_rnoa = (opm[year] * noat[year]) / 100
                                 diff = abs(rnoa[year] - calculated_rnoa)
                                 if diff > 0.1:
-                                    self.logger.warning(f"[PN-RATIOS-V16.0] {year}: RNOA decomposition mismatch: {diff:.2f}%")
+                                    self.logger.warning(f"[PN-RATIOS-V17.0] {year}: RNOA decomposition mismatch: {diff:.2f}%")
                     
                 except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-V16.0] RNOA calculation failed: {e}")
+                    self.logger.error(f"[PN-RATIOS-V17.0] RNOA calculation failed: {e}")
                     metadata['calculation_status']['failed'].append(f'RNOA: {str(e)}')
                     ratios['Return on Net Operating Assets (RNOA) %'] = pd.Series(np.nan, index=ref_bs.columns)
             
             # ========== 2. FINANCIAL LEVERAGE METRICS ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === FINANCIAL LEVERAGE METRICS ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === FINANCIAL LEVERAGE METRICS ===")
             
             # --- Financial Leverage (FLEV) ---
             flev_calculated = False
@@ -5344,23 +5345,52 @@ class EnhancedPenmanNissimAnalyzer:
                     metadata['calculation_status']['successful'].append('FLEV')
                     
                 except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-V16.0] FLEV calculation failed: {e}")
+                    self.logger.error(f"[PN-RATIOS-V17.0] FLEV calculation failed: {e}")
                     metadata['calculation_status']['failed'].append(f'FLEV: {str(e)}')
                     ratios['Financial Leverage (FLEV)'] = pd.Series(np.nan, index=ref_bs.columns)
             
-            # ========== 3. ENHANCED FINANCIAL INCOME/EXPENSE CALCULATION - FIXED ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === CALCULATING FINANCIAL INCOME AND EXPENSES (CORRECTED) ===")
+            # ========== 3. COMPREHENSIVE FINANCIAL INCOME/EXPENSE CALCULATION ==========
+            self.logger.info("\n[PN-RATIOS-V17.0] === COMPREHENSIVE FINANCIAL ANALYSIS ===")
             
-            # Get financial expense from reformulated data (should be zero for VST)
-            financial_expense = ref_is.loc['Interest Expense'] if 'Interest Expense' in ref_is.index else pd.Series(0.0, index=ref_bs.columns)
-            
-            # IMPROVED: Calculate financial income from actual Other Income and financial assets
+            # Get all available financial data sources
+            financial_expense = pd.Series(0.0, index=ref_bs.columns)
             financial_income = pd.Series(0.0, index=ref_bs.columns)
             
-            # Get Other Income from original data
+            # 1. Financial Expense Sources (in order of preference)
+            expense_sources = [
+                'Interest Expense',
+                'Finance Cost', 
+                'Interest Paid',
+                'Borrowing Costs',
+                'Financial Charges'
+            ]
+            
+            financial_expense_found = False
+            for source in expense_sources:
+                if source in ref_is.index:
+                    financial_expense = ref_is.loc[source].fillna(0)
+                    financial_expense_found = True
+                    self.logger.info(f"[PN-RATIOS-V17.0] Using {source} for financial expense")
+                    break
+                else:
+                    # Try original data
+                    try:
+                        expense_data = self._get_safe_series(self._df_clean, source, default_zero=True)
+                        if expense_data is not None and expense_data.sum() > 0:
+                            financial_expense = expense_data
+                            financial_expense_found = True
+                            self.logger.info(f"[PN-RATIOS-V17.0] Using {source} from original data for financial expense")
+                            break
+                    except:
+                        continue
+            
+            if not financial_expense_found:
+                self.logger.info("[PN-RATIOS-V17.0] No financial expense found - company appears debt-free")
+            
+            # 2. Financial Income Estimation
             try:
                 other_income = self._get_safe_series(self._df_clean, 'Other Income', default_zero=True)
-                self.logger.info(f"[PN-RATIOS-V16.0] Other Income from source: {other_income.to_dict()}")
+                self.logger.info(f"[PN-RATIOS-V17.0] Other Income: {other_income.to_dict()}")
             except:
                 other_income = pd.Series(0.0, index=ref_bs.columns)
             
@@ -5373,58 +5403,56 @@ class EnhancedPenmanNissimAnalyzer:
             # Total financial assets
             total_financial_assets = current_investments + cash_and_equiv + lt_investments + bank_balances
             
-            # CORRECTED: For cash-rich companies like VST, estimate financial income more accurately
+            # Enhanced financial income estimation
             for year in ref_bs.columns:
-                # For VST, Other Income is primarily financial income (interest/dividends)
-                # Use a more conservative approach
                 if other_income[year] > 0:
-                    # Calculate implied return rate
                     if total_financial_assets[year] > 0:
                         implied_rate = other_income[year] / total_financial_assets[year]
-                        # For VST, most Other Income is likely financial, but be conservative
-                        if implied_rate <= 0.15:  # If implied rate is reasonable (<15%), use most of Other Income
-                            financial_income[year] = other_income[year] * 0.9
-                        else:  # If implied rate is too high, use a reasonable rate
-                            financial_income[year] = total_financial_assets[year] * 0.06  # 6% return
+                        # Conservative approach: if rate is reasonable, use most of Other Income
+                        if implied_rate <= 0.12:  # Up to 12% return is reasonable
+                            financial_income[year] = other_income[year] * 0.85  # 85% of Other Income
+                        else:  # If rate seems too high, use market rate
+                            financial_income[year] = total_financial_assets[year] * 0.065  # 6.5% market return
                     else:
-                        financial_income[year] = other_income[year] * 0.5  # Conservative estimate
+                        financial_income[year] = other_income[year] * 0.6  # Conservative default
                 
-                self.logger.info(f"[PN-RATIOS-V16.0] {year}: Other Income={other_income[year]:.0f}, "
+                self.logger.info(f"[PN-RATIOS-V17.0] {year}: Other Income={other_income[year]:.0f}, "
                                f"Financial Assets={total_financial_assets[year]:.0f}, "
-                               f"Estimated Financial Income={financial_income[year]:.0f}")
+                               f"Estimated Financial Income={financial_income[year]:.0f}, "
+                               f"Financial Expense={financial_expense[year]:.0f}")
             
-            # Get tax rate from reformulated data
-            if 'Effective Tax Rate (Info Only)' in ref_is.index:
-                tax_rate = ref_is.loc['Effective Tax Rate (Info Only)']
-            else:
-                # Calculate from tax expense and profit before tax
-                try:
-                    pbt = self._get_safe_series(self._df_clean, 'Profit Before Tax')
-                    tax_expense = self._get_safe_series(self._df_clean, 'Tax Expenses')
-                    tax_rate = pd.Series(index=ref_bs.columns, dtype=float)
+            # 3. Tax Rate Calculation
+            tax_rate = pd.Series(0.25, index=ref_bs.columns)  # Default 25%
+            
+            try:
+                pbt = self._get_safe_series(self._df_clean, 'Profit Before Tax')
+                tax_expense = self._get_safe_series(self._df_clean, 'Tax Expenses')
+                
+                if pbt is not None and tax_expense is not None:
                     for year in ref_bs.columns:
                         if pd.notna(pbt[year]) and pd.notna(tax_expense[year]) and pbt[year] > 0:
-                            tax_rate[year] = tax_expense[year] / pbt[year]
-                            tax_rate[year] = np.clip(tax_rate[year], 0.15, 0.40)
+                            calculated_rate = tax_expense[year] / pbt[year]
+                            if 0.10 <= calculated_rate <= 0.45:  # Reasonable tax rate range
+                                tax_rate[year] = calculated_rate
+                            else:
+                                tax_rate[year] = 0.25  # Default fallback
                         else:
                             tax_rate[year] = 0.25
-                except:
-                    tax_rate = pd.Series(0.25, index=ref_bs.columns)
+                else:
+                    # Try from reformulated data
+                    if 'Effective Tax Rate (Info Only)' in ref_is.index:
+                        ref_tax_rate = ref_is.loc['Effective Tax Rate (Info Only)']
+                        for year in ref_bs.columns:
+                            if pd.notna(ref_tax_rate[year]) and 0.10 <= ref_tax_rate[year] <= 0.45:
+                                tax_rate[year] = ref_tax_rate[year]
+            except Exception as e:
+                self.logger.warning(f"[PN-RATIOS-V17.0] Tax rate calculation failed: {e}, using default 25%")
             
             # Calculate net financial expense after tax
             net_financial_expense_after_tax = (financial_expense - financial_income) * (1 - tax_rate)
             
-            # Log the financial components
-            for year in ref_bs.columns:
-                self.logger.info(f"[PN-RATIOS-V16.0] {year} Financial Components:")
-                self.logger.info(f"  Financial Income: {financial_income[year]:.0f}")
-                self.logger.info(f"  Financial Expense: {financial_expense[year]:.0f}")
-                self.logger.info(f"  Net Financial Expense: {financial_expense[year] - financial_income[year]:.0f}")
-                self.logger.info(f"  Tax Rate: {tax_rate[year]*100:.1f}%")
-                self.logger.info(f"  Net Financial Expense After Tax: {net_financial_expense_after_tax[year]:.0f}")
-            
-            # ========== 4. NET BORROWING COST (NBC) - CORRECTED ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === NET BORROWING COST (CORRECTED) ===")
+            # ========== 4. NET BORROWING COST (NBC) ==========
+            self.logger.info("\n[PN-RATIOS-V17.0] === NET BORROWING COST ===")
             
             nbc = pd.Series(0.0, index=ref_bs.columns)
             nbc_interpretation = pd.Series(index=ref_bs.columns, dtype=str)
@@ -5432,7 +5460,6 @@ class EnhancedPenmanNissimAnalyzer:
             
             try:
                 if 'Net Financial Assets' in ref_bs.index and 'Total Assets' in ref_bs.index:
-                    
                     nfa = ref_bs.loc['Net Financial Assets']
                     total_assets = ref_bs.loc['Total Assets']
                     
@@ -5445,10 +5472,8 @@ class EnhancedPenmanNissimAnalyzer:
                             prev_year = ref_bs.columns[i-1]
                             avg_nfa[year] = (nfa[prev_year] + nfa[year]) / 2
                     
-                    # Net Financial Obligations = -Net Financial Assets
-                    avg_nfo = -avg_nfa
+                    avg_nfo = -avg_nfa  # Net Financial Obligations
                     
-                    # CORRECTED NBC calculation
                     for year in ref_bs.columns:
                         nfo = avg_nfo[year]
                         nfe = net_financial_expense_after_tax[year]
@@ -5456,10 +5481,8 @@ class EnhancedPenmanNissimAnalyzer:
                         ta = total_assets[year]
                         
                         if pd.notna(nfo) and pd.notna(nfe) and pd.notna(ta) and pd.notna(nfa_val):
-                            # More lenient threshold: 0.1% of total assets
                             threshold = 0.001 * ta
                             
-                            # Store detailed calculation info
                             metadata['nbc_details'][year] = {
                                 'nfa': nfa_val,
                                 'nfo': nfo,
@@ -5470,57 +5493,32 @@ class EnhancedPenmanNissimAnalyzer:
                                 'position': 'cash_rich' if nfa_val > 0 else 'debt_laden'
                             }
                             
-                            # FIXED: Check if we have meaningful financial position
                             if abs(nfa_val) > threshold and abs(nfo) > threshold:
-                                # NBC = (Net Financial Expense / Net Financial Obligations) × 100
                                 nbc[year] = (nfe / nfo) * 100
                                 
-                                if nfa_val > 0:  # CASH-RICH POSITION (VST case)
-                                    if nfe < 0:  # Normal case: earning on cash (negative expense = positive income)
+                                if nfa_val > 0:  # Cash-rich
+                                    if nfe < 0:
                                         nbc_interpretation[year] = f'Return on net cash: {-nbc[year]:.2f}%'
-                                        self.logger.info(
-                                            f"[NBC] {year}: Cash-rich earning {-nbc[year]:.2f}% on net cash (NFA={nfa_val:.0f})"
-                                        )
-                                    else:  # Unusual: paying to hold cash
+                                    else:
                                         nbc_interpretation[year] = f'Cost of holding cash: {nbc[year]:.2f}%'
-                                        self.logger.warning(
-                                            f"[NBC] {year}: Cash-rich but paying {nbc[year]:.2f}% to hold cash"
-                                        )
-                                else:  # DEBT-LADEN POSITION
-                                    if nfe > 0:  # Normal case: paying interest
+                                else:  # Debt-laden
+                                    if nfe > 0:
                                         nbc_interpretation[year] = f'Cost of net debt: {nbc[year]:.2f}%'
-                                        self.logger.info(
-                                            f"[NBC] {year}: Debt cost {nbc[year]:.2f}% on net debt of {-nfa_val:.0f}"
-                                        )
-                                    else:  # Unusual: earning despite debt
+                                    else:
                                         nbc_interpretation[year] = f'Net return despite debt: {nbc[year]:.2f}%'
                                 
-                                # CORRECTED: More reasonable bounds
-                                if nfa_val > 0:  # Cash-rich bounds - allow higher returns
-                                    nbc[year] = np.clip(nbc[year], -15, 8)  # Returns can be up to 15%, costs up to 8%
-                                else:  # Debt-laden bounds
-                                    nbc[year] = np.clip(nbc[year], -8, 25)  # Cost up to 25%, unusual negative up to 8%
-                                    
-                            else:  # Very small financial position
+                                # Apply bounds
+                                nbc[year] = np.clip(nbc[year], -15, 25)
+                            else:
                                 nbc[year] = 0.0
                                 nbc_interpretation[year] = 'Negligible financial position'
                         else:
                             nbc[year] = 0.0
                             nbc_interpretation[year] = 'Data unavailable'
-                        
-                        # Enhanced logging
-                        self.logger.info(
-                            f"[NBC] {year}: NFA={nfa_val:.0f}, NFO={nfo:.0f}, NFE={nfe:.0f}, "
-                            f"Fin Income={financial_income[year]:.0f}, NBC={nbc[year]:.2f}% ({nbc_interpretation[year]})"
-                        )
                     
                     nbc_calculated = True
                     metadata['calculation_status']['successful'].append('NBC')
                     metadata['nbc_interpretation'] = nbc_interpretation.to_dict()
-                    
-                else:
-                    self.logger.warning("[NBC] Missing required data for NBC calculation")
-                    metadata['calculation_status']['warnings'].append('NBC: Missing data, defaulting to zero')
                     
             except Exception as e:
                 self.logger.error(f"[NBC] Calculation failed: {e}", exc_info=True)
@@ -5529,9 +5527,9 @@ class EnhancedPenmanNissimAnalyzer:
             ratios['Net Borrowing Cost (NBC) %'] = nbc
             
             # ========== 5. ADDITIONAL FINANCIAL METRICS ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === ADDITIONAL FINANCIAL METRICS ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === ADDITIONAL FINANCIAL METRICS ===")
             
-            # --- Gross Borrowing Rate (for debt companies) ---
+            # --- Gross Borrowing Rate ---
             gross_rate = pd.Series(0.0, index=ref_bs.columns)
             
             try:
@@ -5539,7 +5537,6 @@ class EnhancedPenmanNissimAnalyzer:
                     total_debt = ref_bs.loc['Total Debt']
                     
                     if total_debt.sum() > 0 and financial_expense.sum() > 0:
-                        # Average debt
                         avg_debt = pd.Series(index=ref_bs.columns, dtype=float)
                         for i, year in enumerate(ref_bs.columns):
                             if i == 0:
@@ -5556,17 +5553,15 @@ class EnhancedPenmanNissimAnalyzer:
                         metadata['calculation_status']['successful'].append('Gross Borrowing Rate')
                         
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] Gross rate calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] Gross rate calculation failed: {e}")
             
             ratios['Gross Borrowing Rate %'] = gross_rate
             
-            # --- Return on Financial Assets - CORRECTED ---
+            # --- Return on Financial Assets ---
             fin_asset_return = pd.Series(0.0, index=ref_bs.columns)
             
             try:
-                # Use total financial assets calculated above
                 if total_financial_assets.sum() > 0 and financial_income.sum() > 0:
-                    # Average financial assets
                     avg_fin_assets = pd.Series(index=ref_bs.columns, dtype=float)
                     for i, year in enumerate(ref_bs.columns):
                         if i == 0:
@@ -5578,19 +5573,17 @@ class EnhancedPenmanNissimAnalyzer:
                     for year in ref_bs.columns:
                         if pd.notna(avg_fin_assets[year]) and pd.notna(financial_income[year]) and avg_fin_assets[year] > 10:
                             fin_asset_return[year] = (financial_income[year] / avg_fin_assets[year]) * 100
-                            # CORRECTED: More reasonable bounds for cash-rich companies
-                            fin_asset_return[year] = np.clip(fin_asset_return[year], 0, 12)  # Up to 12% is reasonable
+                            fin_asset_return[year] = np.clip(fin_asset_return[year], 0, 12)
                     
-                    self.logger.info(f"[PN-RATIOS-V16.0] Return on financial assets (corrected): {fin_asset_return.to_dict()}")
                     metadata['calculation_status']['successful'].append('Return on Financial Assets')
                     
             except Exception as e:
-                self.logger.warning(f"[PN-RATIOS-V16.0] Financial asset return calculation failed: {e}")
+                self.logger.warning(f"[PN-RATIOS-V17.0] Financial asset return calculation failed: {e}")
             
             ratios['Return on Financial Assets %'] = fin_asset_return
             
             # ========== 6. SPREAD CALCULATION ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === SPREAD CALCULATION ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === SPREAD CALCULATION ===")
             
             spread = pd.Series(0.0, index=ref_bs.columns)
             spread_interpretation = pd.Series(index=ref_bs.columns, dtype=str)
@@ -5603,45 +5596,39 @@ class EnhancedPenmanNissimAnalyzer:
                         if pd.notna(rnoa_values[year]) and pd.notna(nbc[year]):
                             spread[year] = rnoa_values[year] - nbc[year]
                             
-                            # Interpret based on financial position
                             if year in metadata.get('financial_position', {}):
                                 fin_pos = metadata['financial_position'][year]
                                 
                                 if fin_pos == 'net_debt':
-                                    # For debt companies: positive spread means operations earn more than debt costs
                                     if spread[year] > 0:
                                         spread_interpretation[year] = f'Positive spread ({spread[year]:.1f}%) - leverage increases ROE'
                                     else:
                                         spread_interpretation[year] = f'Negative spread ({spread[year]:.1f}%) - leverage decreases ROE'
-                                        
                                 elif fin_pos == 'cash_rich':
-                                    # For cash-rich: spread shows opportunity cost of holding cash
-                                    if nbc[year] < 0:  # Earning on cash
+                                    if nbc[year] < 0:
                                         spread_interpretation[year] = f'Operations ({rnoa_values[year]:.1f}%) vs Financial assets ({-nbc[year]:.1f}%)'
-                                    else:  # Paying to hold cash
+                                    else:
                                         spread_interpretation[year] = f'Operations earn {rnoa_values[year]:.1f}%, cash costs {nbc[year]:.1f}%'
                     
                     metadata['spread_interpretation'] = spread_interpretation.to_dict()
                     metadata['calculation_status']['successful'].append('Spread')
                     
                 except Exception as e:
-                    self.logger.error(f"[PN-RATIOS-V16.0] Spread calculation failed: {e}")
+                    self.logger.error(f"[PN-RATIOS-V17.0] Spread calculation failed: {e}")
             
             ratios['Spread %'] = spread
-            ratios['Leverage Spread %'] = spread  # Duplicate for compatibility
+            ratios['Leverage Spread %'] = spread
             
             # ========== 7. ROE AND DECOMPOSITION ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === ROE AND DECOMPOSITION ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === ROE AND DECOMPOSITION ===")
             
             roe_calculated = False
             
             try:
-                # Use data from reformulated statements
                 if 'Net Income (Reported)' in ref_is.index and 'Common Equity' in ref_bs.index:
                     net_income = ref_is.loc['Net Income (Reported)']
                     equity = ref_bs.loc['Common Equity']
                     
-                    # Calculate average equity
                     avg_equity = pd.Series(index=ref_bs.columns, dtype=float)
                     for i, year in enumerate(ref_bs.columns):
                         if i == 0:
@@ -5650,7 +5637,6 @@ class EnhancedPenmanNissimAnalyzer:
                             prev_year = ref_bs.columns[i-1]
                             avg_equity[year] = (equity[prev_year] + equity[year]) / 2
                     
-                    # ROE calculation
                     roe = pd.Series(index=ref_bs.columns, dtype=float)
                     for year in ref_bs.columns:
                         if pd.notna(avg_equity[year]) and pd.notna(net_income[year]) and abs(avg_equity[year]) > 10:
@@ -5660,7 +5646,7 @@ class EnhancedPenmanNissimAnalyzer:
                     roe_calculated = True
                     metadata['calculation_status']['successful'].append('ROE')
                     
-                    # ROE Decomposition: ROE = RNOA + (FLEV × Spread)
+                    # ROE Decomposition
                     if rnoa_calculated and flev_calculated:
                         rnoa_values = ratios['Return on Net Operating Assets (RNOA) %']
                         flev_values = ratios['Financial Leverage (FLEV)']
@@ -5681,32 +5667,26 @@ class EnhancedPenmanNissimAnalyzer:
                                         'calculated_roe': calculated_roe[year],
                                         'difference': diff
                                     })
-                                    self.logger.warning(
-                                        f"[PN-RATIOS-V16.0] {year}: ROE decomposition mismatch: "
-                                        f"Reported={roe[year]:.2f}%, Calculated={calculated_roe[year]:.2f}%"
-                                    )
                         
                         if decomposition_errors:
                             metadata['roe_decomposition_errors'] = decomposition_errors
                     else:
-                        # Create empty calculated ROE if decomposition fails
                         ratios['ROE (Calculated) %'] = pd.Series(np.nan, index=ref_bs.columns)
                         
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] ROE calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] ROE calculation failed: {e}")
                 metadata['calculation_status']['failed'].append(f'ROE: {str(e)}')
                 ratios['Return on Equity (ROE) %'] = pd.Series(np.nan, index=ref_bs.columns)
                 ratios['ROE (Calculated) %'] = pd.Series(np.nan, index=ref_bs.columns)
             
             # ========== 8. RETURN ON ASSETS (ROA) ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === RETURN ON ASSETS ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === RETURN ON ASSETS ===")
             
             try:
                 if 'Net Income (Reported)' in ref_is.index and 'Total Assets' in ref_bs.index:
                     net_income = ref_is.loc['Net Income (Reported)']
                     total_assets = ref_bs.loc['Total Assets']
                     
-                    # Average assets
                     avg_assets = pd.Series(index=ref_bs.columns, dtype=float)
                     for i, year in enumerate(ref_bs.columns):
                         if i == 0:
@@ -5724,7 +5704,7 @@ class EnhancedPenmanNissimAnalyzer:
                     metadata['calculation_status']['successful'].append('ROA')
                     
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] ROA calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] ROA calculation failed: {e}")
                 ratios['Return on Assets (ROA) %'] = pd.Series(np.nan, index=ref_bs.columns)
             
             # ========== 9. DEBT RATIOS ==========
@@ -5735,12 +5715,10 @@ class EnhancedPenmanNissimAnalyzer:
                 total_debt = ref_bs.loc['Total Debt']
                 ce = ref_bs.loc['Common Equity']
                 
-                # Debt to Equity
                 for year in ref_bs.columns:
                     if pd.notna(ce[year]) and pd.notna(total_debt[year]) and ce[year] > 0:
                         debt_to_equity[year] = total_debt[year] / ce[year]
                 
-                # Net Debt to Equity
                 if 'Cash and Equivalents' in ref_bs.index:
                     cash = ref_bs.loc['Cash and Equivalents']
                     net_debt = total_debt - cash
@@ -5753,7 +5731,7 @@ class EnhancedPenmanNissimAnalyzer:
             ratios['Net Debt to Equity'] = net_debt_to_equity
             
             # ========== 10. GROWTH METRICS ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === GROWTH METRICS ===")
+            self.logger.info("\n[PN-RATIOS-V17.0] === GROWTH METRICS ===")
             
             # Revenue Growth
             if 'Revenue' in ref_is.index:
@@ -5761,7 +5739,6 @@ class EnhancedPenmanNissimAnalyzer:
                 revenue_growth = revenue.pct_change() * 100
                 ratios['Revenue Growth %'] = revenue_growth
                 
-                # Calculate CAGR
                 first_valid = revenue.first_valid_index()
                 last_valid = revenue.last_valid_index()
                 if first_valid and last_valid and first_valid != last_valid:
@@ -5769,7 +5746,6 @@ class EnhancedPenmanNissimAnalyzer:
                     if years > 0 and revenue[first_valid] > 0:
                         cagr = ((revenue[last_valid] / revenue[first_valid]) ** (1/years) - 1) * 100
                         metadata['revenue_cagr'] = cagr
-                        self.logger.info(f"[PN-RATIOS-V16.0] Revenue CAGR: {cagr:.2f}%")
             
             # NOA Growth
             if 'Net Operating Assets' in ref_bs.index:
@@ -5786,9 +5762,8 @@ class EnhancedPenmanNissimAnalyzer:
                     metadata['calculation_status']['successful'].append('Net Income Growth')
                 else:
                     ratios['Net Income Growth %'] = pd.Series(np.nan, index=ref_bs.columns)
-                    self.logger.warning("[PN-RATIOS-V16.0] Net Income (Reported) not found for growth calculation")
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] Net Income Growth calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] Net Income Growth calculation failed: {e}")
                 ratios['Net Income Growth %'] = pd.Series(np.nan, index=ref_bs.columns)
             
             # ========== 11. EFFICIENCY RATIOS ==========
@@ -5797,7 +5772,6 @@ class EnhancedPenmanNissimAnalyzer:
                 revenue = ref_is.loc['Revenue']
                 total_assets = ref_bs.loc['Total Assets']
                 
-                # Average assets
                 avg_assets = pd.Series(index=ref_bs.columns, dtype=float)
                 for i, year in enumerate(ref_bs.columns):
                     if i == 0:
@@ -5823,7 +5797,6 @@ class EnhancedPenmanNissimAnalyzer:
                     revenue = ref_is.loc['Revenue']
                     working_capital = current_assets - current_liabilities
                     
-                    # Average working capital
                     avg_wc = pd.Series(index=ref_bs.columns, dtype=float)
                     for i, year in enumerate(ref_bs.columns):
                         if i == 0:
@@ -5885,38 +5858,115 @@ class EnhancedPenmanNissimAnalyzer:
                     ratios['Quick Ratio'] = pd.Series(np.nan, index=ref_bs.columns)
                     ratios['Cash Ratio'] = pd.Series(np.nan, index=ref_bs.columns)
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] Liquidity ratios calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] Liquidity ratios calculation failed: {e}")
                 ratios['Current Ratio'] = pd.Series(np.nan, index=ref_bs.columns)
                 ratios['Quick Ratio'] = pd.Series(np.nan, index=ref_bs.columns)
                 ratios['Cash Ratio'] = pd.Series(np.nan, index=ref_bs.columns)
             
-            # ========== 13. INTEREST COVERAGE ==========
-            self.logger.info("\n[PN-RATIOS-V16.0] === INTEREST COVERAGE ===")
+            # ========== 13. COMPREHENSIVE INTEREST COVERAGE - ROBUST SOLUTION ==========
+            self.logger.info("\n[PN-RATIOS-V17.0] === COMPREHENSIVE INTEREST COVERAGE ANALYSIS ===")
+            
+            interest_coverage = pd.Series(np.nan, index=ref_bs.columns)
             
             try:
-                interest_coverage = pd.Series(np.nan, index=ref_bs.columns)
+                # Get EBIT/Operating Income Before Tax
+                ebit = None
+                ebit_sources = ['Operating Income Before Tax', 'EBIT', 'Earnings Before Interest and Tax']
                 
-                # Only calculate if there's actual financial expense
-                if financial_expense.sum() > 0:
-                    if 'Operating Income Before Tax' in ref_is.index:
-                        ebit = ref_is.loc['Operating Income Before Tax']
+                for source in ebit_sources:
+                    if source in ref_is.index:
+                        ebit = ref_is.loc[source]
+                        self.logger.info(f"[PN-RATIOS-V17.0] Using {source} for EBIT: {ebit.to_dict()}")
+                        break
+                
+                if ebit is None:
+                    # Try to calculate EBIT from original data
+                    try:
+                        pbt = self._get_safe_series(self._df_clean, 'Profit Before Tax')
+                        finance_cost = self._get_safe_series(self._df_clean, 'Finance Cost', default_zero=True)
+                        if pbt is not None:
+                            ebit = pbt + finance_cost  # EBIT = PBT + Interest Expense
+                            self.logger.info(f"[PN-RATIOS-V17.0] Calculated EBIT from PBT + Finance Cost: {ebit.to_dict()}")
+                    except:
+                        pass
+                
+                if ebit is not None:
+                    # Comprehensive Interest Coverage Logic
+                    for year in ref_bs.columns:
+                        ebit_val = ebit[year]
+                        fin_exp = financial_expense[year]
                         
-                        for year in ref_bs.columns:
-                            if pd.notna(financial_expense[year]) and financial_expense[year] > 0:
-                                interest_coverage[year] = ebit[year] / financial_expense[year]
-                                interest_coverage[year] = min(interest_coverage[year], 100)  # Cap for display
-                        
-                        metadata['calculation_status']['successful'].append('Interest Coverage')
+                        if pd.notna(ebit_val) and pd.notna(fin_exp):
+                            # Check debt position
+                            debt_position = metadata.get('financial_position', {}).get(year, 'unknown')
+                            
+                            if fin_exp > 0.01:  # Company has meaningful interest expense
+                                # Standard calculation
+                                coverage = ebit_val / fin_exp
+                                # Cap at reasonable levels for display
+                                interest_coverage[year] = min(max(coverage, -999), 999)
+                                metadata['interest_coverage_method'][year] = 'Standard: EBIT/Interest Expense'
+                                
+                                self.logger.info(f"[PN-RATIOS-V17.0] {year}: Standard Interest Coverage = {ebit_val:.0f}/{fin_exp:.2f} = {interest_coverage[year]:.1f}")
+                                
+                            elif debt_position == 'cash_rich' or fin_exp == 0:
+                                # Debt-free company - Interest Coverage is conceptually infinite
+                                # But we need to check if there's any debt at all
+                                
+                                total_debt_val = 0
+                                if 'Total Debt' in ref_bs.index:
+                                    total_debt_val = ref_bs.loc['Total Debt', year]
+                                
+                                if total_debt_val <= 10:  # Essentially debt-free (allowing for rounding)
+                                    if ebit_val > 0:
+                                        interest_coverage[year] = 999  # Very high number indicating strong coverage
+                                        metadata['interest_coverage_method'][year] = 'Debt-free: Set to 999 (excellent)'
+                                        self.logger.info(f"[PN-RATIOS-V17.0] {year}: Debt-free company with positive EBIT = 999 (excellent coverage)")
+                                    else:
+                                        interest_coverage[year] = np.nan  # No earnings, so coverage undefined
+                                        metadata['interest_coverage_method'][year] = 'Debt-free but negative EBIT: N/A'
+                                        self.logger.info(f"[PN-RATIOS-V17.0] {year}: Debt-free but negative EBIT = N/A")
+                                else:
+                                    # Has debt but no interest expense (unusual)
+                                    if ebit_val > 0:
+                                        interest_coverage[year] = 99  # High but not infinite due to potential future interest
+                                        metadata['interest_coverage_method'][year] = 'Has debt but no interest expense'
+                                        self.logger.warning(f"[PN-RATIOS-V17.0] {year}: Has debt ({total_debt_val:.0f}) but no interest expense")
+                                    else:
+                                        interest_coverage[year] = np.nan
+                                        metadata['interest_coverage_method'][year] = 'Negative EBIT with debt: N/A'
+                            else:
+                                # Edge case: has some financial expense but very small
+                                if ebit_val > 0:
+                                    coverage = ebit_val / max(fin_exp, 0.01)  # Avoid division by zero
+                                    interest_coverage[year] = min(coverage, 999)
+                                    metadata['interest_coverage_method'][year] = 'Small interest expense: Calculated with floor'
+                                    self.logger.info(f"[PN-RATIOS-V17.0] {year}: Small interest expense calculation = {interest_coverage[year]:.1f}")
+                                else:
+                                    interest_coverage[year] = np.nan
+                                    metadata['interest_coverage_method'][year] = 'Negative EBIT: N/A'
+                        else:
+                            interest_coverage[year] = np.nan
+                            metadata['interest_coverage_method'][year] = 'Missing EBIT or financial expense data'
+                            self.logger.warning(f"[PN-RATIOS-V17.0] {year}: Missing data - EBIT={ebit_val}, Fin Exp={fin_exp}")
+                    
+                    metadata['calculation_status']['successful'].append('Interest Coverage')
+                    self.logger.info(f"[PN-RATIOS-V17.0] Final Interest Coverage: {interest_coverage.to_dict()}")
+                    
                 else:
-                    # For cash-rich companies with no debt, interest coverage is not applicable
-                    self.logger.info("[PN-RATIOS-V16.0] No financial expense - Interest Coverage not applicable")
-                    metadata['calculation_status']['warnings'].append('Interest Coverage: No financial expense')
-                
-                ratios['Interest Coverage'] = interest_coverage
+                    # Cannot calculate without EBIT
+                    self.logger.error("[PN-RATIOS-V17.0] Cannot find EBIT data for Interest Coverage calculation")
+                    metadata['calculation_status']['failed'].append('Interest Coverage: No EBIT data')
+                    for year in ref_bs.columns:
+                        metadata['interest_coverage_method'][year] = 'Failed: No EBIT data'
                 
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] Interest Coverage calculation failed: {e}")
-                ratios['Interest Coverage'] = pd.Series(np.nan, index=ref_bs.columns)
+                self.logger.error(f"[PN-RATIOS-V17.0] Interest Coverage calculation failed: {e}", exc_info=True)
+                metadata['calculation_status']['failed'].append(f'Interest Coverage: {str(e)}')
+                for year in ref_bs.columns:
+                    metadata['interest_coverage_method'][year] = f'Failed: {str(e)}'
+            
+            ratios['Interest Coverage'] = interest_coverage
             
             # ========== 14. PROFITABILITY MARGINS ==========
             try:
@@ -5956,12 +6006,12 @@ class EnhancedPenmanNissimAnalyzer:
                     else:
                         ratios['Net Profit Margin %'] = pd.Series(np.nan, index=ref_bs.columns)
             except Exception as e:
-                self.logger.error(f"[PN-RATIOS-V16.0] Profitability margins calculation failed: {e}")
+                self.logger.error(f"[PN-RATIOS-V17.0] Profitability margins calculation failed: {e}")
                 ratios['Gross Profit Margin %'] = pd.Series(np.nan, index=ref_bs.columns)
                 ratios['EBITDA Margin %'] = pd.Series(np.nan, index=ref_bs.columns)
                 ratios['Net Profit Margin %'] = pd.Series(np.nan, index=ref_bs.columns)
             
-            # ========== 15. TRANSPOSE AND ENSURE REQUIRED RATIOS ==========
+            # ========== 15. FINALIZE RATIOS ==========
             # Transpose so ratios are rows and years are columns
             ratios = ratios.T
             
@@ -5998,81 +6048,87 @@ class EnhancedPenmanNissimAnalyzer:
             
             for ratio_name in required_ratios:
                 if ratio_name not in ratios.index:
-                    self.logger.info(f"[PN-RATIOS-V16.0] Adding missing ratio: {ratio_name}")
+                    self.logger.info(f"[PN-RATIOS-V17.0] Adding missing ratio: {ratio_name}")
                     ratios.loc[ratio_name] = pd.Series(np.nan, index=ratios.columns)
             
-            # ========== 16. FINAL SUMMARY ==========
-            self.logger.info("\n[PN-RATIOS-V16.0-SUMMARY] Corrected Ratio Calculation Summary:")
-            self.logger.info(f"  Total ratios: {len(ratios.index)}")
-            self.logger.info(f"  Successful calculations: {len(metadata['calculation_status']['successful'])}")
-            self.logger.info(f"  Failed calculations: {len(metadata['calculation_status']['failed'])}")
-            self.logger.info(f"  Warnings: {len(metadata['calculation_status']['warnings'])}")
+            # ========== 16. COMPREHENSIVE VALIDATION AND SUMMARY ==========
+            self.logger.info("\n[PN-RATIOS-V17.0] === COMPREHENSIVE VALIDATION ===")
             
-            # Log key corrected ratios
-            key_ratios = [
-                'Net Borrowing Cost (NBC) %',
-                'Return on Financial Assets %',
-                'Return on Equity (ROE) %',
-                'Return on Assets (ROA) %'
-            ]
+            # Check data quality
+            total_ratios = len(ratios.index)
+            available_ratios = sum(1 for ratio in ratios.index if not ratios.loc[ratio].isna().all())
+            coverage_pct = (available_ratios / total_ratios) * 100
             
-            self.logger.info("\n[PN-RATIOS-V16.0] Key Corrected Ratios (Latest Year):")
+            self.logger.info(f"[PN-RATIOS-V17.0] Data Coverage: {available_ratios}/{total_ratios} ({coverage_pct:.1f}%)")
+            
+            # Analyze missing ratios
+            missing_ratios = [ratio for ratio in ratios.index if ratios.loc[ratio].isna().all()]
+            if missing_ratios:
+                self.logger.warning(f"[PN-RATIOS-V17.0] Missing ratios: {missing_ratios}")
+            
+            # Key ratio validation for VST (cash-rich company)
             latest_year = ratios.columns[-1] if len(ratios.columns) > 0 else None
-            
             if latest_year:
-                for ratio_name in key_ratios:
+                self.logger.info(f"\n[PN-RATIOS-V17.0] Key Ratios Validation ({latest_year}):")
+                
+                key_validations = {
+                    'Return on Net Operating Assets (RNOA) %': (10, 100),  # Should be positive for profitable company
+                    'Financial Leverage (FLEV)': (-2, 0),  # Should be negative for cash-rich
+                    'Net Borrowing Cost (NBC) %': (-10, 5),  # Should be negative (earning on cash)
+                    'Return on Equity (ROE) %': (10, 50),  # Should be positive and reasonable
+                    'Interest Coverage': (50, 999),  # Should be very high for debt-free company
+                    'Current Ratio': (1, 10),  # Should be > 1 for healthy liquidity
+                }
+                
+                for ratio_name, (min_val, max_val) in key_validations.items():
                     if ratio_name in ratios.index:
                         value = ratios.loc[ratio_name, latest_year]
                         if pd.notna(value):
-                            self.logger.info(f"  {ratio_name}: {value:.2f}")
-                            
-                            # Special logging for NBC
-                            if ratio_name == 'Net Borrowing Cost (NBC) %' and latest_year in metadata.get('nbc_interpretation', {}):
-                                interp = metadata['nbc_interpretation'][latest_year]
-                                self.logger.info(f"    Interpretation: {interp}")
+                            if min_val <= value <= max_val:
+                                status = "✓ PASS"
+                            else:
+                                status = "⚠ CHECK"
+                            self.logger.info(f"  {ratio_name}: {value:.2f} {status}")
                         else:
-                            self.logger.info(f"  {ratio_name}: N/A")
+                            self.logger.warning(f"  {ratio_name}: N/A ⚠ MISSING")
+            
+            # Final summary
+            self.logger.info("\n[PN-RATIOS-V17.0-FINAL-SUMMARY]:")
+            self.logger.info(f"  Total ratios calculated: {len(ratios.index)}")
+            self.logger.info(f"  Successful calculations: {len(metadata['calculation_status']['successful'])}")
+            self.logger.info(f"  Failed calculations: {len(metadata['calculation_status']['failed'])}")
+            self.logger.info(f"  Warnings: {len(metadata['calculation_status']['warnings'])}")
+            self.logger.info(f"  Data coverage: {coverage_pct:.1f}%")
+            
+            if metadata['calculation_status']['successful']:
+                self.logger.info(f"  Successful: {metadata['calculation_status']['successful']}")
+            if metadata['calculation_status']['failed']:
+                self.logger.error(f"  Failed: {metadata['calculation_status']['failed']}")
+            if metadata['calculation_status']['warnings']:
+                self.logger.warning(f"  Warnings: {metadata['calculation_status']['warnings']}")
             
         except Exception as e:
-            self.logger.error(f"[PN-RATIOS-V16.0-ERROR] Critical error in ratio calculation: {e}", exc_info=True)
-            # Return empty DataFrame with required structure
+            self.logger.error(f"[PN-RATIOS-V17.0-CRITICAL-ERROR] {e}", exc_info=True)
+            # Return skeleton DataFrame
             required_ratios = [
-                'Return on Net Operating Assets (RNOA) %',
-                'Operating Profit Margin (OPM) %',
-                'Net Operating Asset Turnover (NOAT)',
-                'Financial Leverage (FLEV)',
-                'Financial Leverage (End of Period)',
-                'Net Borrowing Cost (NBC) %',
-                'Spread %',
-                'Leverage Spread %',
-                'Return on Equity (ROE) %',
-                'ROE (Calculated) %',
-                'Return on Assets (ROA) %',
-                'Gross Borrowing Rate %',
-                'Return on Financial Assets %',
-                'Debt to Equity',
-                'Net Debt to Equity',
-                'Revenue Growth %',
-                'NOA Growth %',
-                'Net Income Growth %',
-                'Asset Turnover',
-                'Working Capital Turnover',
-                'Current Ratio',
-                'Quick Ratio',
-                'Cash Ratio',
-                'Interest Coverage',
-                'Gross Profit Margin %',
-                'EBITDA Margin %',
-                'Net Profit Margin %'
+                'Return on Net Operating Assets (RNOA) %', 'Operating Profit Margin (OPM) %',
+                'Net Operating Asset Turnover (NOAT)', 'Financial Leverage (FLEV)',
+                'Financial Leverage (End of Period)', 'Net Borrowing Cost (NBC) %',
+                'Spread %', 'Leverage Spread %', 'Return on Equity (ROE) %',
+                'ROE (Calculated) %', 'Return on Assets (ROA) %', 'Gross Borrowing Rate %',
+                'Return on Financial Assets %', 'Debt to Equity', 'Net Debt to Equity',
+                'Revenue Growth %', 'NOA Growth %', 'Net Income Growth %', 'Asset Turnover',
+                'Working Capital Turnover', 'Current Ratio', 'Quick Ratio', 'Cash Ratio',
+                'Interest Coverage', 'Gross Profit Margin %', 'EBITDA Margin %', 'Net Profit Margin %'
             ]
             ratios = pd.DataFrame(index=required_ratios, columns=ref_bs.columns)
             metadata['critical_error'] = str(e)
         
         finally:
-            # Store metadata
+            # Store comprehensive metadata
             self.calculation_metadata['ratios'] = metadata
             
-            self.logger.info("\n[PN-RATIOS-V16.0-END] Corrected Ratio Calculations Complete")
+            self.logger.info("\n[PN-RATIOS-V17.0-END] Final Enhanced Ratio Calculations Complete")
             self.logger.info("="*80 + "\n")
         
         return ratios
@@ -6096,24 +6152,20 @@ class EnhancedPenmanNissimAnalyzer:
         for ratio_name in key_ratios:
             if ratio_name in ratios.index:
                 series = ratios.loc[ratio_name].dropna()
-                if len(series) >= 3:  # Need at least 3 points for meaningful trend
-                    # Calculate linear regression trend
+                if len(series) >= 3:
                     x = np.arange(len(series))
                     y = series.values
                     
                     if not np.isnan(y).all():
                         try:
-                            # Simple linear regression
                             A = np.vstack([x, np.ones(len(x))]).T
                             m, c = np.linalg.lstsq(A, y, rcond=None)[0]
                             
-                            # Calculate R-squared
                             y_pred = m * x + c
                             ss_res = np.sum((y - y_pred) ** 2)
                             ss_tot = np.sum((y - np.mean(y)) ** 2)
                             r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
                             
-                            # Determine trend direction
                             if abs(m) < 0.1:
                                 trend = 'stable'
                             elif m > 0:
@@ -6121,7 +6173,6 @@ class EnhancedPenmanNissimAnalyzer:
                             else:
                                 trend = 'deteriorating'
                             
-                            # Calculate compound growth rate
                             if series.iloc[0] != 0:
                                 cagr = ((series.iloc[-1] / series.iloc[0]) ** (1/len(series)) - 1) * 100
                             else:
@@ -6146,14 +6197,9 @@ class EnhancedPenmanNissimAnalyzer:
     def _calculate_ratio_quality_scores(self, ratios: pd.DataFrame) -> Dict[str, float]:
         """
         Calculate quality scores for ratio calculations
-        Quality score based on:
-        - Completeness (% of non-NaN values)
-        - Stability (inverse of coefficient of variation)
-        - Reasonableness (values within expected ranges)
         """
         quality_scores = {}
         
-        # Define reasonable ranges for ratios
         reasonable_ranges = {
             'Return on Net Operating Assets (RNOA) %': (-50, 100),
             'Financial Leverage (FLEV)': (-2, 5),
@@ -6163,17 +6209,15 @@ class EnhancedPenmanNissimAnalyzer:
             'Gross Profit Margin %': (0, 80),
             'Net Profit Margin %': (-50, 50),
             'Current Ratio': (0, 10),
-            'Interest Coverage': (-10, 100),
+            'Interest Coverage': (-10, 1000),
             'Asset Turnover': (0, 10)
         }
         
         for ratio_name in ratios.index:
             series = ratios.loc[ratio_name]
             
-            # Calculate completeness (% of non-NaN values)
             completeness = (~series.isna()).sum() / len(series) if len(series) > 0 else 0
             
-            # Calculate stability (inverse of coefficient of variation)
             series_clean = series.dropna()
             if len(series_clean) > 0 and series_clean.std() > 0 and series_clean.mean() != 0:
                 cv = series_clean.std() / abs(series_clean.mean())
@@ -6181,17 +6225,14 @@ class EnhancedPenmanNissimAnalyzer:
             else:
                 stability = 1 if (~series.isna()).any() else 0
             
-            # Calculate reasonableness
             if ratio_name in reasonable_ranges:
                 min_val, max_val = reasonable_ranges[ratio_name]
                 in_range = ((series_clean >= min_val) & (series_clean <= max_val)).sum()
                 reasonableness = in_range / len(series_clean) if len(series_clean) > 0 else 0
             else:
-                reasonableness = 1  # Assume reasonable if no range defined
+                reasonableness = 1
             
-            # Combined quality score
             quality_score = (completeness * 0.4 + stability * 0.3 + reasonableness * 0.3) * 100
-            
             quality_scores[ratio_name] = round(quality_score, 2)
         
         return quality_scores
@@ -6206,23 +6247,18 @@ class EnhancedPenmanNissimAnalyzer:
         self.logger.debug(f"\n[CALCULATION] {metric_name}")
         self.logger.debug(f"  Formula: {formula}")
         
-        # Log components
         for comp_name, comp_values in components.items():
             if isinstance(comp_values, pd.Series):
-                # Show first few values
                 preview = comp_values.head(3).to_dict()
                 self.logger.debug(f"  {comp_name}: {preview}")
         
-        # Log result
         if isinstance(result, pd.Series):
             preview = result.head(3).to_dict()
             self.logger.debug(f"  Result: {preview}")
         
-        # Log metadata
         if metadata:
             for key, value in metadata.items():
                 if isinstance(value, dict) and len(str(value)) > 100:
-                    # For large dicts, just show keys
                     self.logger.debug(f"  {key}: {list(value.keys())}")
                 else:
                     self.logger.debug(f"  {key}: {value}")

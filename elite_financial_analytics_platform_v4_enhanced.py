@@ -4767,10 +4767,10 @@ class EnhancedPenmanNissimAnalyzer:
         self._cached_bs = reformulated.T
         return self._cached_bs
 
-    def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
+   def _reformulate_income_statement_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Enhanced Income Statement Reformulation with proper tax allocation
-        Version 6.3 - Simplified exceptional items handling (always treated as non-operating)
+        Version 7.0 - Robust implementation with comprehensive edge case handling
         """
         # Use cached result if available
         if self._cached_is is not None:
@@ -4780,23 +4780,27 @@ class EnhancedPenmanNissimAnalyzer:
         df = self._df_clean
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("[PN-IS-V6.3] Starting Enhanced Income Statement Reformulation")
+        self.logger.info("[PN-IS-V7.0] Starting Enhanced Income Statement Reformulation")
         self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
         metadata = {}
         
         try:
-            # 1. REVENUE - Core top line
+            # ========== 1. REVENUE - Core top line ==========
             revenue = self._get_safe_series(df, 'Revenue')
             reformulated['Revenue'] = revenue
+            
+            # Validate revenue
+            if revenue is None or revenue.dropna().empty:
+                raise ValueError("No revenue data found!")
             
             if (revenue.dropna() <= 0).all():
                 raise ValueError("Revenue is zero or negative for all periods!")
             
-            self.logger.info(f"[PN-IS-V6.3] Revenue range: {revenue.min():,.0f} to {revenue.max():,.0f}")
+            self.logger.info(f"[PN-IS-V7.0] Revenue range: {revenue.min():,.0f} to {revenue.max():,.0f}")
             
-            # 2. OPERATING INCOME (PBIT) - May include Other Income
+            # ========== 2. OPERATING INCOME (PBIT) ==========
             pbit_with_other_income = None
             
             # Try multiple sources for operating income
@@ -4805,235 +4809,272 @@ class EnhancedPenmanNissimAnalyzer:
                 ('EBIT', 'EBIT as proxy'),
                 ('Operating Profit', 'Operating Profit as proxy'),
                 ('Profit Before Exceptional Items and Tax', 'PBIT before exceptional items'),
-                ('Profit Before Interest and Tax', 'Standard PBIT')
+                ('Profit Before Interest and Tax', 'Standard PBIT'),
+                ('Operating Income (Loss)', 'Operating Income with Loss notation'),
+                ('PBIT', 'Direct PBIT')
             ]
             
             for attempt_metric, description in op_income_attempts:
                 try:
                     temp_oi = self._get_safe_series(df, attempt_metric, default_zero=False)
-                    if temp_oi is not None and (temp_oi != 0).any():
+                    if temp_oi is not None and not temp_oi.dropna().empty:
                         pbit_with_other_income = temp_oi
                         metadata['operating_income_source'] = f"{attempt_metric} ({description})"
-                        self.logger.info(f"[PN-IS-V6.3] Using {attempt_metric} for PBIT (may include Other Income)")
+                        self.logger.info(f"[PN-IS-V7.0] Using {attempt_metric} for PBIT (may include Other Income)")
                         break
                 except:
                     continue
             
             if pbit_with_other_income is None:
+                # Try to calculate from components
+                try:
+                    gross_profit = self._get_safe_series(df, 'Gross Profit', default_zero=False)
+                    operating_expenses = self._get_safe_series(df, 'Operating Expenses', default_zero=True)
+                    if gross_profit is not None:
+                        pbit_with_other_income = gross_profit - operating_expenses
+                        metadata['operating_income_source'] = 'Calculated from Gross Profit - Operating Expenses'
+                        self.logger.info("[PN-IS-V7.0] Calculated PBIT from components")
+                except:
+                    pass
+            
+            if pbit_with_other_income is None:
                 raise ValueError("Could not find Operating Income in any form!")
             
-            # 2A. ISOLATE NON-OPERATING INCOME - FIXED LOGIC
-            self.logger.info("[PN-IS-V6.3] Analyzing Other Income composition...")
+            # ========== 3. ISOLATE NON-OPERATING INCOME ==========
+            self.logger.info("[PN-IS-V7.0] Analyzing Other Income composition...")
             
             # Get Interest Income and Other Income separately
             interest_income = self._get_safe_series(df, 'Interest Income', default_zero=True)
             other_income = self._get_safe_series(df, 'Other Income', default_zero=True)
             
-            # CRITICAL FIX: Check if values are identical (not just sources)
+            # Check if values are identical (not just sources)
             values_are_identical = False
             if interest_income is not None and other_income is not None:
-                # Compare the actual values, not just the sources
-                values_are_identical = (interest_income.round(2) == other_income.round(2)).all()
+                # Compare actual values with tolerance for floating point
+                diff = (interest_income - other_income).abs()
+                values_are_identical = (diff < 0.01).all() and not interest_income.dropna().empty
                 
                 if values_are_identical:
-                    self.logger.info("[PN-IS-V6.3] DETECTED: Interest Income and Other Income have identical values")
-                    self.logger.info(f"[PN-IS-V6.3] Interest Income: {interest_income.head().to_dict()}")
-                    self.logger.info(f"[PN-IS-V6.3] Other Income: {other_income.head().to_dict()}")
+                    self.logger.info("[PN-IS-V7.0] DETECTED: Interest Income and Other Income have identical values")
+                    self.logger.info(f"[PN-IS-V7.0] Values: {interest_income.head().to_dict()}")
             
-            # Determine total non-operating income based on whether they're the same
+            # Determine total non-operating income
             if values_are_identical:
-                # They're the same - use only one
-                total_non_operating_income = interest_income  # or other_income, they're the same
+                total_non_operating_income = interest_income
                 metadata['other_income_treatment'] = 'Identical to Interest Income - using single value'
-                self.logger.info("[PN-IS-V6.3] Using single value to avoid double-counting")
+                self.logger.info("[PN-IS-V7.0] Using single value to avoid double-counting")
             else:
-                # They're different - need to analyze composition
-                self.logger.info("[PN-IS-V6.3] Interest and Other Income are different")
-                
-                # Check if they're from same source (legacy check)
-                interest_income_source = self._find_source_metric('Interest Income')
+                # Check if Other Income contains operating items
                 other_income_source = self._find_source_metric('Other Income')
                 
-                if other_income_source and interest_income_source and (other_income_source == interest_income_source):
-                    # Same source but different values? Unusual case
-                    total_non_operating_income = other_income
-                    metadata['other_income_treatment'] = 'Same source, different values - using Other Income only'
-                    self.logger.warning("[PN-IS-V6.3] Unusual case: same source but different values")
+                if self._analyze_other_income_composition(other_income_source, df):
+                    # Other Income likely contains operating items
+                    total_non_operating_income = interest_income
+                    metadata['other_income_treatment'] = 'Mixed content - only using Interest Income as non-operating'
+                    self.logger.info("[PN-IS-V7.0] Other Income appears mixed - conservative approach")
                 else:
-                    # Different sources - analyze Other Income composition
-                    if self._analyze_other_income_composition(other_income_source, df):
-                        # Other Income likely contains operating items
-                        total_non_operating_income = interest_income  # Only use explicit interest
-                        metadata['other_income_treatment'] = 'Mixed content - only using Interest Income as non-operating'
-                        self.logger.info("[PN-IS-V6.3] Other Income appears mixed - conservative approach")
-                    else:
-                        # Other Income appears to be purely non-operating
-                        total_non_operating_income = interest_income + other_income
-                        metadata['other_income_treatment'] = 'Purely non-operating - using sum of both'
-                        self.logger.info("[PN-IS-V6.3] Treating all Other Income as non-operating")
+                    # Other Income appears to be purely non-operating
+                    total_non_operating_income = interest_income + other_income
+                    metadata['other_income_treatment'] = 'Purely non-operating - using sum of both'
+                    self.logger.info("[PN-IS-V7.0] Treating all Other Income as non-operating")
             
-            # Log the adjustment
-            self.logger.info(f"[PN-IS-V6.3] Total non-operating income: {total_non_operating_income.to_dict()}")
-            
-            # 2B. CALCULATE PURE OPERATING INCOME
+            # Calculate pure operating income
             pure_operating_income = pbit_with_other_income - total_non_operating_income
-            self.logger.info(f"[PN-IS-V6.3] Pure Operating Income = PBIT - Non-operating")
-            self.logger.info(f"[PN-IS-V6.3] {pure_operating_income.head().to_dict()} = {pbit_with_other_income.head().to_dict()} - {total_non_operating_income.head().to_dict()}")
+            self.logger.info(f"[PN-IS-V7.0] Pure Operating Income = PBIT - Non-operating")
+            self.logger.info(f"[PN-IS-V7.0] Range: {pure_operating_income.min():,.0f} to {pure_operating_income.max():,.0f}")
             
             reformulated['Operating Income Before Tax'] = pure_operating_income
             
-            # 2C. HANDLE EXCEPTIONAL ITEMS - Simplified: Always treat as non-operating, no subtraction
-            self.logger.info("[PN-IS-V6.3] Analyzing Exceptional Items (always treated as non-operating)...")
+            # ========== 4. HANDLE EXCEPTIONAL ITEMS ==========
+            self.logger.info("[PN-IS-V7.0] Analyzing Exceptional Items...")
             
             exceptional_items = pd.Series(0, index=df.columns)
             exceptional_found = False
-            exceptional_location = 'not_found'
             
-            # Check multiple possible locations
             exceptional_sources = [
                 ('Exceptional Items', 'standard'),
                 ('Exceptional Items Before Tax', 'explicit_pretax'),
                 ('Exceptional and Extraordinary Items', 'combined'),
                 ('Prior Period Items', 'prior_period'),
-                ('Exceptional Items (Before Tax)', 'parenthetical')
+                ('Exceptional Items (Before Tax)', 'parenthetical'),
+                ('Extraordinary Items', 'extraordinary')
             ]
             
             for source, location_type in exceptional_sources:
                 try:
-                    temp_exceptional = self._get_safe_series(df, source, default_zero=True)
-                    if (temp_exceptional != 0).any():
+                    temp_exceptional = self._get_safe_series(df, source, default_zero=False)
+                    if temp_exceptional is not None and (temp_exceptional != 0).any():
                         exceptional_items = temp_exceptional
                         exceptional_found = True
-                        exceptional_location = location_type
-                        self.logger.info(f"[PN-IS-V6.3] Found exceptional items in: {source} ({location_type})")
-                        metadata['exceptional_adjustment'] = 'Treated as non-operating - no subtraction from operating income'
-                        self.logger.info("[PN-IS-V6.3] Exceptional items treated as non-operating (no subtraction)")
+                        metadata['exceptional_items'] = f'Found in {source}'
+                        self.logger.info(f"[PN-IS-V7.0] Found exceptional items: {source}")
                         break
                 except:
                     continue
             
             if not exceptional_found:
-                self.logger.info("[PN-IS-V6.3] No exceptional items found")
+                self.logger.info("[PN-IS-V7.0] No exceptional items found")
                 metadata['exceptional_items'] = 'None found'
-            else:
-                metadata['exceptional_items'] = f'Found in {exceptional_location}'
             
-            # 3. TAX ALLOCATION - CRITICAL CHANGE: Use actual tax expense
-            self.logger.info("[PN-IS-V6.3] Allocating actual tax expense...")
+            # ========== 5. ROBUST TAX ALLOCATION ==========
+            self.logger.info("[PN-IS-V7.0] Performing robust tax allocation...")
             
-            # Get actual reported values
+            # Get required values
             tax_expense = self._get_safe_series(df, 'Tax Expense')
             income_before_tax = self._get_safe_series(df, 'Income Before Tax')
             interest_expense = self._get_safe_series(df, 'Interest Expense', default_zero=True)
             
             # Validate interest expense
             if (abs(interest_expense.dropna()) < 1).all():
-                self.logger.info("[PN-IS-V6.3] Negligible interest expense detected, treating as zero")
+                self.logger.info("[PN-IS-V7.0] Negligible interest expense, treating as zero")
                 interest_expense = pd.Series(0, index=df.columns)
             
-            # Calculate components for tax allocation
-            # Total pre-tax income = Operating Income + Net Financial Income + Exceptional Items
+            # Calculate components
             net_financial_income_before_tax = total_non_operating_income - interest_expense
-            total_pretax_income_components = pure_operating_income + net_financial_income_before_tax + exceptional_items
             
-            # Allocate tax expense proportionally based on income components
-            # But only for positive income components (negative components get tax benefit)
+            # Store actual tax expense
             reformulated['Tax Expense (Actual)'] = tax_expense
             
-            # Method 1: Proportional allocation based on positive income
-            tax_on_operating = pd.Series(index=df.columns, dtype=float)
-            tax_on_financial = pd.Series(index=df.columns, dtype=float)
-            tax_on_exceptional = pd.Series(index=df.columns, dtype=float)
+            # Initialize tax allocations
+            tax_on_operating = pd.Series(0.0, index=df.columns)
+            tax_on_financial = pd.Series(0.0, index=df.columns)
+            tax_on_exceptional = pd.Series(0.0, index=df.columns)
+            
+            # Calculate effective tax rate
+            effective_tax_rate = pd.Series(index=df.columns, dtype=float)
             
             for year in df.columns:
                 try:
+                    # Get values for this year
                     total_tax = tax_expense.get(year, 0)
+                    reported_pbt = income_before_tax.get(year)
                     op_income = pure_operating_income.get(year, 0)
                     fin_income = net_financial_income_before_tax.get(year, 0)
-                    except_items = exceptional_items.get(year, 0)
+                    except_income = exceptional_items.get(year, 0)
                     
-                    # Calculate total positive income for allocation base
-                    positive_base = max(0, op_income) + max(0, fin_income) + max(0, except_items)
+                    # Calculate total pre-tax income from components
+                    calculated_pbt = op_income + fin_income + except_income
                     
-                    if positive_base > 0 and pd.notna(total_tax):
-                        # Allocate tax proportionally to positive income components
-                        if op_income > 0:
-                            tax_on_operating[year] = total_tax * (op_income / positive_base)
-                        else:
-                            tax_on_operating[year] = 0
+                    # Determine effective tax rate
+                    if pd.notna(reported_pbt) and reported_pbt != 0 and pd.notna(total_tax):
+                        # Use reported figures for tax rate
+                        eff_rate = total_tax / reported_pbt
+                        effective_tax_rate[year] = eff_rate
                         
-                        if fin_income > 0:
-                            tax_on_financial[year] = total_tax * (fin_income / positive_base)
-                        else:
-                            tax_on_financial[year] = 0
+                        # Allocate tax proportionally
+                        tax_on_operating[year] = op_income * eff_rate
+                        tax_on_financial[year] = fin_income * eff_rate
+                        tax_on_exceptional[year] = except_income * eff_rate
                         
-                        if except_items > 0:
-                            tax_on_exceptional[year] = total_tax * (except_items / positive_base)
-                        else:
-                            tax_on_exceptional[year] = 0
+                    elif pd.notna(calculated_pbt) and calculated_pbt != 0 and pd.notna(total_tax):
+                        # Use calculated PBT if reported not available
+                        eff_rate = total_tax / calculated_pbt
+                        effective_tax_rate[year] = eff_rate
+                        
+                        tax_on_operating[year] = op_income * eff_rate
+                        tax_on_financial[year] = fin_income * eff_rate
+                        tax_on_exceptional[year] = except_income * eff_rate
+                        
+                    elif pd.notna(total_tax) and total_tax == 0:
+                        # No tax expense - set all to zero
+                        effective_tax_rate[year] = 0
+                        tax_on_operating[year] = 0
+                        tax_on_financial[year] = 0
+                        tax_on_exceptional[year] = 0
+                        
                     else:
-                        # If no positive income or no tax, allocate based on income before tax ratio
-                        if pd.notna(income_before_tax.get(year)) and income_before_tax.get(year) != 0:
-                            effective_rate = total_tax / income_before_tax.get(year)
-                            tax_on_operating[year] = op_income * effective_rate
-                            tax_on_financial[year] = fin_income * effective_rate
-                            tax_on_exceptional[year] = except_items * effective_rate
-                        else:
-                            # Last resort: allocate all to operating
-                            tax_on_operating[year] = total_tax
-                            tax_on_financial[year] = 0
-                            tax_on_exceptional[year] = 0
+                        # Use assumed tax rate based on jurisdiction or industry
+                        assumed_rate = 0.25  # 25% default
+                        
+                        # Check if we can infer from neighboring years
+                        if year > 0:
+                            prev_rates = effective_tax_rate.iloc[:effective_tax_rate.index.get_loc(year)].dropna()
+                            if len(prev_rates) > 0:
+                                assumed_rate = prev_rates.mean()
+                        
+                        effective_tax_rate[year] = assumed_rate
+                        tax_on_operating[year] = op_income * assumed_rate
+                        tax_on_financial[year] = fin_income * assumed_rate
+                        tax_on_exceptional[year] = except_income * assumed_rate
                     
-                    self.logger.debug(f"[PN-IS-V6.3] Year {year} - Tax allocation: Op={tax_on_operating[year]:.2f}, Fin={tax_on_financial[year]:.2f}, Except={tax_on_exceptional[year]:.2f}")
+                    # Ensure total allocated tax equals actual tax (with small tolerance)
+                    total_allocated = tax_on_operating[year] + tax_on_financial[year] + tax_on_exceptional[year]
+                    
+                    if pd.notna(total_tax) and pd.notna(total_allocated):
+                        allocation_diff = total_tax - total_allocated
+                        
+                        # If difference is significant, adjust the largest component
+                        if abs(allocation_diff) > 0.01:
+                            # Find component with largest absolute value
+                            components = {
+                                'operating': abs(tax_on_operating[year]),
+                                'financial': abs(tax_on_financial[year]),
+                                'exceptional': abs(tax_on_exceptional[year])
+                            }
+                            
+                            largest_component = max(components, key=components.get)
+                            
+                            if largest_component == 'operating':
+                                tax_on_operating[year] += allocation_diff
+                            elif largest_component == 'financial':
+                                tax_on_financial[year] += allocation_diff
+                            else:
+                                tax_on_exceptional[year] += allocation_diff
+                            
+                            self.logger.debug(f"[PN-IS-V7.0] {year}: Adjusted {largest_component} tax by {allocation_diff:.2f}")
+                    
+                    self.logger.debug(
+                        f"[PN-IS-V7.0] {year} - Tax allocation: "
+                        f"Op={tax_on_operating[year]:.2f}, "
+                        f"Fin={tax_on_financial[year]:.2f}, "
+                        f"Except={tax_on_exceptional[year]:.2f}, "
+                        f"Rate={effective_tax_rate[year]:.2%}"
+                    )
                     
                 except Exception as e:
-                    self.logger.warning(f"[PN-IS-V6.3] Tax allocation failed for {year}: {e}")
-                    # Fallback: assign all tax to operating
-                    tax_on_operating[year] = tax_expense.get(year, 0)
-                    tax_on_financial[year] = 0
-                    tax_on_exceptional[year] = 0
+                    self.logger.warning(f"[PN-IS-V7.0] Tax allocation error for {year}: {e}")
+                    # Fallback: allocate all tax to operating
+                    if pd.notna(total_tax):
+                        tax_on_operating[year] = total_tax
+                        tax_on_financial[year] = 0
+                        tax_on_exceptional[year] = 0
             
             # Store tax allocations
             reformulated['Tax on Operating Income'] = tax_on_operating
             reformulated['Tax on Financial Income'] = tax_on_financial
             reformulated['Tax on Exceptional Items'] = tax_on_exceptional
+            reformulated['Effective Tax Rate (Info Only)'] = effective_tax_rate
             
             # Calculate after-tax amounts
             reformulated['Operating Income After Tax'] = pure_operating_income - tax_on_operating
             reformulated['Net Financial Income After Tax'] = net_financial_income_before_tax - tax_on_financial
             reformulated['Exceptional Items After Tax'] = exceptional_items - tax_on_exceptional
             
-            # Store effective tax rate for information only
-            effective_tax_rate = pd.Series(index=df.columns, dtype=float)
-            mask = (income_before_tax != 0) & (income_before_tax.notna()) & (tax_expense.notna())
-            effective_tax_rate[mask] = tax_expense[mask] / income_before_tax[mask]
-            reformulated['Effective Tax Rate (Info Only)'] = effective_tax_rate
-            
-            # 4. FINANCIAL ITEMS
-            self.logger.info("[PN-IS-V6.3] Processing financial items...")
+            # ========== 6. FINANCIAL ITEMS DETAIL ==========
+            self.logger.info("[PN-IS-V7.0] Processing financial items detail...")
             
             # Store components
             reformulated['Interest Expense'] = interest_expense
             reformulated['Interest Income'] = interest_income
             
-            # CRITICAL FIX: Only store "Other Non-Operating Income" if it's actually different from Interest Income
+            # Only store Other Non-Operating Income if different from Interest Income
             if not values_are_identical:
                 reformulated['Other Non-Operating Income'] = other_income
             else:
                 reformulated['Other Non-Operating Income'] = pd.Series(0, index=df.columns)
-                
+            
             reformulated['Total Non-Operating Income'] = total_non_operating_income
             reformulated['Net Financial Income Before Tax'] = net_financial_income_before_tax
             
-            # CRITICAL: Create Net Financial Expense (negative of income) for NBC calculation
+            # Create Net Financial Expense (negative of income) for NBC calculation
             reformulated['Net Financial Expense After Tax'] = -reformulated['Net Financial Income After Tax']
             
-            # 5. NET INCOME RECONCILIATION
-            self.logger.info("[PN-IS-V6.3] Performing net income reconciliation...")
+            # ========== 7. NET INCOME RECONCILIATION ==========
+            self.logger.info("[PN-IS-V7.0] Performing comprehensive net income reconciliation...")
             
             net_income_reported = self._get_safe_series(df, 'Net Income')
             
-            # Calculate Net Income: NOPAT + Net Financial Income + Exceptional Items
+            # Calculate Net Income from components
             calculated_net_income = (
                 reformulated['Operating Income After Tax'] + 
                 reformulated['Net Financial Income After Tax'] +
@@ -5043,82 +5084,136 @@ class EnhancedPenmanNissimAnalyzer:
             reformulated['Net Income (Reported)'] = net_income_reported
             reformulated['Net Income (Calculated)'] = calculated_net_income
             
-            # Reconciliation check
-            reconciliation_diff = abs(net_income_reported - calculated_net_income)
-            max_diff = reconciliation_diff.max()
-            
-            if max_diff > 1:  # Allow 1 unit tolerance
-                self.logger.warning(f"[PN-IS-V6.3] Net Income reconciliation has differences up to {max_diff:.2f}")
-                metadata['reconciliation_status'] = f'Mismatch: max diff = {max_diff:.2f}'
+            # Detailed reconciliation
+            reconciliation_data = []
+            for year in df.columns:
+                reported = net_income_reported.get(year)
+                calculated = calculated_net_income.get(year)
                 
-                # Detailed year-by-year reconciliation
-                for year in df.columns:
-                    reported = net_income_reported.get(year)
-                    calculated = calculated_net_income.get(year)
-                    if pd.notna(reported) and pd.notna(calculated):
-                        diff = abs(reported - calculated)
-                        if diff > 1:
-                            self.logger.warning(
-                                f"[PN-IS-V6.3] Year {year}: "
-                                f"Reported={reported:.2f}, Calculated={calculated:.2f}, Diff={diff:.2f}"
-                            )
-            else:
-                self.logger.info("[PN-IS-V6.3] Net Income reconciliation successful")
-                metadata['reconciliation_status'] = 'Success'
+                if pd.notna(reported) and pd.notna(calculated):
+                    diff = reported - calculated
+                    pct_diff = (diff / abs(reported) * 100) if reported != 0 else 0
+                    
+                    reconciliation_data.append({
+                        'Year': year,
+                        'Reported': reported,
+                        'Calculated': calculated,
+                        'Difference': diff,
+                        'Pct_Diff': pct_diff
+                    })
+                    
+                    if abs(diff) > 1:  # Allow 1 unit tolerance
+                        self.logger.warning(
+                            f"[PN-IS-V7.0] {year} Reconciliation mismatch: "
+                            f"Diff={diff:.2f} ({pct_diff:.1f}%)"
+                        )
             
-            # Additional logging for debugging
-            self.logger.info("\n[PN-IS-V6.3] Reconciliation Components:")
-            self.logger.info(f"Operating Income After Tax: {reformulated['Operating Income After Tax'].head().to_dict()}")
-            self.logger.info(f"Net Financial Income After Tax: {reformulated['Net Financial Income After Tax'].head().to_dict()}")
-            self.logger.info(f"Exceptional Items After Tax: {reformulated['Exceptional Items After Tax'].head().to_dict()}")
-            self.logger.info(f"Calculated Net Income: {calculated_net_income.head().to_dict()}")
-            self.logger.info(f"Reported Net Income: {net_income_reported.head().to_dict()}")
+            if reconciliation_data:
+                recon_df = pd.DataFrame(reconciliation_data)
+                max_diff = recon_df['Difference'].abs().max()
+                avg_pct_diff = recon_df['Pct_Diff'].abs().mean()
+                
+                metadata['reconciliation_status'] = {
+                    'max_difference': max_diff,
+                    'avg_pct_difference': avg_pct_diff,
+                    'details': reconciliation_data
+                }
+                
+                if max_diff > 1:
+                    self.logger.warning(
+                        f"[PN-IS-V7.0] Reconciliation issues detected: "
+                        f"Max diff={max_diff:.2f}, Avg %diff={avg_pct_diff:.2f}%"
+                    )
+                else:
+                    self.logger.info("[PN-IS-V7.0] Net Income reconciliation successful")
             
-            # Store metadata
-            metadata['tax_allocation_method'] = 'Proportional based on positive income components'
+            # ========== 8. ADDITIONAL METRICS ==========
             
-            # 6. ADDITIONAL METRICS FOR ANALYSIS
-            
-            # Gross Profit (if available)
+            # Gross Profit
             try:
-                gross_profit = self._get_safe_series(df, 'Gross Profit', default_zero=True)
-                if (gross_profit == 0).all():
+                gross_profit = self._get_safe_series(df, 'Gross Profit', default_zero=False)
+                if gross_profit is None or (gross_profit == 0).all():
                     # Try to calculate: Revenue - COGS
-                    cogs = self._get_safe_series(df, 'Cost of Goods Sold', default_zero=True)
-                    if (cogs != 0).any():
-                        gross_profit = revenue - cogs
-                reformulated['Gross Profit'] = gross_profit
-            except:
-                pass
+                    cogs = self._get_safe_series(df, 'Cost of Goods Sold', default_zero=False)
+                    if cogs is not None:
+                        gross_profit = revenue - abs(cogs)  # COGS might be negative in some systems
+                
+                if gross_profit is not None:
+                    reformulated['Gross Profit'] = gross_profit
+            except Exception as e:
+                self.logger.debug(f"[PN-IS-V7.0] Could not determine gross profit: {e}")
             
-            # EBITDA (if we have depreciation)
+            # EBITDA
             try:
-                depreciation = self._get_safe_series(df, 'Depreciation', default_zero=True)
-                if (depreciation != 0).any():
-                    ebitda = pure_operating_income + depreciation
+                depreciation = self._get_safe_series(df, 'Depreciation', default_zero=False)
+                amortization = self._get_safe_series(df, 'Amortization', default_zero=False)
+                
+                if depreciation is None:
+                    depreciation = pd.Series(0, index=df.columns)
+                if amortization is None:
+                    amortization = pd.Series(0, index=df.columns)
+                
+                da_total = depreciation + amortization
+                
+                if (da_total != 0).any():
+                    ebitda = pure_operating_income + da_total
                     reformulated['EBITDA'] = ebitda
-            except:
-                pass
+                    metadata['ebitda_calculation'] = 'Operating Income + D&A'
+            except Exception as e:
+                self.logger.debug(f"[PN-IS-V7.0] Could not calculate EBITDA: {e}")
             
-            # 7. SUMMARY AND VALIDATION
-            self.logger.info("\n[PN-IS-V6.3-SUMMARY] Income Statement Reformulation Summary:")
+            # ========== 9. QUALITY CHECKS ==========
+            self.logger.info("[PN-IS-V7.0] Performing quality checks...")
+            
+            # Check tax rates for reasonableness
+            for year in effective_tax_rate.index:
+                rate = effective_tax_rate.get(year)
+                if pd.notna(rate):
+                    if rate < 0:
+                        self.logger.warning(f"[PN-IS-V7.0] {year}: Negative tax rate ({rate:.1%})")
+                    elif rate > 0.5:
+                        self.logger.warning(f"[PN-IS-V7.0] {year}: High tax rate ({rate:.1%})")
+            
+            # Check component relationships
+            for year in df.columns:
+                op_margin = (pure_operating_income.get(year, 0) / revenue.get(year, 1)) * 100
+                if pd.notna(op_margin):
+                    if op_margin < -50:
+                        self.logger.warning(f"[PN-IS-V7.0] {year}: Very negative operating margin ({op_margin:.1f}%)")
+                    elif op_margin > 50:
+                        self.logger.warning(f"[PN-IS-V7.0] {year}: Very high operating margin ({op_margin:.1f}%)")
+            
+            # ========== 10. SUMMARY ==========
+            self.logger.info("\n[PN-IS-V7.0-SUMMARY] Income Statement Reformulation Summary:")
             self.logger.info(f"  Revenue range: {revenue.min():,.0f} to {revenue.max():,.0f}")
-            self.logger.info(f"  Pure Operating Income range: {pure_operating_income.min():,.0f} to {pure_operating_income.max():,.0f}")
+            self.logger.info(f"  Operating Income range: {pure_operating_income.min():,.0f} to {pure_operating_income.max():,.0f}")
+            self.logger.info(f"  NOPAT range: {reformulated['Operating Income After Tax'].min():,.0f} to {reformulated['Operating Income After Tax'].max():,.0f}")
             self.logger.info(f"  Net Income range: {net_income_reported.min():,.0f} to {net_income_reported.max():,.0f}")
-            self.logger.info(f"  Tax Expense range: {tax_expense.min():,.0f} to {tax_expense.max():,.0f}")
-            self.logger.info(f"  Other Income treatment: {metadata.get('other_income_treatment', 'N/A')}")
-            self.logger.info(f"  Exceptional items: {metadata.get('exceptional_items', 'N/A')}")
-            self.logger.info(f"  Reconciliation: {metadata.get('reconciliation_status', 'N/A')}")
+            
+            # Log key metrics
+            latest_year = df.columns[-1]
+            if latest_year in reformulated.columns:
+                self.logger.info(f"\n[PN-IS-V7.0] Latest Year ({latest_year}) Metrics:")
+                self.logger.info(f"  Revenue: {revenue.get(latest_year, 0):,.0f}")
+                self.logger.info(f"  Operating Income: {pure_operating_income.get(latest_year, 0):,.0f}")
+                self.logger.info(f"  NOPAT: {reformulated['Operating Income After Tax'].get(latest_year, 0):,.0f}")
+                self.logger.info(f"  Net Income: {net_income_reported.get(latest_year, 0):,.0f}")
+                self.logger.info(f"  Effective Tax Rate: {effective_tax_rate.get(latest_year, 0):.1%}")
             
         except Exception as e:
-            self.logger.error(f"[PN-IS-V6.3-ERROR] Income statement reformulation failed: {e}", exc_info=True)
+            self.logger.error(f"[PN-IS-V7.0-ERROR] Income statement reformulation failed: {e}", exc_info=True)
             raise
         
-        self.calculation_metadata['income_statement'] = metadata
+        finally:
+            # Store metadata
+            metadata['version'] = '7.0'
+            metadata['tax_allocation_method'] = 'Effective rate with reconciliation adjustment'
+            self.calculation_metadata['income_statement'] = metadata
+            
+            self.logger.info("\n[PN-IS-V7.0-END] Income Statement Reformulation Complete")
+            self.logger.info("="*80 + "\n")
         
-        self.logger.info("\n[PN-IS-V6.3-END] Income Statement Reformulation Complete")
-        self.logger.info("="*80 + "\n")
-        
+        # Cache and return
         self._cached_is = reformulated.T
         return self._cached_is
     

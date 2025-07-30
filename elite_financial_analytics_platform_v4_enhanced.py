@@ -4410,19 +4410,13 @@ class EnhancedPenmanNissimAnalyzer:
     def _reformulate_balance_sheet_enhanced(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Ultra-Enhanced Balance Sheet Reformulation following Nissim-Penman Framework
+        MAINTAINS ORIGINAL FIELD NAMES for compatibility with existing grid/RNOA calculations
         
         Academic Foundation:
         - Nissim & Penman (2001) "Ratio Analysis and Equity Valuation"
         - Penman & Nissim (2003) "Financial Statement Analysis and Security Valuation" 
         - Richardson et al. (2005) "Accrual reliability, earnings persistence and stock prices"
         - Fairfield & Yohn (2001) "Using Asset Turnover and Profit Margin to Forecast Changes in Profitability"
-        - Core et al. (2008) "The power of the pyramid: Predictive power of return on equity"
-        
-        Methodological Rigor:
-        - Triple validation approach (theoretical, empirical, cross-sectional)
-        - Industry-agnostic classification with sector-specific adjustments
-        - Probabilistic classification for ambiguous items
-        - Comprehensive error propagation analysis
         """
         
         # Use cached result if available
@@ -4432,538 +4426,408 @@ class EnhancedPenmanNissimAnalyzer:
         # ALWAYS use clean data
         df = self._df_clean
         
-        self.logger.info("\n" + "="*100)
-        self.logger.info("[NP-BS-ULTRA] Nissim-Penman Balance Sheet Reformulation - Ultra Academic Mode")
-        self.logger.info("[NP-BS-ULTRA] Theoretical Foundation: Operating vs Financial Asset Dichotomy")
-        self.logger.info("="*100)
+        self.logger.info("\n" + "="*80)
+        self.logger.info("[PN-BS-START] Starting Balance Sheet Reformulation (V6 - Ultra Enhanced)")
+        self.logger.info("="*80)
         
         reformulated = pd.DataFrame(index=df.columns)
         metadata = {
-            'methodology': 'nissim_penman_2001_enhanced',
+            'methodology': 'nissim_penman_enhanced_v6',
             'classification_confidence': {},
             'theoretical_basis': {},
-            'industry_adjustments': {},
-            'validation_results': {},
-            'academic_references': [
-                'Nissim_Penman_2001_JAE',
-                'Penman_Nissim_2003_Book', 
-                'Richardson_et_al_2005_JAR',
-                'Fairfield_Yohn_2001_TAR'
-            ]
+            'validation_results': {}
         }
         
         try:
-            # ===== CORE BALANCE SHEET ITEMS WITH ENHANCED VALIDATION =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 1: Core Balance Sheet Component Extraction")
-            
-            # Primary items with academic validation
+            # Core items with validation
             total_assets = self._get_safe_series(df, 'Total Assets')
+            self._log_metric_fetch('Total Assets', self._find_source_metric('Total Assets'), 
+                                  total_assets, "Core BS Item")
+            
             total_equity = self._get_safe_series(df, 'Total Equity')
+            self._log_metric_fetch('Total Equity', self._find_source_metric('Total Equity'), 
+                                  total_equity, "Core BS Item")
             
-            # Enhanced total liabilities detection with fallback hierarchy
+            # Total Liabilities - try to find explicit first
             total_liabilities = None
-            liabilities_method = None
-            
-            # Method 1: Explicit total liabilities
             try:
                 total_liabilities = self._get_safe_series(df, 'Total Liabilities')
-                liabilities_method = 'explicit_total'
-                self.logger.info("[NP-BS-ULTRA] Total Liabilities: Found explicit line item")
+                self.logger.info("[PN-BS] Found explicit Total Liabilities")
+                metadata['liabilities_source'] = 'explicit'
             except:
-                # Method 2: Sum of current + non-current liabilities
-                try:
-                    current_liab = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
-                    non_current_liab = self._get_safe_series(df, 'Total Reported Non-current Liabilities', default_zero=True)
-                    total_liabilities = current_liab + non_current_liab
-                    liabilities_method = 'sum_components'
-                    self.logger.info("[NP-BS-ULTRA] Total Liabilities: Calculated from components")
-                except:
-                    # Method 3: Accounting equation (Assets - Equity)
-                    total_liabilities = total_assets - total_equity
-                    liabilities_method = 'accounting_equation'
-                    self.logger.info("[NP-BS-ULTRA] Total Liabilities: Derived from accounting equation")
+                # Calculate from accounting equation
+                total_liabilities = total_assets - total_equity
+                self.logger.info("[PN-BS] Calculated Total Liabilities = Assets - Equity")
+                metadata['liabilities_source'] = 'calculated'
             
-            metadata['liabilities_derivation'] = liabilities_method
+            # Handle NaN in liabilities
             total_liabilities = total_liabilities.fillna(0)
             
-            # Academic validation: Accounting equation must hold
-            accounting_check = total_assets - total_liabilities - total_equity
-            max_deviation = accounting_check.abs().max()
+            # Current items
+            current_assets = self._get_safe_series(df, 'Current Assets', default_zero=True)
+            current_liabilities = self._get_safe_series(df, 'Current Liabilities', default_zero=True)
             
-            if max_deviation > 0.01:  # Academic threshold for materiality
-                self.logger.warning(f"[NP-BS-ULTRA] ACADEMIC WARNING: Accounting equation deviation: {max_deviation:.4f}")
-                metadata['accounting_equation_warning'] = max_deviation
+            # ===== ENHANCED FINANCIAL ASSETS IDENTIFICATION =====
+            self.logger.info("\n[PN-BS] Starting Enhanced Financial Assets Identification")
             
-            # ===== FINANCIAL ASSETS CLASSIFICATION (ULTRA-RIGOROUS) =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 2: Financial Assets Classification - Academic Rigor")
-            self.logger.info("[NP-BS-ULTRA] Theoretical Basis: Assets generating NON-OPERATING income")
-            
-            financial_assets_registry = {}
-            classification_confidence = {}
-            
-            # Category 1: CASH AND CASH EQUIVALENTS (100% Confidence - Academic Consensus)
-            cash_equivalents = pd.Series(0, index=df.columns)
-            cash_search_hierarchy = [
-                ('Cash and Cash Equivalents', 1.0),
-                ('Cash & Cash Equivalents', 1.0), 
-                ('Cash', 0.95),  # Slightly lower as may exclude equivalents
-                ('Cash and Equivalents', 1.0),
-                ('Cash & Equivalents', 1.0),
-                ('Liquid Assets', 0.8)  # Broader category
-            ]
-            
-            for cash_item, confidence in cash_search_hierarchy:
+            # 1. Cash and cash equivalents
+            cash = pd.Series(0, index=df.columns)
+            cash_items = ['Cash and Cash Equivalents', 'Cash & Cash Equivalents', 'Cash', 
+                          'Cash and Equivalents', 'Cash & Equivalents']
+            for item in cash_items:
                 try:
-                    cash_series = self._get_safe_series(df, cash_item, default_zero=True)
+                    cash_series = self._get_safe_series(df, item, default_zero=True)
                     if (cash_series > 0).any():
-                        cash_equivalents = cash_series
-                        financial_assets_registry['cash_equivalents'] = cash_series
-                        classification_confidence['cash_equivalents'] = confidence
-                        metadata['theoretical_basis']['cash_equivalents'] = 'Nissim_Penman_2001_Financial_Asset_Definition'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Cash: {cash_item} (Confidence: {confidence:.1%})")
+                        cash = cash_series
+                        metadata['cash_source'] = item
+                        metadata['classification_confidence']['cash'] = 1.0
+                        self.logger.info(f"[PN-BS] Found cash from: {item}")
                         break
                 except:
                     continue
             
-            # Category 2: INTEREST-BEARING DEPOSITS (95% Confidence)
-            bank_deposits = pd.Series(0, index=df.columns)
-            deposit_search_hierarchy = [
-                ('Bank Balances Other Than Cash and Cash Equivalents', 0.98),
-                ('Term Deposits', 0.95),
-                ('Bank Deposits', 0.95),
-                ('Fixed Deposits', 0.95),
-                ('Other Bank Balances', 0.90),
-                ('Restricted Cash', 0.85)  # May have operating purpose
-            ]
-            
-            for deposit_item, confidence in deposit_search_hierarchy:
+            # 2. Bank balances (separate from cash)
+            bank_balances = pd.Series(0, index=df.columns)
+            bank_items = ['Bank Balances Other Than Cash and Cash Equivalents', 
+                          'Bank Balances', 'Other Bank Balances',
+                          'Bank Deposits', 'Term Deposits']
+            for item in bank_items:
                 try:
-                    deposit_series = self._get_safe_series(df, deposit_item, default_zero=True)
-                    if (deposit_series > 0).any():
-                        bank_deposits = deposit_series
-                        financial_assets_registry['bank_deposits'] = deposit_series
-                        classification_confidence['bank_deposits'] = confidence
-                        metadata['theoretical_basis']['bank_deposits'] = 'Interest_Bearing_Financial_Asset'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Bank Deposits: {deposit_item} (Confidence: {confidence:.1%})")
+                    bank_series = self._get_safe_series(df, item, default_zero=True)
+                    if (bank_series > 0).any():
+                        bank_balances = bank_series
+                        metadata['bank_balances_source'] = item
+                        metadata['classification_confidence']['bank_balances'] = 0.95
+                        self.logger.info(f"[PN-BS] Found bank balances from: {item}")
                         break
                 except:
                     continue
             
-            # Category 3: MARKETABLE SECURITIES (90-98% Confidence based on type)
+            # 3. Current investments
             current_investments = pd.Series(0, index=df.columns)
-            investment_search_hierarchy = [
-                ('Current Investments', 0.95),
-                ('Marketable Securities', 0.98),  # Highest confidence - designed for liquidity
-                ('Short-term Investments', 0.95),
-                ('Trading Securities', 0.90),  # May include derivatives
-                ('Available-for-Sale Securities - Current', 0.95),
-                ('Mutual Fund Investments', 0.95),
-                ('Temporary Investments', 0.92)
-            ]
-            
-            for inv_item, confidence in investment_search_hierarchy:
+            curr_inv_items = ['Current Investments', 'Short-term Investments', 
+                              'Marketable Securities', 'Short Term Investments',
+                              'Temporary Investments', 'Trading Securities']
+            for item in curr_inv_items:
                 try:
-                    inv_series = self._get_safe_series(df, inv_item, default_zero=True)
+                    inv_series = self._get_safe_series(df, item, default_zero=True)
                     if (inv_series > 0).any():
                         current_investments = inv_series
-                        financial_assets_registry['current_investments'] = inv_series
-                        classification_confidence['current_investments'] = confidence
-                        metadata['theoretical_basis']['current_investments'] = 'Portfolio_Investment_Financial_Asset'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Current Investments: {inv_item} (Confidence: {confidence:.1%})")
+                        metadata['current_investments_source'] = item
+                        metadata['classification_confidence']['current_investments'] = 0.95
+                        self.logger.info(f"[PN-BS] Found current investments from: {item}")
                         break
                 except:
                     continue
             
-            # Category 4: LONG-TERM INVESTMENTS (85-95% Confidence - requires analysis)
+            # 4. Long-term investments
             long_term_investments = pd.Series(0, index=df.columns)
-            lt_investment_hierarchy = [
-                ('Investments - Long-term', 0.90),
-                ('Long-term Investments', 0.90),
-                ('Available-for-Sale Securities', 0.95),
-                ('Held-to-Maturity Securities', 0.98),  # Clearly financial
-                ('Investment Securities', 0.85),  # Could include strategic stakes
-                ('Non-current Investments', 0.85),
-                ('Financial Assets at Fair Value', 0.95),
-                ('Other Financial Assets - Non-current', 0.88)
-            ]
-            
-            for lt_inv_item, confidence in lt_investment_hierarchy:
+            lt_inv_items = ['Investments - Long-term', 'Long-term Investments', 
+                            'Non-current Investments', 'Investment Securities',
+                            'Long Term Investments', 'Available-for-Sale Securities',
+                            'Held-to-Maturity Securities']
+            for item in lt_inv_items:
                 try:
-                    lt_inv_series = self._get_safe_series(df, lt_inv_item, default_zero=True)
-                    if (lt_inv_series > 0).any():
-                        long_term_investments = lt_inv_series
-                        financial_assets_registry['long_term_investments'] = lt_inv_series
-                        classification_confidence['long_term_investments'] = confidence
-                        metadata['theoretical_basis']['long_term_investments'] = 'Portfolio_Investment_Long_Term'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ LT Investments: {lt_inv_item} (Confidence: {confidence:.1%})")
+                    inv_series = self._get_safe_series(df, item, default_zero=True)
+                    if (inv_series > 0).any():
+                        long_term_investments = inv_series
+                        metadata['long_term_investments_source'] = item
+                        metadata['classification_confidence']['long_term_investments'] = 0.90
+                        self.logger.info(f"[PN-BS] Found long-term investments from: {item}")
                         break
                 except:
                     continue
             
-            # Category 5: LOANS GIVEN (95% Confidence - Clear Financial Assets)
-            short_term_loans_given = pd.Series(0, index=df.columns)
-            st_loans_hierarchy = [
-                ('Loans - Short-term', 0.95),
-                ('Short-term Loans', 0.95),
-                ('Loans and Advances - Short-term', 0.90),  # May include operating advances
-                ('Employee Loans - Current', 0.95),
-                ('Inter-company Loans - Current', 0.90),  # Strategic consideration
-                ('Financial Assets - Loans Current', 0.98)
-            ]
-            
-            for st_loan_item, confidence in st_loans_hierarchy:
+            # 5. Short-term loans (given by company)
+            short_term_loans = pd.Series(0, index=df.columns)
+            st_loan_items = ['Loans - Short-term', 'Short-term Loans', 'Current Loans',
+                             'Loans and Advances - Short-term', 'Short Term Loans Given']
+            for item in st_loan_items:
                 try:
-                    st_loan_series = self._get_safe_series(df, st_loan_item, default_zero=True)
-                    if (st_loan_series > 0).any():
-                        short_term_loans_given = st_loan_series
-                        financial_assets_registry['short_term_loans'] = st_loan_series
-                        classification_confidence['short_term_loans'] = confidence
-                        metadata['theoretical_basis']['short_term_loans'] = 'Interest_Earning_Loans_Financial'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ ST Loans: {st_loan_item} (Confidence: {confidence:.1%})")
+                    loan_series = self._get_safe_series(df, item, default_zero=True)
+                    if (loan_series > 0).any():
+                        short_term_loans = loan_series
+                        metadata['short_term_loans_source'] = item
+                        metadata['classification_confidence']['short_term_loans'] = 0.95
+                        self.logger.info(f"[PN-BS] Found short-term loans from: {item}")
                         break
                 except:
                     continue
             
-            long_term_loans_given = pd.Series(0, index=df.columns)
-            lt_loans_hierarchy = [
-                ('Loans - Long - Term', 0.95),
-                ('Loans - Long-term', 0.95),
-                ('Long-term Loans', 0.95),
-                ('Loans and Advances - Long-term', 0.85),  # May include operating components
-                ('Employee Loans - Non-current', 0.95),
-                ('Inter-company Loans - Non-current', 0.88),
-                ('Financial Assets - Loans Non-current', 0.98)
-            ]
-            
-            for lt_loan_item, confidence in lt_loans_hierarchy:
+            # 6. Long-term loans (given by company)
+            long_term_loans = pd.Series(0, index=df.columns)
+            lt_loan_items = ['Loans - Long - Term', 'Loans - Long-term', 'Long-term Loans',
+                             'Non-current Loans', 'Loans and Advances - Long-term',
+                             'Long Term Loans Given']
+            for item in lt_loan_items:
                 try:
-                    lt_loan_series = self._get_safe_series(df, lt_loan_item, default_zero=True)
-                    if (lt_loan_series > 0).any():
-                        long_term_loans_given = lt_loan_series
-                        financial_assets_registry['long_term_loans'] = lt_loan_series
-                        classification_confidence['long_term_loans'] = confidence
-                        metadata['theoretical_basis']['long_term_loans'] = 'Interest_Earning_Loans_Long_Term'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ LT Loans: {lt_loan_item} (Confidence: {confidence:.1%})")
+                    loan_series = self._get_safe_series(df, item, default_zero=True)
+                    if (loan_series > 0).any():
+                        long_term_loans = loan_series
+                        metadata['long_term_loans_source'] = item
+                        metadata['classification_confidence']['long_term_loans'] = 0.95
+                        self.logger.info(f"[PN-BS] Found long-term loans from: {item}")
                         break
                 except:
                     continue
             
-            # Category 6: DERIVATIVE AND OTHER FINANCIAL INSTRUMENTS (Variable Confidence)
-            other_financial_assets_current = pd.Series(0, index=df.columns)
-            other_fin_current_hierarchy = [
-                ('Others Financial Assets - Short-term', 0.85),
-                ('Derivative Financial Assets - Current', 0.80),  # May be hedging
-                ('Financial Instruments - Current', 0.85),
-                ('Other Financial Assets - Current', 0.85),
-                ('Investments in Funds - Current', 0.90)
-            ]
-            
-            for other_curr_item, confidence in other_fin_current_hierarchy:
+            # 7. Other financial assets - short term
+            other_fin_assets_st = pd.Series(0, index=df.columns)
+            other_st_items = ['Others Financial Assets - Short-term', 
+                              'Other Financial Assets - Short-term',
+                              'Other Current Financial Assets',
+                              'Derivative Financial Assets - Current',
+                              'Financial Instruments - Current']
+            for item in other_st_items:
                 try:
-                    other_curr_series = self._get_safe_series(df, other_curr_item, default_zero=True)
-                    if (other_curr_series > 0).any():
-                        other_financial_assets_current = other_curr_series
-                        financial_assets_registry['other_financial_current'] = other_curr_series
-                        classification_confidence['other_financial_current'] = confidence
-                        metadata['theoretical_basis']['other_financial_current'] = 'Mixed_Financial_Instruments'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Other Fin Assets (ST): {other_curr_item} (Confidence: {confidence:.1%})")
+                    other_series = self._get_safe_series(df, item, default_zero=True)
+                    if (other_series > 0).any():
+                        other_fin_assets_st = other_series
+                        metadata['other_fin_assets_st_source'] = item
+                        metadata['classification_confidence']['other_fin_assets_st'] = 0.85
+                        self.logger.info(f"[PN-BS] Found other short-term financial assets from: {item}")
                         break
                 except:
                     continue
             
-            other_financial_assets_noncurrent = pd.Series(0, index=df.columns)
-            other_fin_noncurrent_hierarchy = [
-                ('Others Financial Assets - Long-term', 0.85),
-                ('Derivative Financial Assets - Non-current', 0.75),  # Likely hedging
-                ('Financial Instruments - Non-current', 0.85),
-                ('Other Financial Assets - Non-current', 0.85),
-                ('Strategic Investments', 0.70)  # May have operating purpose
-            ]
-            
-            for other_nc_item, confidence in other_fin_noncurrent_hierarchy:
+            # 8. Other financial assets - long term
+            other_fin_assets_lt = pd.Series(0, index=df.columns)
+            other_lt_items = ['Others Financial Assets - Long-term',
+                              'Other Financial Assets - Long-term',
+                              'Other Non-current Financial Assets',
+                              'Derivative Financial Assets - Non-current',
+                              'Financial Instruments - Non-current']
+            for item in other_lt_items:
                 try:
-                    other_nc_series = self._get_safe_series(df, other_nc_item, default_zero=True)
-                    if (other_nc_series > 0).any():
-                        other_financial_assets_noncurrent = other_nc_series
-                        financial_assets_registry['other_financial_noncurrent'] = other_nc_series
-                        classification_confidence['other_financial_noncurrent'] = confidence
-                        metadata['theoretical_basis']['other_financial_noncurrent'] = 'Mixed_Financial_Instruments_LT'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Other Fin Assets (LT): {other_nc_item} (Confidence: {confidence:.1%})")
+                    other_series = self._get_safe_series(df, item, default_zero=True)
+                    if (other_series > 0).any():
+                        other_fin_assets_lt = other_series
+                        metadata['other_fin_assets_lt_source'] = item
+                        metadata['classification_confidence']['other_fin_assets_lt'] = 0.85
+                        self.logger.info(f"[PN-BS] Found other long-term financial assets from: {item}")
                         break
                 except:
                     continue
             
-            # AGGREGATE FINANCIAL ASSETS WITH CONFIDENCE WEIGHTING
-            total_financial_assets = (cash_equivalents + bank_deposits + current_investments + 
-                                     long_term_investments + short_term_loans_given + 
-                                     long_term_loans_given + other_financial_assets_current + 
-                                     other_financial_assets_noncurrent)
+            # Total financial assets calculation
+            financial_assets = (cash + bank_balances + current_investments + long_term_investments + 
+                               short_term_loans + long_term_loans + other_fin_assets_st + other_fin_assets_lt)
             
-            # Calculate weighted confidence score
-            total_fa_value = total_financial_assets.sum()
-            if total_fa_value > 0:
-                weighted_confidence = sum(
-                    (series.sum() / total_fa_value) * confidence 
-                    for series, confidence in [
-                        (cash_equivalents, classification_confidence.get('cash_equivalents', 0)),
-                        (bank_deposits, classification_confidence.get('bank_deposits', 0)),
-                        (current_investments, classification_confidence.get('current_investments', 0)),
-                        (long_term_investments, classification_confidence.get('long_term_investments', 0)),
-                        (short_term_loans_given, classification_confidence.get('short_term_loans', 0)),
-                        (long_term_loans_given, classification_confidence.get('long_term_loans', 0)),
-                        (other_financial_assets_current, classification_confidence.get('other_financial_current', 0)),
-                        (other_financial_assets_noncurrent, classification_confidence.get('other_financial_noncurrent', 0))
-                    ] if series.sum() > 0
-                )
-                metadata['financial_assets_confidence'] = weighted_confidence
+            # Log financial assets breakdown
+            self.logger.info("\n[PN-BS] Financial Assets Breakdown:")
+            self.logger.info(f"  Cash and Equivalents: {cash.sum():,.0f}")
+            self.logger.info(f"  Bank Balances: {bank_balances.sum():,.0f}")
+            self.logger.info(f"  Current Investments: {current_investments.sum():,.0f}")
+            self.logger.info(f"  Long-term Investments: {long_term_investments.sum():,.0f}")
+            self.logger.info(f"  Short-term Loans: {short_term_loans.sum():,.0f}")
+            self.logger.info(f"  Long-term Loans: {long_term_loans.sum():,.0f}")
+            self.logger.info(f"  Other ST Financial Assets: {other_fin_assets_st.sum():,.0f}")
+            self.logger.info(f"  Other LT Financial Assets: {other_fin_assets_lt.sum():,.0f}")
+            self.logger.info(f"  Total Financial Assets: {financial_assets.sum():,.0f}")
             
-            # ===== FINANCIAL LIABILITIES CLASSIFICATION (ULTRA-RIGOROUS) =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 3: Financial Liabilities - Interest-Bearing Debt Only")
-            self.logger.info("[NP-BS-ULTRA] Theoretical Basis: Liabilities requiring explicit interest payments")
+            # ===== ENHANCED DEBT IDENTIFICATION =====
+            self.logger.info("\n[PN-BS] Starting Enhanced Debt Identification")
             
-            financial_liabilities_registry = {}
-            debt_classification_confidence = {}
-            
-            # Category 1: SHORT-TERM DEBT (95-98% Confidence)
+            # Short-term debt with enhanced search
             short_term_debt = pd.Series(0, index=df.columns)
-            st_debt_hierarchy = [
-                ('Short Term Borrowings', 0.98),
-                ('Short-term Debt', 0.98),
-                ('Current Borrowings', 0.98),
-                ('Bank Loans - Current', 0.95),
-                ('Commercial Paper', 0.98),
-                ('Notes Payable - Current', 0.95),
-                ('Working Capital Loans', 0.95),
-                ('Overdrafts', 0.90),  # May be operational
-                ('Current Portion of Long-term Debt', 0.98)
+            debt_found = False
+            
+            st_debt_items = [
+                'Short-term Debt', 'Short Term Borrowings', 'Current Borrowings',
+                'Short-term Borrowings', 'Current Debt', 'Short Term Debt',
+                'Current Portion of Long-term Debt', 'Notes Payable',
+                'Bank Overdrafts', 'Commercial Paper', 'Working Capital Loans'
             ]
             
-            for st_debt_item, confidence in st_debt_hierarchy:
+            for item in st_debt_items:
                 try:
-                    st_debt_series = self._get_safe_series(df, st_debt_item, default_zero=True)
-                    if (st_debt_series > 0).any():
-                        short_term_debt = st_debt_series
-                        financial_liabilities_registry['short_term_debt'] = st_debt_series
-                        debt_classification_confidence['short_term_debt'] = confidence
-                        metadata['theoretical_basis']['short_term_debt'] = 'Interest_Bearing_Debt_Current'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ ST Debt: {st_debt_item} (Confidence: {confidence:.1%})")
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        short_term_debt = debt_series
+                        metadata['short_term_debt_source'] = item
+                        metadata['classification_confidence']['short_term_debt'] = 0.98
+                        self.logger.info(f"[PN-BS] Found short-term debt from: {item}")
+                        debt_found = True
                         break
                 except:
                     continue
             
-            # Category 2: LONG-TERM DEBT (95-98% Confidence)
+            # Long-term debt with enhanced search
             long_term_debt = pd.Series(0, index=df.columns)
-            lt_debt_hierarchy = [
-                ('Long Term Borrowings', 0.98),
-                ('Long-term Debt', 0.98),
-                ('Non-current Borrowings', 0.98),
-                ('Bonds Payable', 0.98),
-                ('Debentures', 0.98),
-                ('Term Loans', 0.95),
-                ('Bank Loans - Non-current', 0.95),
-                ('Notes Payable - Non-current', 0.95),
-                ('Secured Loans', 0.95),
-                ('Unsecured Loans', 0.95)
+            
+            lt_debt_items = [
+                'Long-term Debt', 'Long Term Borrowings', 'Non-current Borrowings',
+                'Long-term Borrowings', 'Non-current Debt', 'Long Term Debt',
+                'Bonds Payable', 'Debentures', 'Term Loans',
+                'Finance Lease Obligations - Non-current', 'Secured Loans'
             ]
             
-            for lt_debt_item, confidence in lt_debt_hierarchy:
+            for item in lt_debt_items:
                 try:
-                    lt_debt_series = self._get_safe_series(df, lt_debt_item, default_zero=True)
-                    if (lt_debt_series > 0).any():
-                        long_term_debt = lt_debt_series
-                        financial_liabilities_registry['long_term_debt'] = lt_debt_series
-                        debt_classification_confidence['long_term_debt'] = confidence
-                        metadata['theoretical_basis']['long_term_debt'] = 'Interest_Bearing_Debt_NonCurrent'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ LT Debt: {lt_debt_item} (Confidence: {confidence:.1%})")
+                    debt_series = self._get_safe_series(df, item, default_zero=True)
+                    if (debt_series > 0).any():
+                        long_term_debt = debt_series
+                        metadata['long_term_debt_source'] = item
+                        metadata['classification_confidence']['long_term_debt'] = 0.98
+                        self.logger.info(f"[PN-BS] Found long-term debt from: {item}")
+                        debt_found = True
                         break
                 except:
                     continue
             
-            # Category 3: LEASE LIABILITIES (Post-IFRS 16 / ASC 842) (90% Confidence)
+            # Lease liabilities (IFRS 16 / ASC 842)
             lease_liabilities = pd.Series(0, index=df.columns)
-            lease_liability_hierarchy = [
-                ('Lease Liabilities', 0.90),  # Combined current + non-current
-                ('Finance Lease Obligations', 0.95),
-                ('Right-of-Use Asset Liabilities', 0.90),
-                ('Operating Lease Liabilities', 0.85)  # Lower as may be operational
-            ]
+            lease_items = ['Lease Liabilities', 'Right-of-Use Liabilities', 'Finance Lease Obligations']
             
-            for lease_item, confidence in lease_liability_hierarchy:
+            for item in lease_items:
                 try:
-                    lease_series = self._get_safe_series(df, lease_item, default_zero=True)
+                    lease_series = self._get_safe_series(df, item, default_zero=True)
                     if (lease_series > 0).any():
                         lease_liabilities = lease_series
-                        financial_liabilities_registry['lease_liabilities'] = lease_series
-                        debt_classification_confidence['lease_liabilities'] = confidence
-                        metadata['theoretical_basis']['lease_liabilities'] = 'IFRS16_ASC842_Lease_Debt'
-                        self.logger.info(f"[NP-BS-ULTRA] ✓ Lease Liabilities: {lease_item} (Confidence: {confidence:.1%})")
+                        metadata['lease_liabilities_source'] = item
+                        metadata['classification_confidence']['lease_liabilities'] = 0.90
+                        self.logger.info(f"[PN-BS] Found lease liabilities from: {item}")
+                        debt_found = True
                         break
                 except:
                     continue
             
-            # AGGREGATE FINANCIAL LIABILITIES
-            total_financial_liabilities = short_term_debt + long_term_debt + lease_liabilities
+            # Total debt calculation
+            total_debt = short_term_debt + long_term_debt + lease_liabilities
             
-            # Calculate debt confidence score
-            total_debt_value = total_financial_liabilities.sum()
-            if total_debt_value > 0:
-                debt_weighted_confidence = sum(
-                    (series.sum() / total_debt_value) * confidence 
-                    for series, confidence in [
-                        (short_term_debt, debt_classification_confidence.get('short_term_debt', 0)),
-                        (long_term_debt, debt_classification_confidence.get('long_term_debt', 0)),
-                        (lease_liabilities, debt_classification_confidence.get('lease_liabilities', 0))
-                    ] if series.sum() > 0
-                )
-                metadata['financial_liabilities_confidence'] = debt_weighted_confidence
-            else:
-                self.logger.info("[NP-BS-ULTRA] ✓ DEBT-FREE COMPANY: No financial liabilities identified")
+            if not debt_found:
+                self.logger.warning("[PN-BS] No explicit debt found - company may be debt-free")
                 metadata['debt_status'] = 'debt_free'
-                metadata['financial_liabilities_confidence'] = 1.0  # High confidence in debt-free status
-            
-            # ===== NET FINANCIAL POSITION =====
-            net_financial_obligations = total_financial_liabilities - total_financial_assets
-            
-            # Academic classification of financial position
-            if net_financial_obligations.mean() > 0:
-                fin_position = 'net_debtor'
-            elif net_financial_obligations.mean() < 0:
-                fin_position = 'net_creditor'
             else:
-                fin_position = 'balanced'
+                metadata['debt_status'] = 'leveraged'
+                self.logger.info(f"[PN-BS] Total Debt: {total_debt.sum():,.0f}")
             
-            metadata['financial_position_classification'] = fin_position
+            # Financial liabilities (only actual debt, not operational liabilities)
+            financial_liabilities = total_debt
             
-            # ===== OPERATING ITEMS (RESIDUAL APPROACH) =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 4: Operating Items Classification (Residual Method)")
-            self.logger.info("[NP-BS-ULTRA] Theoretical Basis: All non-financial items support operations")
+            # Net financial position - KEEPING YOUR ORIGINAL LOGIC
+            # You used Net Financial Assets = Financial Assets - Financial Liabilities
+            net_financial_assets = financial_assets - financial_liabilities
             
-            operating_assets = total_assets - total_financial_assets
-            operating_liabilities = total_liabilities - total_financial_liabilities
+            # Operating items (residual approach)
+            operating_assets = total_assets - financial_assets
+            operating_liabilities = total_liabilities - financial_liabilities
             
-            # Ensure non-negative operating liabilities (academic requirement)
-            operating_liabilities_negative = (operating_liabilities < 0).any()
-            if operating_liabilities_negative:
-                self.logger.warning("[NP-BS-ULTRA] ACADEMIC WARNING: Negative operating liabilities detected")
-                metadata['negative_op_liabilities_warning'] = True
-            
+            # Ensure non-negative operating liabilities
             operating_liabilities = operating_liabilities.clip(lower=0)
             
-            # NET OPERATING ASSETS (Primary Academic Metric)
+            # Net Operating Assets (NOA) - key metric
             net_operating_assets = operating_assets - operating_liabilities
             
-            # ===== ACADEMIC VALIDATION FRAMEWORK =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 5: Academic Validation Framework")
+            # Common Equity (same as total equity for most companies)
+            common_equity = total_equity
             
-            # Validation 1: Fundamental Accounting Equation
-            # CE = NOA - NFO (Nissim & Penman, 2001)
-            theoretical_equity = net_operating_assets - net_financial_obligations
-            equity_validation_error = (theoretical_equity - total_equity).abs()
-            max_equity_error = equity_validation_error.max()
+            # ===== BUILD REFORMULATED BALANCE SHEET - EXACT ORIGINAL FIELD NAMES =====
+            # CRITICAL: Using your exact original field names for compatibility
             
-            if max_equity_error > 1.0:  # Materiality threshold
-                self.logger.warning(f"[NP-BS-ULTRA] VALIDATION WARNING: Equity equation error: {max_equity_error:.2f}")
-            
-            metadata['validation_results']['equity_equation_error'] = max_equity_error
-            metadata['validation_results']['equity_equation_max_pct'] = (equity_validation_error / total_equity.abs()).max() * 100
-            
-            # Validation 2: Asset Composition Analysis
-            fa_percentage = (total_financial_assets / total_assets * 100).mean()
-            oa_percentage = (operating_assets / total_assets * 100).mean()
-            
-            metadata['validation_results']['financial_assets_percentage'] = fa_percentage
-            metadata['validation_results']['operating_assets_percentage'] = oa_percentage
-            
-            # Academic reasonableness checks
-            if fa_percentage > 80:
-                self.logger.warning("[NP-BS-ULTRA] ACADEMIC WARNING: Unusually high financial assets (>80%)")
-                metadata['warnings'] = metadata.get('warnings', []) + ['high_financial_assets']
-            
-            if fa_percentage < 5 and total_financial_assets.sum() > 0:
-                self.logger.info("[NP-BS-ULTRA] Academic Note: Low financial assets - operationally focused")
-            
-            # Validation 3: Leverage Analysis
-            if total_financial_liabilities.sum() > 0:
-                debt_to_assets = (total_financial_liabilities / total_assets * 100).mean()
-                debt_to_equity = (total_financial_liabilities / total_equity).mean()
-                metadata['validation_results']['debt_to_assets_pct'] = debt_to_assets
-                metadata['validation_results']['debt_to_equity_ratio'] = debt_to_equity
-            
-            # ===== BUILD REFORMULATED BALANCE SHEET =====
-            self.logger.info("\n[NP-BS-ULTRA] Phase 6: Constructing Reformulated Balance Sheet")
-            
-            # Core reformulated items
             reformulated['Total Assets'] = total_assets
             reformulated['Operating Assets'] = operating_assets
-            reformulated['Financial Assets'] = total_financial_assets
+            reformulated['Financial Assets'] = financial_assets
             reformulated['Total Liabilities'] = total_liabilities
             reformulated['Operating Liabilities'] = operating_liabilities
-            reformulated['Financial Liabilities'] = total_financial_liabilities
-            reformulated['Net Operating Assets (NOA)'] = net_operating_assets
-            reformulated['Net Financial Obligations (NFO)'] = net_financial_obligations
-            reformulated['Common Equity'] = total_equity
+            reformulated['Financial Liabilities'] = financial_liabilities
+            reformulated['Net Operating Assets'] = net_operating_assets        # EXACT MATCH
+            reformulated['Net Financial Assets'] = net_financial_assets        # EXACT MATCH  
+            reformulated['Common Equity'] = common_equity                      # EXACT MATCH
             
-            # Financial assets detail (with confidence scores)
-            reformulated['FA_Cash_and_Equivalents'] = cash_equivalents
-            reformulated['FA_Bank_Deposits'] = bank_deposits
-            reformulated['FA_Current_Investments'] = current_investments
-            reformulated['FA_LongTerm_Investments'] = long_term_investments
-            reformulated['FA_ShortTerm_Loans'] = short_term_loans_given
-            reformulated['FA_LongTerm_Loans'] = long_term_loans_given
-            reformulated['FA_Other_Current'] = other_financial_assets_current
-            reformulated['FA_Other_NonCurrent'] = other_financial_assets_noncurrent
+            # Detailed financial assets breakdown - EXACT ORIGINAL NAMES
+            reformulated['Cash and Equivalents'] = cash
+            reformulated['Bank Balances'] = bank_balances
+            reformulated['Current Investments'] = current_investments
+            reformulated['Long-term Investments'] = long_term_investments
+            reformulated['Short-term Loans'] = short_term_loans
+            reformulated['Long-term Loans'] = long_term_loans
+            reformulated['Other Financial Assets ST'] = other_fin_assets_st
+            reformulated['Other Financial Assets LT'] = other_fin_assets_lt
             
-            # Financial liabilities detail
-            reformulated['FL_ShortTerm_Debt'] = short_term_debt
-            reformulated['FL_LongTerm_Debt'] = long_term_debt
-            reformulated['FL_Lease_Liabilities'] = lease_liabilities
-            reformulated['FL_Total_Debt'] = short_term_debt + long_term_debt + lease_liabilities
+            # Debt breakdown - EXACT ORIGINAL NAMES
+            reformulated['Total Debt'] = total_debt
+            reformulated['Short-term Debt'] = short_term_debt
+            reformulated['Long-term Debt'] = long_term_debt
             
-            # Academic metrics
-            reformulated['Financial_Assets_Confidence'] = pd.Series(
-                metadata.get('financial_assets_confidence', 0), index=df.columns
+            # Enhanced academic metrics (additional fields that won't break existing code)
+            reformulated['Lease Liabilities'] = lease_liabilities
+            reformulated['Financial Assets Confidence'] = pd.Series(
+                sum(metadata['classification_confidence'].get(k, 0) for k in 
+                    ['cash', 'bank_balances', 'current_investments', 'long_term_investments',
+                     'short_term_loans', 'long_term_loans']) / 6, 
+                index=df.columns
             )
-            reformulated['Financial_Liabilities_Confidence'] = pd.Series(
-                metadata.get('financial_liabilities_confidence', 0), index=df.columns
+            reformulated['Debt Classification Confidence'] = pd.Series(
+                sum(metadata['classification_confidence'].get(k, 0) for k in 
+                    ['short_term_debt', 'long_term_debt', 'lease_liabilities']) / 3 
+                if debt_found else 1.0, 
+                index=df.columns
             )
             
-            # ===== COMPREHENSIVE LOGGING =====
-            self.logger.info("\n[NP-BS-ULTRA] ACADEMIC REFORMULATION SUMMARY")
-            self.logger.info("="*80)
-            self.logger.info(f"Financial Assets Confidence Score: {metadata.get('financial_assets_confidence', 0):.1%}")
-            self.logger.info(f"Financial Liabilities Confidence Score: {metadata.get('financial_liabilities_confidence', 0):.1%}")
-            self.logger.info(f"Financial Position: {metadata['financial_position_classification'].upper()}")
-            self.logger.info(f"Equity Validation Error: {max_equity_error:.2f}")
+            # Validation check - handle NaN - EXACT ORIGINAL LOGIC
+            check = net_operating_assets + net_financial_assets - common_equity
+            check = check.fillna(0)  # Fill NaN for check
+            metadata['balance_check'] = check.abs().max()
+            metadata['balance_check_pct'] = (check.abs() / common_equity.abs().replace(0, np.nan)).max() * 100 if (common_equity != 0).any() else 0
             
-            self.logger.info("\n[NP-BS-ULTRA] COMPONENT BREAKDOWN:")
-            self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}")
-            self.logger.info(f"  ├── Operating Assets: {operating_assets.sum():,.0f} ({oa_percentage:.1f}%)")
-            self.logger.info(f"  └── Financial Assets: {total_financial_assets.sum():,.0f} ({fa_percentage:.1f}%)")
-            self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}")
-            self.logger.info(f"  ├── Operating Liabilities: {operating_liabilities.sum():,.0f}")
-            self.logger.info(f"  └── Financial Liabilities: {total_financial_liabilities.sum():,.0f}")
-            self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}")
-            self.logger.info(f"  Net Financial Obligations (NFO): {net_financial_obligations.sum():,.0f}")
-            self.logger.info(f"  Common Equity: {total_equity.sum():,.0f}")
+            self.logger.info(f"\n[PN-BS] Balance check: NOA + NFA - CE = {check.to_dict()}")
+            self.logger.info(f"[PN-BS] Maximum absolute difference: {metadata['balance_check']:.2f}")
+            self.logger.info(f"[PN-BS] Maximum percentage difference: {metadata['balance_check_pct']:.2f}%")
             
-            # Store comprehensive metadata
-            metadata['classification_registry'] = {
-                'financial_assets': financial_assets_registry,
-                'financial_liabilities': financial_liabilities_registry
+            # Additional validation - components breakdown
+            self.logger.info("\n[PN-BS] Component Validation:")
+            fa_ratio = (financial_assets / total_assets * 100).mean()
+            oa_ratio = (operating_assets / total_assets * 100).mean()
+            self.logger.info(f"  Financial Assets as % of Total Assets (avg): {fa_ratio:.1f}%")
+            self.logger.info(f"  Operating Assets as % of Total Assets (avg): {oa_ratio:.1f}%")
+            
+            if financial_liabilities.sum() > 0:
+                debt_equity_ratio = (total_debt / common_equity).mean()
+                self.logger.info(f"  Debt-to-Equity Ratio (avg): {debt_equity_ratio:.2f}")
+            
+            # Summary statistics - EXACT ORIGINAL FORMAT
+            self.logger.info("\n[PN-BS-SUMMARY] Balance Sheet Reformulation Summary:")
+            self.logger.info(f"  Total Assets: {total_assets.sum():,.0f}" if not total_assets.isna().all() else "N/A")
+            self.logger.info(f"  - Operating Assets: {operating_assets.sum():,.0f}" if not operating_assets.isna().all() else "N/A")
+            self.logger.info(f"  - Financial Assets: {financial_assets.sum():,.0f}" if not financial_assets.isna().all() else "N/A")
+            self.logger.info(f"  Total Liabilities: {total_liabilities.sum():,.0f}" if not total_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  - Operating Liabilities: {operating_liabilities.sum():,.0f}" if not operating_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  - Financial Liabilities: {financial_liabilities.sum():,.0f}" if not financial_liabilities.isna().all() else "N/A")
+            self.logger.info(f"  Total Equity: {total_equity.sum():,.0f}" if not total_equity.isna().all() else "N/A")
+            self.logger.info(f"  Net Operating Assets (NOA): {net_operating_assets.sum():,.0f}" if not net_operating_assets.isna().all() else "N/A")
+            self.logger.info(f"  Net Financial Assets (NFA): {net_financial_assets.sum():,.0f}" if not net_financial_assets.isna().all() else "N/A")
+            self.logger.info(f"  Total Debt: {total_debt.sum():,.0f}" if not total_debt.isna().all() else "N/A")
+            
+            # Store metadata - EXACT ORIGINAL FORMAT
+            metadata['financial_assets_components'] = {
+                'cash': cash.sum(),
+                'bank_balances': bank_balances.sum(),
+                'current_investments': current_investments.sum(),
+                'long_term_investments': long_term_investments.sum(),
+                'short_term_loans': short_term_loans.sum(),
+                'long_term_loans': long_term_loans.sum(),
+                'other_st': other_fin_assets_st.sum(),
+                'other_lt': other_fin_assets_lt.sum(),
+                'total': financial_assets.sum()
             }
-            metadata['confidence_scores'] = {
-                **classification_confidence,
-                **debt_classification_confidence
+            
+            # Academic validation results
+            metadata['validation_results'] = {
+                'equity_equation_error': metadata['balance_check'],
+                'financial_assets_percentage': fa_ratio,
+                'operating_assets_percentage': oa_ratio,
+                'methodology_confidence': sum(metadata['classification_confidence'].values()) / len(metadata['classification_confidence']) if metadata['classification_confidence'] else 1.0
             }
             
         except Exception as e:
-            self.logger.error(f"[NP-BS-ULTRA-ERROR] Ultra reformulation failed: {e}", exc_info=True)
+            self.logger.error(f"[PN-BS-ERROR] Balance sheet reformulation failed: {e}", exc_info=True)
             raise
         
         self.calculation_metadata['balance_sheet'] = metadata
         
-        self.logger.info("\n[NP-BS-ULTRA] REFORMULATION COMPLETE - ACADEMIC STANDARDS MET")
-        self.logger.info("="*100 + "\n")
+        self.logger.info("\n[PN-BS-END] Balance Sheet Reformulation Complete")
+        self.logger.info("="*80 + "\n")
         
         # Cache result
         self._cached_bs = reformulated.T
